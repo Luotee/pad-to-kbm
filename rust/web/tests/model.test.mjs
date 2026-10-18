@@ -42,7 +42,7 @@ test('board_binds_reads_all_three_tables', () => {
 test('entry_for_tile_covers_key_mouse_macro_unbound', () => {
   assert.deepEqual(entryForTile('Q', 'Cross'), { label: 'Cross', type: 'key', value: 'q' });
   assert.deepEqual(entryForTile('↑', 'x'), { label: 'x', type: 'key', value: 'Up' });
-  assert.deepEqual(entryForTile('滾輪下', 'x'), { label: 'x', type: 'mouse', value: 'wheel-down' });
+  assert.deepEqual(entryForTile('下滾', 'x'), { label: 'x', type: 'mouse', value: 'wheel-down' });
   assert.deepEqual(entryForTile('M:連發', 'x'), { label: 'x', type: 'macro', value: '連發' });
   assert.deepEqual(entryForTile('', 'x'), { label: 'x', type: 'unbound' });
   assert.deepEqual(entryForTile(null, 'x'), { label: 'x', type: 'unbound' });
@@ -75,7 +75,7 @@ test('tile_to_key_is_accepted_by_backend_names', () => {
 });
 
 test('mouse_tiles_and_labels', () => {
-  assert.deepEqual(MOUSE_TILE, { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '滾輪上', 'wheel-down': '滾輪下' });
+  assert.deepEqual(MOUSE_TILE, { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '上滾', 'wheel-down': '下滾' });
   assert.equal(slotLabel(example, 'dualsense', 'L11'), 'D-pad ↑');
   assert.equal(slotLabel(example, 'ns2_pro', '0'), 'Cross（叉叉）');
 });

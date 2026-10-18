@@ -3,6 +3,48 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-10-18
+
+### Changed
+
+- **New look, after the MapleStory Key Bindings window.** Pixel fonts at
+  their native size, bevelled slots on dark plates with 2 px seams (groups
+  without a middle slot pack tight), the controller and mouse as line art,
+  the keyboard / mouse / macro area as three cards, rose tabs on a dark red
+  rule, and the reference's green / blue / orange buttons. Keyboard keys use
+  Silkscreen 8 px (OFL, shipped next to Cubic 11) and are centred on their
+  ink; the arrow keys and the d-pad slot tags are pixel drawings.
+- **States:** the slot waiting for a key and a picked key turn blue; a held
+  pad button fills its slot and its key rose and its line turns rose (same
+  shape); keys already bound on the shown pad are drawn pale (still
+  draggable); a dragged key looks like the slot it will become. No gold, and
+  no focus rings (the board is driven by mouse and pad).
+- Every on/off switch is a 關｜開 pair. The DualSense touchpad-cursor switch
+  moved from the pad drawing into the header, left of 連線震動. The tab lamp
+  is a pixel LED; the disconnect key is an orange square inside the tab.
+- Mode notices, the ViGEmBus prompt and the macro delay box follow the
+  reference's panels. The wheel keys read 上滾 / 下滾 (the config still says
+  wheel-up / wheel-down). The capture hint is for screen readers only.
+- **Window:** no Windows title bar. The app draws the reference window
+  itself: a steel frame with cut corners and a title bar (PAD TO KBM) with
+  minimise and close; ✕ still ends the app. The window is always a whole
+  number of screen pixels per drawn pixel, so it is sharp at any Windows
+  display scale: it opens at the whole scale nearest the display scale that
+  fits the screen (for example 3x at 250 % on a 4K screen; 1x at 125 % or
+  150 % on a 1080p laptop, which makes it smaller there: 80 % / 67 % of the
+  old size) and a resize snaps to whole scales (drag a corner to grow it).
+- Macro names are drawn in the pixel font too: the whole of Cubic 11 ships
+  (about 400 KB) instead of the UI-text subset.
+- **Icons are pixel art.** Every icon in the window is drawn on whole pixels
+  in its label's colour. The icon-only buttons (settings, edit macro, macro
+  pages) are the title bar's blue keys, and the settings close button is the
+  title bar's close key.
+- **New app and tray icon:** a Famicom-style pad drawn like the reference's
+  emoticons (black outline, cream body). Every size is a whole multiple of a
+  hand-placed 16, 24 or 32 px grid. The tray icon is grey without a
+  controller, as before.
+- README screenshots retaken.
+
 ## [3.2.1] - 2026-10-15
 
 ### Changed

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutFor, slotsOf, lint, routeHTML } from '../board/layout.js';
+import { layoutFor, slotsOf, lint, routeHTML, groupSlots } from '../board/layout.js';
 
 const MODES = [{ l: 'page', r: 'page' }, { l: 'key', r: 'key' }, { l: 'page', r: 'key' }];
 const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
@@ -48,8 +48,31 @@ test('every_route_is_one_svg_path', () => {
   for (const rt of L.routes) {
     for (const hit of [false, true]) {
       const h = routeHTML(rt.pts, rt.r, rt.m, hit);
-      assert.equal((h.match(/<path/g) || []).length, hit ? 2 : 1, `${rt.id} hit=${hit}`);
+      // Reskin Q12: a lit line keeps its shape (one path, one end dot) and only changes colour (CSS).
+      assert.equal((h.match(/<path/g) || []).length, 1, `${rt.id} hit=${hit}`);
+      assert.equal((h.match(/<circle/g) || []).length, 1, `${rt.id} hit=${hit}`);
+      assert.equal(h.startsWith('<g class="hit">'), hit, `${rt.id} hit=${hit}`);
       assert.ok(!h.includes('class="ln'), 'no div lines');
     }
   }
+});
+
+// Reskin (v3.3.0): a 4-slot group with no middle slot packs like the MapleStory quick slot —
+// up and down meet in the centre column, every seam 2px.
+test('four_slot_groups_pack_tight', () => {
+  const g = layoutFor('dualsense', MODES[0]).groups.find(x => x.kind === 'diamond');
+  const at = Object.fromEntries(groupSlots(g).map(s => [s.tag, [s.x - g.x, s.y - g.y]]));
+  const pos = Object.values(at);
+  assert.deepEqual(pos, [[-19, -39], [-59, -19], [21, -19], [-19, 1]]);
+});
+
+test('stick_cross_keeps_its_middle_slot', () => {
+  const g = layoutFor('dualsense', MODES[0]).groups.find(x => x.kind === 'cross');
+  const ys = groupSlots(g).map(s => s.y - g.y).sort((a, b) => a - b);
+  assert.deepEqual([ys[0], ys[ys.length - 1]], [-59, 21]);
+});
+
+// Reskin Q18: the touchpad-cursor switch lives in the header, not on the pad art.
+test('pad_art_has_no_switch_group', () => {
+  for (const pad of PADS) assert.ok(!layoutFor(pad, MODES[0]).groups.some(g => g.kind === 'tpsw'), pad);
 });

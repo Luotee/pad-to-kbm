@@ -54,7 +54,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 <table>
   <tr>
     <td width="50%"><img src="docs/images/readme/quickslots.png" alt="Switch 2 Pro 按住 ZL：快捷頁的 F3 格子和鍵盤的 F3 亮起"></td>
-    <td width="50%"><img src="docs/images/readme/capture.png" alt="格子在等按鍵，上方提示「按鍵鼠上的鍵，或點下面的方塊（Esc 取消）」"></td>
+    <td width="50%"><img src="docs/images/readme/capture.png" alt="Switch 2 Pro 的「−」格子變藍，在等你按鍵"></td>
   </tr>
   <tr>
     <td><sub><b>快捷頁。</b>按住 ZL 時，十字鍵和面鍵改用這一頁（這裡 ← 送出 F3）。每個扳機都能切換「快捷頁」或「單鍵」。</sub></td>

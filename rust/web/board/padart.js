@@ -95,35 +95,21 @@ function glyphSvg(g, c) {
   return '';
 }
 
-// Style B (sticker) palette.
-var K = '#2d3142';
-function fill(role) {
-  if (role === 'body') return ['#ffffff', 5];
-  if (role === 'tpad') return ['#e9ecf2', 3.5];
-  if (role === 'trig') return ['#6e3a52', 3.5];
-  if (role === 'bump') return ['#a8587a', 3.5];
-  if (role === 'well') return ['#d9dde6', 3.5];
-  if (role === 'cap') return ['#4b5a7c', 3];
-  if (role === 'capTop') return ['#6c7ba0', 0];
-  if (role === 'dcross' || role === 'dkey') return ['#4b5a7c', 3];
-  if (role === 'back') return ['#6e3a52', 3];
-  if (role === 'face') return ['#a8587a', 3];
-  return ['#ffcf2e', 2.5];
-}
-function glyphColor(g) { return g.role === 'smallT' ? K : '#ffffff'; }
-// The board (v3.2.1 palette) recolours the pad; the app / tray icons do not.
-var BOARD = { '#a8587a': '#b0405f', '#6e3a52': '#6f2338', '#4b5a7c': '#2b2f3a', '#6c7ba0': '#555b6c' };
-function boardFill(role) { var f = fill(role); return [BOARD[f[0]] || f[0], f[1]]; }
+// Outline width per part (0 = none).
+var WIDTH = { body: 5, tpad: 3.5, trig: 3.5, bump: 3.5, well: 3.5, cap: 3, capTop: 0, dcross: 3, dkey: 3, back: 3, face: 3 };
+// The board pad is line work like the MapleStory controller (v3.3.0): navy ink, the body shows the panel
+// through, slate keys, no colour, no drop shadow. The app / tray icons are scripts/icon-art.mjs.
+var INK = '#2d4359';
+var LINE = { body: '#b2bac0', tpad: '#b2bac0', trig: '#7b8188', back: '#7b8188', bump: '#8f969d', well: '#b2bac0', cap: '#79838f', capTop: '#8a939d', dcross: '#79838f', dkey: '#79838f', face: '#79838f' };
+function boardFill(role) { var w = role in WIDTH ? WIDTH[role] : 2.5; return [LINE[role] || '#79838f', w ? Math.min(w, 3) : 0]; }
 
 function padArt(pad, sh) {
-  var M = model(pad, sh), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true"><g transform="translate(0,5)" opacity=".28">';
-  M.parts.forEach(function (p) { if (p.role === 'body' || p.role === 'trig') h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + K + '"/>'; });
-  h += '</g>';
+  var M = model(pad, sh), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
   M.parts.forEach(function (p) {
     var f = boardFill(p.role);
-    h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + K + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';
+    h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + INK + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';
   });
-  h += M.glyphs.map(function (g) { return glyphSvg(g, glyphColor(g)); }).join('');
+  h += M.glyphs.map(function (g) { return glyphSvg(g, g.role === 'smallT' ? INK : '#ffffff'); }).join('');
   return h + '<g class="ancg"></g></svg>';
 }
 
@@ -132,26 +118,4 @@ function padArt(pad, sh) {
 export function padSvg(pad) {
   return padArt(pad, SHOULDERS[0]).replace('<svg viewBox="-30 -30 360 270" aria-hidden="true">',
     '<svg class="pad" style="left:340px;top:150px;overflow:visible" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true">');
-}
-
-// The pad drawing as an app / tray icon (scripts/build-icons.mjs): square viewBox on the art's bounds,
-// no drop shadow. Small sizes drop the labels (glyphs), the small buttons and thicken every outline;
-// minimal (16 / 24 px) also drops the face buttons, d-pad keys and stick tops.
-// grey: desaturated and faded (tray, no controller connected).
-export function padIconSvg(pad, opts) {
-  var o = opts || {}, k = o.strokeScale || 1, M = model(pad, SHOULDERS[0]);
-  var sw = 5 * k, x0 = 3 - sw / 2, x1 = 297 + sw / 2, y0 = 12.5 - sw / 2, y1 = 206 + sw / 2;
-  var side = Math.max(x1 - x0, y1 - y0) * 1.04, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  var r = function (v) { return Math.round(v * 100) / 100; };
-  var h = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + [r(cx - side / 2), r(cy - side / 2), r(side), r(side)].join(' ') + '">';
-  if (o.grey) h += '<filter id="grey"><feColorMatrix type="saturate" values="0"/></filter><g filter="url(#grey)" opacity=".55">';
-  M.parts.forEach(function (p) {
-    if (!o.small && p.role === 'small') return;
-    if (o.minimal && (p.role === 'face' || p.role === 'dkey' || p.role === 'capTop')) return;
-    var f = fill(p.role);
-    h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + K + '" stroke-width="' + r(f[1] * k) + '" stroke-linejoin="round"' : '') + '/>';
-  });
-  if (o.glyphs) h += M.glyphs.filter(function (g) { return o.small || g.role !== 'smallT'; }).map(function (g) { return glyphSvg(g, glyphColor(g)); }).join('');
-  if (o.grey) h += '</g>';
-  return h + '</svg>';
 }

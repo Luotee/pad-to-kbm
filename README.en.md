@@ -55,7 +55,7 @@ The first run writes a config file `padtokbm.json` next to the exe; the whole fo
 <table>
   <tr>
     <td width="50%"><img src="docs/images/readme/quickslots.png" alt="Switch 2 Pro with ZL held: the quick page's F3 slot and the keyboard's F3 light up"></td>
-    <td width="50%"><img src="docs/images/readme/capture.png" alt="A slot waiting for a key, with the hint bar 按鍵鼠上的鍵，或點下面的方塊（Esc 取消）"></td>
+    <td width="50%"><img src="docs/images/readme/capture.png" alt="The Switch 2 Pro − slot turns blue while it waits for a key"></td>
   </tr>
   <tr>
     <td><sub><b>Quick pages.</b> While ZL is held, the D-pad and face buttons use this page (here ← sends F3). Each trigger switches between 快捷頁 (page) and 單鍵 (one key).</sub></td>

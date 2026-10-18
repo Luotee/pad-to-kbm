@@ -155,7 +155,7 @@ export async function startLive() {
     if (!capturing()) return;
     ev.preventDefault();
     ev.stopImmediatePropagation();
-    bindCaptured(ev.deltaY < 0 ? '滾輪上' : '滾輪下');
+    bindCaptured(ev.deltaY < 0 ? '上滾' : '下滾');
   }, { capture: true, passive: false });
 
   document.addEventListener('keydown', revDown);

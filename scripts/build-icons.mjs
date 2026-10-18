@@ -1,8 +1,6 @@
-// build-icons.mjs — render the app and tray icons from the board's DualSense art.
-//
-// The art is padIconSvg() in rust/web/board/padart.js (the same drawing the
-// board shows). Each size is rendered by Chromium at its real pixel size, so
-// small sizes are drawn for their grid rather than shrunk from 256, and packed
+// build-icons.mjs — render the app and tray icons from the pixel art in
+// scripts/icon-art.mjs (reskin Q25). Each size is a whole multiple of a
+// hand-placed grid, rendered by Chromium at its real pixel size and packed
 // into rust/icons/*.ico:
 //   icon.ico               16 / 24 / 32 / 48 / 256, full colour
 //   tray-connected.ico     32, full colour
@@ -22,7 +20,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { packIco } from './ico.mjs';
-import { padIconSvg } from '../rust/web/board/padart.js';
+import { appIconSvg } from './icon-art.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
@@ -35,35 +33,22 @@ const ci = argv.indexOf('--chrome');
 const chrome = ci >= 0 ? argv[ci + 1] : null;
 if (!chrome) throw new Error('missing --chrome <path>');
 
-// Detail per pixel size: labels only where they can be read, small buttons and
-// thin outlines dropped / thickened at tray sizes.
-function detail(size) {
-  if (size >= 128) return { glyphs: true, small: true, strokeScale: 1 };
-  if (size >= 48) return { glyphs: false, small: true, strokeScale: 1.5 };
-  if (size >= 32) return { glyphs: false, small: false, strokeScale: 2 };
-  return { glyphs: false, small: false, minimal: true, strokeScale: 3 };
-}
-
 const ICONS = [
   { name: 'icon', sizes: [16, 24, 32, 48, 256], grey: false },
   { name: 'tray-connected', sizes: [32], grey: false },
   { name: 'tray-disconnected', sizes: [32], grey: true },
 ];
 
-const font = fs.readFileSync(path.join(repo, 'rust/web/fonts/cubic11.woff2')).toString('base64');
-const css = `@font-face{font-family:'Cubic11';src:url(data:font/woff2;base64,${font}) format('woff2')}
-html,body{margin:0;background:transparent}svg{display:block}`;
+const css = 'html,body{margin:0;background:transparent}svg{display:block}';
 
 const browser = await chromium.launch({ executablePath: chrome });
 const page = await browser.newPage({ deviceScaleFactor: 1 });
 fs.mkdirSync(previewDir, { recursive: true });
 
 async function render(size, grey) {
-  const svg = padIconSvg('dualsense', { ...detail(size), grey })
-    .replace('<svg ', `<svg width="${size}" height="${size}" `);
+  const svg = appIconSvg(size, { grey });
   await page.setViewportSize({ width: size, height: size });
   await page.setContent(`<!doctype html><style>${css}</style>${svg}`);
-  await page.evaluate(() => document.fonts.ready);
   return page.locator('svg').screenshot({ omitBackground: true });
 }
 

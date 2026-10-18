@@ -30,5 +30,8 @@ pub mod tray;
 // Tauri-free (serde only), so tests can reach it without the gui feature.
 pub mod ui_prefs;
 
+// Whole-pixel window size for the drawn window (pure; tests reach it without the gui feature).
+pub mod winscale;
+
 #[cfg(feature = "gui")]
 pub use runtime::{run, RunOptions};

@@ -364,6 +364,10 @@ layer_gui_smoke() {
         record gui-smoke FAIL "GUI build rc=$rc"
         return
     fi
+    if ! python3 "$REPO_ROOT/scripts/verify/exe-icon.py" "$exe" "$RUST_DIR/icons/icon.ico" >>"$log" 2>&1; then
+        record gui-smoke FAIL "exe does not embed rust/icons/icon.ico (see log)"
+        return
+    fi
 
     local name
     for name in "$GUI_EXE_NAME" "$LEGACY_EXE_NAME"; do
@@ -564,7 +568,7 @@ layer_web() {
         return
     fi
 
-    # Glyph coverage of the bundled Cubic 11 subset (spec 4.4 / 5.6). The pinned
+    # Glyph coverage of the bundled Cubic 11 + Silkscreen (spec 4.4 / 5.6). The pinned
     # venv is fetched on first use; $DSM_FONT_PY overrides it.
     local font_py font
     echo "=== font tooling (scripts/font_tools.py python)" >>"$log"
@@ -574,7 +578,7 @@ layer_web() {
         if "$font_py" "$REPO_ROOT/scripts/verify/font-coverage.py" >>"$log" 2>&1; then
             font="font ok"
         else
-            record web FAIL "font coverage: $(grep -E '^(missing|drawn)' "$log" | tail -1)"
+            record web FAIL "font coverage: $(grep -E '^(missing|drawn|cubic11|silkscreen)' "$log" | tail -1)"
             return
         fi
     else

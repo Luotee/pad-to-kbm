@@ -19,7 +19,11 @@ var PS8 = {
   x: '<path d="M0.9,0.9 L7.1,7.1 M7.1,0.9 L0.9,7.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
   sq: '<rect x="0.65" y="0.65" width="6.7" height="6.7" fill="none" stroke="currentColor" stroke-width="1.3"/>'
 };
+// The d-pad tags (spec 4.2, reskin v3.3.0): a solid 8px pixel triangle, turned on the pixel grid.
+var TRI = '<path d="M3 2h2v1h1v1h1v1h1v1h-8v-1h1v-1h1v-1h1z" fill="currentColor"/>';
+var DPAD = { '↑': 0, '→': 90, '↓': 180, '←': 270 };
 export function tagSvg(t) {
+  if (t in DPAD) return '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><g transform="rotate(' + DPAD[t] + ' 4 4)">' + TRI + '</g></svg>';
   if (t.indexOf('PS:') === 0) return '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">' + PS8[t.slice(3)] + '</svg>';
   if (t.indexOf('S:') === 0) {
     var p = { up: [4, 1.9], down: [4, 6.1], left: [1.9, 4], right: [6.1, 4], press: [4, 4] }[t.slice(2)];
@@ -48,3 +52,10 @@ export function inkOff(t) {
 
 // Forget measured ink boxes (call after document.fonts.ready).
 export function resetInk() { INK = {}; }
+
+// An on/off switch (reskin Q17): a 關｜開 pair, the current state in rose — the same logic as 關／鍵鼠／手把.
+export function switchHTML(act, label, on, o = {}) {
+  return '<button type="button" class="sw' + (o.cls ? ' ' + o.cls : '') + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-act="' + act + '"' +
+    (o.title ? ' title="' + esc(o.title) + '"' : '') + (o.disabled ? ' disabled' : '') + '>' + (o.icon || '') + '<span>' + esc(label) +
+    '</span><span class="track"><span>關</span><span>開</span></span></button>';
+}

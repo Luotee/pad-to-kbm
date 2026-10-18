@@ -186,8 +186,12 @@ function tauriMock({ config, version }) {
     }
   }
 
+  // The drawn title bar (v3.3.0) drives the window through the Tauri window API.
+  const winCall = cmd => async () => { window.__mockCalls.push({ cmd, args: {} }); };
+  const appWindow = { minimize: winCall('window.minimize'), close: winCall('window.close'), startDragging: winCall('window.startDragging') };
   window.__TAURI__ = {
     core: { invoke },
+    window: { getCurrentWindow: () => appWindow },
     event: {
       listen: async (name, cb) => {
         const id = nextId++;
@@ -218,7 +222,8 @@ const pageErrors = [];
 const dialogs = [];
 
 try {
-  const context = await browser.newContext({ viewport: { width: 980, height: 640 } });
+  // The window is the drawn MapleStory window, 994x669 at 1x (board 980x640 at 7,22; chrome.js).
+  const context = await browser.newContext({ viewport: { width: 994, height: 669 } });
   await context.addInitScript(tauriMock, { config: exampleConfig, version: appVersion });
   const page = await context.newPage();
   page.on('pageerror', e => pageErrors.push(String(e && (e.stack || e))));
@@ -359,7 +364,7 @@ try {
     const b = document.querySelector('#board .obanner'); if (!b) return null;
     const r = b.getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
   });
-  const bannerCentred = async () => { const c = await bannerBox(); return !!c && Math.abs(c.x - 490) <= 1 && Math.abs(c.y - 228) <= 1; };
+  const bannerCentred = async () => { const c = await bannerBox(); return !!c && Math.abs(c.x - 497) <= 1 && Math.abs(c.y - 250) <= 1; };   // stage centre (490, 228) + board at (7, 22)
   // Click / drag by coordinates, so whatever covers the target gets the event (as a real mouse would).
   const centre = async loc => { const r = await loc.boundingBox(); return [r.x + r.width / 2, r.y + r.height / 2]; };
   const mouseClick = async loc => { const [x, y] = await centre(loc); await page.mouse.click(x, y); await settle(page); };
@@ -394,7 +399,7 @@ try {
   await page.screenshot({ path: path.join(outDir, 'web-mode-off.png') });
   check('關 does not write the config', (await countCalls(page, 'set_mapping_enabled')) === 0);
   // Not 鍵鼠 → the board is locked (v3.2.1): nothing below the header edits.
-  check('關 banner sits at the stage centre (490, 228)', await bannerCentred(), JSON.stringify(await bannerBox()));
+  check('關 banner sits at the stage centre (490, 228 on the board)', await bannerCentred(), JSON.stringify(await bannerBox()));
   await expectLocked('關');
   await page.click('#board .omode [data-mode="pad"]');
   await settle(page);
@@ -495,8 +500,46 @@ try {
   await page.click('#board [data-pad="dualsense"]');
   await settle(page);
 
+  // ── The drawn window (v3.3.0): title bar, minimise / close, touchpad switch in the header ──
+  check('title bar reads PAD TO KBM', ((await page.locator('#wtbar .wt').textContent()) || '') === 'PAD TO KBM');
+  await page.click('#wtbar [data-win="min"]');
+  check('title-bar minimise calls window.minimize', (await countCalls(page, 'window.minimize')) === 1);
+  await page.mouse.move(300, 10); await page.mouse.down(); await page.mouse.up();
+  check('title-bar drag calls window.startDragging', (await countCalls(page, 'window.startDragging')) >= 1);
+  await page.focus('#wtbar [data-win="min"]');
+  await page.keyboard.press('Shift');
+  check('title-bar keys draw no focus ring (Q13)', await page.evaluate(() => getComputedStyle(document.querySelector('#wtbar [data-win="min"]')).outlineStyle === 'none'));
+  await page.click('#wtbar [data-win="close"]');
+  check('title-bar close calls window.close', (await countCalls(page, 'window.close')) === 1);
+  check('touchpad switch sits in the header left of 連線震動 (DualSense)',
+    await page.evaluate(() => { const t = document.querySelector('#board .hdr [data-act="tp"]'), r = document.querySelector('#board .hdr [data-act="rumble"]');
+      return !!t && !!r && t.nextElementSibling === r && !document.querySelector('#board .stage ~ [data-act="tp"], #board .tstack'); }));
+  check('touchpad switch is a 關｜開 pair', ((await page.locator('#board .hdr [data-act="tp"] .track').textContent()) || '') === '關開');
+  await page.click('#board [data-pad="ns_pro"]');
+  await settle(page);
+  check('no touchpad switch on the Switch Pro tab', (await page.locator('#board [data-act="tp"]').count()) === 0);
+  // 手把 / Xbox: the header's right-hand controls keep their place across the tabs.
+  const hdrSpots = {};
+  for (const p of ['ns_pro', 'ns2_pro', 'dualsense']) {
+    await page.click(`#board [data-pad="${p}"]`);
+    await settle(page);
+    hdrSpots[p] = await page.evaluate(() => ['[data-act="rumble"]', '.omode', '.omode [data-mode="pad"]'].map(s => {
+      const r = document.querySelector('#board .hdr ' + s).getBoundingClientRect(); return [r.left, r.width].join('/'); }).join(' '));
+  }
+  check('header controls do not move between pad tabs (手把 / Xbox)', new Set(Object.values(hdrSpots)).size === 1, JSON.stringify(hdrSpots));
+  // Reskin Q24 B: pixel icons; icon-only buttons are the title bar's blue key.
+  check('header / footer / macro-box icons are crisp pixel art', await page.evaluate(() => {
+    const svgs = [...document.querySelectorAll('#board .omode svg, #board .gear svg, #board .b-hist svg, #board .pen svg, #board .mpg svg, #board .pwr svg')];
+    return svgs.length >= 8 && svgs.every(s => s.getAttribute('shape-rendering') === 'crispEdges' && !s.querySelector('[stroke], circle'));
+  }));
+  check('gear, pen and page keys are the blue title-bar key', await page.evaluate(() =>
+    ['#board .hdr .gear', '#board .mpg button:not(.pdot)', '#board .mt .pen'].map(q => document.querySelector(q)).filter((e, i) => e || i < 2).every(e => {
+      const c = e && getComputedStyle(e);
+      return !!c && c.borderTopColor === 'rgb(0, 7, 20)' && c.color === 'rgb(196, 252, 255)' && /linear-gradient/.test(c.backgroundImage);
+    })));
+
   // ── Layout: the window never scrolls; the board always fits ──────────────
-  for (const [w, h] of [[880, 560], [980, 640], [1280, 800], [1600, 1000]]) {
+  for (const [w, h] of [[880, 560], [994, 669], [1280, 800], [1600, 1000], [1988, 1338]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(150);
     const m = await page.evaluate(() => {
@@ -506,16 +549,18 @@ try {
     });
     check(`no scroll and board fits @${w}x${h}`,
       m.sw === m.cw && m.sh === m.ch && m.l >= -0.5 && m.t >= -0.5 && m.r <= m.iw + 0.5 && m.b <= m.ih + 0.5, JSON.stringify(m));
-    // The header band runs the full window width, flush with the board's header (v3.2.1).
-    const band = await page.evaluate(() => {
-      const b = document.getElementById('hband'), h = document.querySelector('#board .hdr');
-      if (!b) return null;
-      const r = b.getBoundingClientRect(), q = h.getBoundingClientRect();
-      return { l: r.left, r: r.right, t: r.top, b: r.bottom, hb: q.bottom, iw: innerWidth, same: getComputedStyle(b).backgroundColor === getComputedStyle(h).backgroundColor };
+    // The drawn window (v3.3.0): a whole scale when the viewport allows one (n = 994x669 multiples),
+    // centred on whole pixels with a steel margin when bigger, a fractional fit only below 1x.
+    const win = await page.evaluate(() => {
+      const r = document.getElementById('win').getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height, iw: innerWidth, ih: innerHeight, margin: document.getElementById('app').classList.contains('margin') };
     });
-    check(`header band spans the window @${w}x${h}`, !!band && band.l <= 0 && band.r >= band.iw && band.t <= 0 && Math.abs(band.b - band.hb) <= 1 && band.same, JSON.stringify(band));
+    const n = Math.floor(Math.min(w / 994, h / 669) + 0.01);
+    const whole = n >= 1 ? Math.abs(win.w - 994 * n) < 0.01 && Math.abs(win.h - 669 * n) < 0.01 && Number.isInteger(win.x) && Number.isInteger(win.y)
+      : win.w <= w + 0.5 && win.h <= h + 0.5;
+    check(`window drawn at a whole scale @${w}x${h}`, whole && win.margin === (win.x > 0 || win.y > 0), JSON.stringify(win));
   }
-  await page.setViewportSize({ width: 980, height: 640 });
+  await page.setViewportSize({ width: 994, height: 669 });
   const ob = await page.evaluate(() => ({
     html: getComputedStyle(document.documentElement).overscrollBehaviorX,
     body: getComputedStyle(document.body).overscrollBehaviorX,
@@ -527,6 +572,23 @@ try {
   await settle(page);
   await page.evaluate(() => window.__mockEmit('button-down', { id: 12 }));
   await settle(page);
+  // Reskin Q10/Q12: a held key that is also a pale bound key shows rose, not pale.
+  {
+    // Final review I2: a picked key that is also bound (pale) shows the blue picked look.
+    const u = await page.evaluate(() => document.querySelector('#board .kbd .tile.used')?.dataset.tile);
+    await page.click(`#board .kbd [data-tile="${u}"]`);
+    await settle(page);
+    check('picked bound key is blue over pale', await page.evaluate(k => {
+      const t = document.querySelector(`#board .kbd [data-tile="${k}"]`);
+      return t.classList.contains('picked') && t.classList.contains('used') && getComputedStyle(t).backgroundImage.includes('rgb(26, 144, 230)');
+    }, u), u);
+    await page.click(`#board .kbd [data-tile="${u}"]`);
+    await settle(page);
+  }
+  check('held bound key is rose over pale', await page.evaluate(() => {
+    const t = document.querySelector('#board .pal .tile.hit.used'); if (!t) return false;
+    return getComputedStyle(t).backgroundImage.includes('rgb(233, 103, 133)');
+  }));
   check('button-down lights its slot and its line', (await slot(page, '12').getAttribute('class')).includes('hit') &&
     (await page.locator('#board .lines g.hit').count()) === 1);
   check('button-down lights the bound tile', (await tile(page, '↓').getAttribute('class')).includes('hit'));
@@ -573,10 +635,11 @@ try {
     (await countCalls(page, 'set_capture_active')) === capBefore + 1);
   check('capture bar text is exact', ((await page.locator('#board .capbar').textContent()) || '').trim() === '按鍵鼠上的鍵，或點下面的方塊（Esc 取消）');
   {
-    const c = await page.evaluate(() => { const r = document.querySelector('#board .capbar').getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }; });
-    check('capture bar sits on the gap between the two cards (centre y 400, x 490)', Math.abs(c.y - 400) <= 0.5 && Math.abs(c.x - 490) <= 1, JSON.stringify(c));
+    // Screen readers only (reskin Q8): the blue slot shows the wait; the text stays for assistive tech.
+    const c = await page.evaluate(() => { const e = document.querySelector('#board .capbar'), r = e.getBoundingClientRect(); return { w: r.width, h: r.height, role: e.getAttribute('role') }; });
+    check('capture text is for screen readers only (role=status, 1px box)', c.role === 'status' && c.w <= 1 && c.h <= 1, JSON.stringify(c));
   }
-  check('waiting slot has the keycap badge', (await slot(page, '3').locator('.kc').count()) === 1);
+  check('waiting slot has no keycap badge (reskin Q8)', (await slot(page, '3').locator('.kc').count()) === 0 && (await slot(page, '3').getAttribute('class')).includes('sel'));
   await page.keyboard.press('f');
   await settle(page);
   const capBind = await lastCall(page, 'set_binding');
@@ -662,6 +725,10 @@ try {
     saved.args.name === '連發' && saved.args.def.loop === true && saved.args.def.steps[0].key === 'a' &&
     JSON.stringify(saved.args.def.steps[0].delay_ms) === '[40,70]', seq.join(',') + ' ' + JSON.stringify(saved?.args));
   check('the editor closes after 完成', (await page.locator('#board .med').count()) === 0);
+  check('macro pen is the blue title-bar key (Q24 B)', await page.evaluate(() => {
+    const c = getComputedStyle(document.querySelector('#board .mt .pen'));
+    return c.borderTopColor === 'rgb(0, 7, 20)' && /linear-gradient/.test(c.backgroundImage);
+  }));
   await page.locator('#board [data-medit="連發"]').click();
   await settle(page);
   await page.click('#board .med [data-act="mdel"]');
@@ -689,6 +756,23 @@ try {
     window.__mockEmit('config-changed', { source: 'watcher' });
   });
   await settle(page);
+  {
+    // Final review I1: a name wider than its tile shows its start and ends in an ellipsis (not cut on both sides).
+    await page.evaluate(() => {
+      window.__mock.config.macros['火焰連擊大招必殺'] = { loop: false, steps: [{ key: 'z', action: 'down', delay_ms: [40, 60] }, { key: 'z', action: 'up', delay_ms: [15, 25] }] };
+      window.__mockEmit('config-changed', { source: 'watcher' });
+    });
+    await settle(page);
+    const starts = await page.evaluate(() => [...document.querySelectorAll('#board .mt .tile')].map(t => {
+      const n = [...t.childNodes].find(c => c.nodeType === 3), r = document.createRange();
+      r.setStart(n, 0); r.setEnd(n, 1);
+      const a = r.getBoundingClientRect(), b = t.getBoundingClientRect();
+      return { name: t.textContent, ok: a.left >= b.left + 1 && getComputedStyle(t).textOverflow === 'ellipsis' };
+    }));
+    check('long macro names show their first character (ellipsis at the end)', starts.length > 0 && starts.every(x => x.ok), JSON.stringify(starts));
+    await page.evaluate(() => { delete window.__mock.config.macros['火焰連擊大招必殺']; window.__mockEmit('config-changed', { source: 'watcher' }); });
+    await settle(page);
+  }
   const nRename = await countCalls(page, 'rename_macro');
   await page.locator('#board [data-medit="macro_attack_combo"]').click();
   await settle(page);
@@ -710,6 +794,10 @@ try {
   await page.click('#board [data-act="opencfg"]');
   await page.click('#board [data-act="opendir"]');
   await settle(page);
+  check('settings close is the title-bar close key at 2x (Q24 B)', await page.evaluate(() => {
+    const k = document.querySelector('#board .whd .x svg');
+    return !!k && k.getAttribute('width') === '24' && k.getAttribute('viewBox') === '0 0 12 12' && !!k.querySelector('path[fill="#000714"]');
+  }));
   check('用記事本開啟 / 開啟所在資料夾 invoke their commands', (await countCalls(page, 'open_config_in_editor')) === 1 && (await countCalls(page, 'open_config_folder')) === 1);
   for (let i = 0; i < 8; i++) {
     await page.evaluate(i => window.__mockEmit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'k' + i, action: i % 2 ? 'up' : 'down' }), i);

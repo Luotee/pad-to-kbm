@@ -2,13 +2,16 @@
 // (keymap-board.html): groups of slots around the pad and orthogonal guide
 // lines. 980×640 board units. The mockup's layout editor is not shipped.
 
+// A 4-slot group with no middle slot packs tight, like the MapleStory quick slot: up and down
+// meet in the centre column, every seam 2px (the plate under each slot shows through).
 function diamond(cx, cy, keys, tags) {
-  var pos = [[cx - 19, cy - 59], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 21]];
+  var pos = [[cx - 19, cy - 39], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 1]];
   return keys.map(function (k, i) { return { key: k, tag: tags[i], x: pos[i][0], y: pos[i][1] }; });
 }
 
 function cross(cx, cy, ids) {
-  return diamond(cx, cy, ids.slice(0, 4), ['S:up', 'S:left', 'S:right', 'S:down']).concat([{ key: ids[4], tag: 'S:press', x: cx - 19, y: cy - 19 }]);
+  var pos = [[cx - 19, cy - 59], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 21]], tg = ['S:up', 'S:left', 'S:right', 'S:down'];
+  return ids.slice(0, 4).map(function (k, i) { return { key: k, tag: tg[i], x: pos[i][0], y: pos[i][1] }; }).concat([{ key: ids[4], tag: 'S:press', x: cx - 19, y: cy - 19 }]);
 }
 
 function groupSlots(g) {
@@ -22,12 +25,12 @@ function groupSlots(g) {
 
 function groupBox(g) {
   if (g.kind === 'pair') return [g.x - 124, g.y - 81, g.x + 124, g.y + 59];
-  var h = { diamond: 59, cross: 59, quad: 42, slot: 19, tpsw: 27 }[g.kind];
+  var h = { diamond: 59, cross: 59, quad: 42, slot: 19 }[g.kind];
   return [g.x - h, g.y - h, g.x + h, g.y + h];
 }
 
 function face(g, side) {
-  var e = { diamond: 59, cross: 59, quad: 42, slot: 19, pair: 124 }[g.kind], ev = g.kind === 'pair' ? 59 : e;
+  var e = { diamond: 59, cross: 59, quad: 42, slot: 19, pair: 124 }[g.kind], ev = (g.kind === 'pair' || g.kind === 'diamond') ? 39 : e;
   var vx = g.kind === 'pair' ? g.x + (g.x < 490 ? 65 : -65) : g.x;
   return side === 'r' ? [g.x + e, g.y] : side === 'l' ? [g.x - e, g.y] : side === 't' ? [vx, g.y - ev] : [vx, g.y + ev];
 }
@@ -76,7 +79,6 @@ function defaultLayout(pad) {
       { id: 'ls', kind: 'cross', x: 244, y: 320, keys: LS },
       { id: 'share', kind: 'slot', x: 399, y: 89, keys: ['4'], tags: ['Share'] },
       { id: 'tpq', kind: 'quad', x: 490, y: 112, keys: ['25', '26', '27', '28'], tags: ['T:tl', 'T:tr', 'T:bl', 'T:br'] },
-      { id: 'tpsw', kind: 'tpsw', x: 566, y: 97 },
       { id: 'opt', kind: 'slot', x: 617, y: 89, keys: ['6'], tags: ['Opt'] },
       { id: 'ps', kind: 'slot', x: 491, y: 372, keys: ['5'], tags: ['PS'] });
     R.push({ id: 'dpad', g: 'dpad', side: 'r', pts: [[155, 288], [188, 288], [188, 234], [416, 234]], m: 'c' },
@@ -210,10 +212,6 @@ export function routeHTML(p, r, m, hit) {
   }
   var d = pts.map(function (q, i) { return (i ? 'L' : 'M') + (q[0] + 0.5) + ',' + (q[1] + 0.5); }).join(' '), e = pts[n - 1];
   var ex = e[0] + 0.5, ey = e[1] + 0.5;
-  if (hit) {
-    return '<g class="hit"><path d="' + d + '" fill="none" stroke="#7a5c00" stroke-width="5" stroke-linejoin="miter"/>' +
-      '<circle cx="' + ex + '" cy="' + ey + '" r="4.5" fill="#7a5c00"/><path d="' + d + '" fill="none" stroke="#ffcf2e" stroke-width="3" stroke-linejoin="miter"/>' +
-      '<circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#ffcf2e"/></g>';
-  }
-  return '<g><path d="' + d + '" fill="none" stroke="#c4232c" stroke-width="3" stroke-linejoin="miter"/><circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#c4232c"/></g>';
+  // A lit line (pad button held) keeps its shape and only changes colour: `g.hit` in board.css.
+  return '<g' + (hit ? ' class="hit"' : '') + '><path d="' + d + '" fill="none" stroke="#c4232c" stroke-width="3" stroke-linejoin="miter"/><circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#c4232c"/></g>';
 }

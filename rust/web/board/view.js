@@ -3,7 +3,7 @@
 
 import { layoutFor, slotsOf, groupSlots, routeHTML } from './layout.js';
 import { padSvg } from './padart.js';
-import { esc, tagSvg, TAGTXT } from './tags.js';
+import { esc, tagSvg, TAGTXT, switchHTML } from './tags.js';
 import { LABEL } from './keys.js';
 import { boardBinds, PADS, PAD_NAMES } from './model.js';
 import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
@@ -63,7 +63,7 @@ function slotBtn(st, key, tag, x, y, b) {
   return '<button type="button" class="slot' + (k ? ' on' : '') + (mac ? ' mac' : '') + (st.held[key] ? ' hit' : '') + (wait ? ' wait sel' : '') +
     '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k ? 'true' : 'false') + '" aria-label="' +
     esc((TAGTXT[tag] || tag) + (k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
-    (wait ? '<span class="kc" aria-hidden="true">' + ICON.keycap + '</span>' : '') + '<span class="val">' + esc(disp(k)) + '</span></button>';
+    '<span class="val">' + esc(disp(k)) + '</span></button>';
 }
 
 function qcapHTML(pad, side, mode) {
@@ -72,10 +72,6 @@ function qcapHTML(pad, side, mode) {
     '<button type="button" data-qs="' + side + '" data-mode="single" aria-pressed="' + !on + '">單鍵</button></span>';
 }
 
-function sw(act, label, on) {
-  return '<button type="button" class="sw' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-act="' + act + '"><span>' + label +
-    '</span><span class="track"><span class="knob"></span></span></button>';
-}
 
 export function render(st) {
   const pad = st.pad, cfg = st.config, modes = triggerModes(cfg, pad), L = layoutFor(pad, modes), b = boardBinds(cfg, pad);
@@ -87,7 +83,10 @@ export function render(st) {
       PAD_NAMES[p] + '</span></button>' +
       (c ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
   }
-  h += '</div><div class="sp"></div>' + sw('rumble', '連線震動', cfg.rumble_on_connect !== false) + omodeHTML(st, pad) + bangHTML() +
+  // The DualSense touchpad-cursor switch sits left of 連線震動 (reskin Q18), so the other controls keep
+  // their place when it comes and goes; it locks with the board outside 鍵鼠 (events.js LOCKED).
+  h += '</div><div class="sp"></div>' + (pad === 'dualsense' ? switchHTML('tp', '觸控板游標', cfg.touchpad_cursor_enabled !== false) : '') +
+    switchHTML('rumble', '連線震動', cfg.rumble_on_connect !== false) + omodeHTML(st, pad) + bangHTML() +
     '<button type="button" class="gear" data-act="setopen" aria-label="設定" title="設定">' + ICON.gear + '</button></header>';
   h += '<div class="stage"></div>' + padSvg(pad);
   const om = outputMode(st, pad);
@@ -95,12 +94,9 @@ export function render(st) {
   else if (om === 'pad' && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(pad) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {
-    if (g.q) h += '<div class="qcap" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 82) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';
-    if (g.kind === 'tpsw') {
-      const on = cfg.touchpad_cursor_enabled !== false;
-      h += '<button type="button" class="tstack' + (on ? ' on' : '') + '" style="left:' + (g.x - 27) + 'px;top:' + (g.y - 27) + 'px" role="switch" aria-checked="' + on +
-        '" aria-label="觸控板移動滑鼠游標" data-act="tp">' + ICON.touchpad + '<span class="track"><span class="knob"></span></span></button>';
-    }
+    if (g.q) h += '<div class="qcap" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 66) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';
+    // One dark plate under every slot; touching slots merge into one group base (MapleStory quick slot).
+    for (const s of groupSlots(g)) h += '<i class="plate" style="left:' + (s.x - 2) + 'px;top:' + (s.y - 2) + 'px"></i>';
     for (const s of groupSlots(g)) {
       h += slotBtn(st, s.key, s.tag, s.x, s.y, b);
       if (st.held[s.key]) hot[g.id] = true;
@@ -110,8 +106,11 @@ export function render(st) {
   h += '<svg class="lines" viewBox="0 0 980 640" aria-hidden="true">' + L.routes.map(r => routeHTML(r.pts, r.r, r.m, !!hot[r.g])).join('') + '</svg>';
   const lock = st.medit ? ' locked' : '';
   const waiting = st.sel !== null && !st.medit;
-  h += '<section class="pal">' + (waiting ? '<div class="capbar" role="status">' + CAPTURE_TEXT + '</div>' : '') + keyboardHTML(st) +
-    '<div class="m3s' + lock + '">' + mouseHTML(st) + '</div>' + macroBoxHTML(st, lock) + '</section>';
+  // Tiles already bound on this pad are drawn pale (display only, iron rule 9).
+  const used = new Set(Object.values(b).filter(v => typeof v === 'string' && v));
+  // The capture hint is for screen readers only (the board shows the blue slot).
+  h += '<section class="pal">' + (waiting ? '<div class="capbar" role="status">' + CAPTURE_TEXT + '</div>' : '') + keyboardHTML(st, used) +
+    '<div class="m3s' + lock + '">' + mouseHTML(st, used) + '</div>' + macroBoxHTML(st, lock, used) + '</section>';
   h += popHTML();
   if (st.medit) h += editorHTML(st);
   if (st.setOpen) h += settingsHTML(st);

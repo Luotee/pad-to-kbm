@@ -9,18 +9,37 @@ import { startMacros } from './board/macros.js';
 import { startSettings } from './board/settings.js';
 import { startCalibration } from './board/calibration.js';
 import { startVigem, maybeProbe } from './board/vigem.js';
+import { fitKeyLabels } from './board/palette.js';
+import { chromeHTML, fitWindow } from './chrome.js';
+import { appWindow } from './ipc.js';
 
 const board = document.getElementById('board');
+const win = document.getElementById('win');
 
-const band = document.getElementById('hband');
+// The drawn window (reskin v3.3.0): frame + title bar around the board. The title bar drags the window
+// (no double-click maximise: the window keeps whole-pixel sizes, see chrome.js fitWindow).
+win.insertAdjacentHTML('beforeend', chromeHTML());
+const tbar = document.getElementById('wtbar');
+tbar.addEventListener('mousedown', ev => {
+  if (ev.button !== 0 || ev.target.closest('.wb')) return;
+  appWindow()?.startDragging();
+});
+tbar.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-win]');
+  if (!b) return;
+  const w = appWindow();
+  if (b.dataset.win === 'min') w?.minimize();
+  else w?.close();   // CloseRequested ends the app and releases held keys (runtime.rs)
+});
+
+// Scale before the first frame (and before any await): the board layer is rastered at its first scale.
+fit();
+addEventListener('resize', fit);
 
 function fit() {
-  // Wider than 980:640 → centred with side margins; taller → pinned to the top
-  // (an empty header-coloured block above the header looks broken).
-  const k = Math.min(innerWidth / 980, innerHeight / 640), ty = 0;
-  board.style.transform = `translate(${(innerWidth - 980 * k) / 2}px, ${ty}px) scale(${k})`;
-  // The header colour runs the full window width, flush with the board's header.
-  band.style.height = (ty + 52 * k) + 'px';
+  const f = fitWindow(innerWidth, innerHeight, devicePixelRatio || 1);
+  win.style.transform = `translate(${f.x}px, ${f.y}px) scale(${f.k})`;
+  document.getElementById('app').classList.toggle('margin', f.margin);
 }
 
 function paint() {
@@ -28,6 +47,7 @@ function paint() {
   const lock = boardLocked(state);
   board.className = 'mock' + (outputMode(state, state.pad) !== 'kbm' ? ' off' : '') + (lock ? ' lock' : '');
   board.innerHTML = render(state);
+  fitKeyLabels(board);
   maybeProbe();
   // A slot waiting for a key, or a picked tile, ends when the board locks.
   if (lock && (state.sel !== null || state.picked)) queueMicrotask(() => selectSlot(null));
@@ -42,7 +62,5 @@ await startSettings(board);
 startCalibration();
 startVigem();
 paint();
-fit();
-addEventListener('resize', fit);
 // Tag ink boxes are measured with the pixel font; re-measure once it loaded.
 if (document.fonts) document.fonts.ready.then(() => { resetInk(); paint(); });

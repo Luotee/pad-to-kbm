@@ -184,9 +184,9 @@ What a PASS requires, captured as evidence:
   `${XDG_CACHE_HOME:-~/.cache}/pad-to-kbm-tools/`; nothing to install by hand.
 - Screenshot `rust/target/verify/web-main.png`; README pictures come from
   `scripts/readme-shots.mjs`.
-- The app and tray icons (`rust/icons/*.ico`) are rendered from the
-  board's DualSense art by `scripts/build-icons.mjs` (previews in
-  `rust/target/icons-preview/`); re-run it when `padart.js` changes.
+- The app and tray icons (`rust/icons/*.ico`) are the pixel grids in
+  `scripts/icon-art.mjs`, rendered by `scripts/build-icons.mjs` (previews in
+  `rust/target/icons-preview/`); re-run it when `icon-art.mjs` changes.
 
 web-smoke runs in plain Chromium, so it cannot see what WebView2's host
 layer changes. One such trap is pinned by `rust/tests/tauri_conf.rs`: the
@@ -196,7 +196,10 @@ macro step order) while web-smoke stays green. That shipped in v3.0.0 and
 was fixed in v3.1.1.
 
 For scroll / layout bugs, measure don't eyeball: the board is a fixed
-980×640 surface scaled to the window (`app.js`); at several viewport
+980×640 surface inside the page-drawn 994×669 window (`#win`: frame + title
+bar, v3.3.0), scaled by a whole number of device pixels per art pixel
+(`chrome.js` `fitWindow`; Rust sizes the window, `gui/winscale.rs`;
+`decorations` / `transparent` are pinned by `rust/tests/tauri_conf.rs`); at several viewport
 sizes assert `scrollWidth == clientWidth`, `scrollHeight ==
 clientHeight` and that `#board` lies inside the viewport, and read
 computed `overscroll-behavior-x` (`html, body { overscroll-behavior:

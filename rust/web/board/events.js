@@ -4,7 +4,7 @@
 import { state, rerender, setPad } from './store.js';
 import * as act from './actions.js';
 import { boardBinds } from './model.js';
-import { macroPages } from './palette.js';
+import { macroPages, dragGhostHTML } from './palette.js';
 import { boardLocked } from './view.js';
 
 const drag = { key: null, from: null, dropped: false, step: null };
@@ -16,7 +16,7 @@ const consumed = (kind, ev, el) => hooks[kind].some(f => f(ev, el, drag));
 
 // What a locked board ignores: everything below the header except the macro
 // editor and the settings window (which are not open while it is locked).
-const LOCKED = '.slot,.tile,.tstack,.qcap,.pal,.lines,[data-act="reset"],[data-act="clear"],[data-act="undo"],[data-act="redo"],[data-mpage]';
+const LOCKED = '.slot,.tile,[data-act="tp"],.qcap,.pal,.lines,[data-act="reset"],[data-act="clear"],[data-act="undo"],[data-act="redo"],[data-mpage]';
 
 export function wire(board) {
   const gate = ev => {
@@ -67,6 +67,13 @@ export function wire(board) {
     if (t) {
       drag.key = t.dataset.tile; drag.from = null;
       try { ev.dataTransfer.setData('text/plain', drag.key); ev.dataTransfer.effectAllowed = 'copy'; } catch (x) { /* ignore */ }
+      // Drag image: the slot the key will become (reskin Q7 C). The node only lives for this dragstart.
+      const g = document.createElement('div');
+      g.innerHTML = dragGhostHTML(drag.key); g.firstChild.style.cssText = 'position:absolute;left:-200px;top:0';
+      board.appendChild(g.firstChild);
+      const ghost = board.lastChild;
+      try { ev.dataTransfer.setDragImage(ghost, 19, 19); } catch (x) { /* ignore */ }
+      setTimeout(() => ghost.remove(), 0);
       return;
     }
     const s = ev.target.closest('[data-slot]');

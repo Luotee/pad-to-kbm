@@ -3,7 +3,7 @@
 
 import { invoke } from '../ipc.js';
 import { state, rerender, reloadConfig } from './store.js';
-import { esc } from './tags.js';
+import { esc, switchHTML } from './tags.js';
 import { LABEL, MOUSE_TILES } from './keys.js';
 import { keyToTile, tileToKey } from './model.js';
 import { ICON } from './icons.js';
@@ -27,8 +27,7 @@ export function editorHTML(st) {
   const m = st.medit;
   let h = '<section class="med" aria-label="編輯巨集">';
   h += '<div class="mhd">' + ICON.mac + '<input class="mname" data-f="mname" value="' + esc(m.name) + '" maxlength="' + NAME_MAX + '" aria-label="巨集名稱">' +
-    '<button type="button" class="sw' + (m.loop ? ' on' : '') + '" role="switch" aria-checked="' + m.loop + '" data-act="mloop" title="按住按鍵時一直重複">' + ICON.loop +
-    '<span>按住時重複</span><span class="track"><span class="knob"></span></span></button>' +
+    switchHTML('mloop', '按住時重複', m.loop, { title: '按住按鍵時一直重複', icon: ICON.loop }) +
     '<div class="sp"></div>' + (m.err ? '<span class="merr" role="alert">' + esc(m.err) + '</span>' : '') +
     '<button type="button" class="mbtn del" data-act="mdel" aria-label="刪除這個巨集" title="刪除巨集">' + ICON.trash + '</button>' +
     '<button type="button" class="mbtn ok" data-act="mdone">完成</button></div><div class="tl" data-tl="1">';
@@ -42,7 +41,7 @@ export function editorHTML(st) {
       h += '<div class="dpop" role="group" aria-label="等待時間（毫秒）"><div class="row">' + ICON.clock +
         '<input class="num" type="number" min="0" step="5" data-f="dlo" data-i="' + i + '" value="' + s.d[0] + '" aria-label="最短毫秒" aria-invalid="' + bad + '">–' +
         '<input class="num" type="number" min="0" step="5" data-f="dhi" data-i="' + i + '" value="' + s.d[1] + '" aria-label="最長毫秒" aria-invalid="' + bad + '"></div>' +
-        '<div class="row" style="color:' + (bad ? '#8f1c22' : 'var(--mute)') + '">' + (bad ? '前面要比後面小' : '每次隨機，毫秒') + '</div></div>';
+        '<div class="row hint' + (bad ? ' bad' : '') + '">' + (bad ? '前面要比後面小' : '每次隨機，毫秒') + '</div></div>';
     }
     h += '</div>';
   });
@@ -152,7 +151,7 @@ export function startMacros(board) {
       pill.classList.toggle('bad', bad);
       const msg = board.querySelector('.dpop .row:last-child');
       msg.textContent = bad ? '前面要比後面小' : '每次隨機，毫秒';
-      msg.style.color = bad ? '#8f1c22' : 'var(--mute)';
+      msg.classList.toggle('bad', bad);
     }
   });
 
