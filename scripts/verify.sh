@@ -364,6 +364,10 @@ layer_gui_smoke() {
         record gui-smoke FAIL "GUI build rc=$rc"
         return
     fi
+    if ! python3 "$REPO_ROOT/scripts/verify/exe-icon.py" "$exe" "$RUST_DIR/icons/icon.ico" >>"$log" 2>&1; then
+        record gui-smoke FAIL "exe does not embed rust/icons/icon.ico (see log)"
+        return
+    fi
 
     local name
     for name in "$GUI_EXE_NAME" "$LEGACY_EXE_NAME"; do
