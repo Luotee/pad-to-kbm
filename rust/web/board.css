@@ -25,7 +25,6 @@ button:focus-visible,.mock .rng:focus-visible{outline:3px solid var(--gold);outl
 .slot .kc{position:absolute;right:2px;top:2px;display:flex;color:var(--ink);background:var(--gold);border-radius:3px;padding:1px}
 .slot .kc svg{width:13px;height:10px}
 @keyframes waitpulse{50%{outline-color:rgba(255,207,46,.25)}}
-.mock .capbar{position:absolute;left:50%;top:-15px;transform:translateX(-50%);box-sizing:border-box;height:18px;display:flex;align-items:center;padding:0 12px;border:2px solid #7a5c00;border-radius:6px;background:var(--gold);color:#3a2a00;font-size:11px;white-space:nowrap;z-index:2}
 .mock .pal.waitkbd .kbd{box-shadow:0 0 0 3px var(--gold),0 0 14px 4px rgba(255,207,46,.8);animation:kbdpulse 1s ease-in-out infinite}
 @keyframes kbdpulse{50%{box-shadow:0 0 0 3px rgba(255,207,46,.4),0 0 4px 1px rgba(255,207,46,.3)}}
 .slot.wide{width:70px}
@@ -359,7 +358,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock{will-change:transform}
 
 /* Q8 (user): no capture hint bar between the cards. */
-.mock .capbar{display:none}
+.mock .capbar{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);border:0;white-space:nowrap}
 
 /* Q8 (user): no keycap badge on the slot waiting for a key. */
 .mock .slot .kc{display:none}

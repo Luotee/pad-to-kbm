@@ -186,8 +186,12 @@ function tauriMock({ config, version }) {
     }
   }
 
+  // The drawn title bar (v3.3.0) drives the window through the Tauri window API.
+  const winCall = cmd => async () => { window.__mockCalls.push({ cmd, args: {} }); };
+  const appWindow = { minimize: winCall('window.minimize'), close: winCall('window.close'), startDragging: winCall('window.startDragging') };
   window.__TAURI__ = {
     core: { invoke },
+    window: { getCurrentWindow: () => appWindow },
     event: {
       listen: async (name, cb) => {
         const id = nextId++;
@@ -218,7 +222,8 @@ const pageErrors = [];
 const dialogs = [];
 
 try {
-  const context = await browser.newContext({ viewport: { width: 980, height: 640 } });
+  // The window is the drawn MapleStory window, 994x669 at 1x (board 980x640 at 7,22; chrome.js).
+  const context = await browser.newContext({ viewport: { width: 994, height: 669 } });
   await context.addInitScript(tauriMock, { config: exampleConfig, version: appVersion });
   const page = await context.newPage();
   page.on('pageerror', e => pageErrors.push(String(e && (e.stack || e))));
@@ -359,7 +364,7 @@ try {
     const b = document.querySelector('#board .obanner'); if (!b) return null;
     const r = b.getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
   });
-  const bannerCentred = async () => { const c = await bannerBox(); return !!c && Math.abs(c.x - 490) <= 1 && Math.abs(c.y - 228) <= 1; };
+  const bannerCentred = async () => { const c = await bannerBox(); return !!c && Math.abs(c.x - 497) <= 1 && Math.abs(c.y - 250) <= 1; };   // stage centre (490, 228) + board at (7, 22)
   // Click / drag by coordinates, so whatever covers the target gets the event (as a real mouse would).
   const centre = async loc => { const r = await loc.boundingBox(); return [r.x + r.width / 2, r.y + r.height / 2]; };
   const mouseClick = async loc => { const [x, y] = await centre(loc); await page.mouse.click(x, y); await settle(page); };
@@ -394,7 +399,7 @@ try {
   await page.screenshot({ path: path.join(outDir, 'web-mode-off.png') });
   check('關 does not write the config', (await countCalls(page, 'set_mapping_enabled')) === 0);
   // Not 鍵鼠 → the board is locked (v3.2.1): nothing below the header edits.
-  check('關 banner sits at the stage centre (490, 228)', await bannerCentred(), JSON.stringify(await bannerBox()));
+  check('關 banner sits at the stage centre (490, 228 on the board)', await bannerCentred(), JSON.stringify(await bannerBox()));
   await expectLocked('關');
   await page.click('#board .omode [data-mode="pad"]');
   await settle(page);
@@ -495,8 +500,26 @@ try {
   await page.click('#board [data-pad="dualsense"]');
   await settle(page);
 
+  // ── The drawn window (v3.3.0): title bar, minimise / close, touchpad switch in the header ──
+  check('title bar reads PAD TO KBM', ((await page.locator('#wtbar .wt').textContent()) || '') === 'PAD TO KBM');
+  await page.click('#wtbar [data-win="min"]');
+  check('title-bar minimise calls window.minimize', (await countCalls(page, 'window.minimize')) === 1);
+  await page.mouse.move(300, 10); await page.mouse.down(); await page.mouse.up();
+  check('title-bar drag calls window.startDragging', (await countCalls(page, 'window.startDragging')) >= 1);
+  await page.click('#wtbar [data-win="close"]');
+  check('title-bar close calls window.close', (await countCalls(page, 'window.close')) === 1);
+  check('touchpad switch sits in the header left of 連線震動 (DualSense)',
+    await page.evaluate(() => { const t = document.querySelector('#board .hdr [data-act="tp"]'), r = document.querySelector('#board .hdr [data-act="rumble"]');
+      return !!t && !!r && t.nextElementSibling === r && !document.querySelector('#board .stage ~ [data-act="tp"], #board .tstack'); }));
+  check('touchpad switch is a 關｜開 pair', ((await page.locator('#board .hdr [data-act="tp"] .track').textContent()) || '') === '關開');
+  await page.click('#board [data-pad="ns_pro"]');
+  await settle(page);
+  check('no touchpad switch on the Switch Pro tab', (await page.locator('#board [data-act="tp"]').count()) === 0);
+  await page.click('#board [data-pad="dualsense"]');
+  await settle(page);
+
   // ── Layout: the window never scrolls; the board always fits ──────────────
-  for (const [w, h] of [[880, 560], [980, 640], [1280, 800], [1600, 1000]]) {
+  for (const [w, h] of [[880, 560], [994, 669], [1280, 800], [1600, 1000], [1988, 1338]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(150);
     const m = await page.evaluate(() => {
@@ -506,16 +529,18 @@ try {
     });
     check(`no scroll and board fits @${w}x${h}`,
       m.sw === m.cw && m.sh === m.ch && m.l >= -0.5 && m.t >= -0.5 && m.r <= m.iw + 0.5 && m.b <= m.ih + 0.5, JSON.stringify(m));
-    // The header band runs the full window width, flush with the board's header (v3.2.1).
-    const band = await page.evaluate(() => {
-      const b = document.getElementById('hband'), h = document.querySelector('#board .hdr');
-      if (!b) return null;
-      const r = b.getBoundingClientRect(), q = h.getBoundingClientRect();
-      return { l: r.left, r: r.right, t: r.top, b: r.bottom, hb: q.bottom, iw: innerWidth, same: getComputedStyle(b).backgroundColor === getComputedStyle(h).backgroundColor };
+    // The drawn window (v3.3.0): a whole scale when the viewport allows one (n = 994x669 multiples),
+    // centred on whole pixels with a steel margin when bigger, a fractional fit only below 1x.
+    const win = await page.evaluate(() => {
+      const r = document.getElementById('win').getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height, iw: innerWidth, ih: innerHeight, margin: document.getElementById('app').classList.contains('margin') };
     });
-    check(`header band spans the window @${w}x${h}`, !!band && band.l <= 0 && band.r >= band.iw && band.t <= 0 && Math.abs(band.b - band.hb) <= 1 && band.same, JSON.stringify(band));
+    const n = Math.floor(Math.min(w / 994, h / 669) + 0.01);
+    const whole = n >= 1 ? Math.abs(win.w - 994 * n) < 0.01 && Math.abs(win.h - 669 * n) < 0.01 && Number.isInteger(win.x) && Number.isInteger(win.y)
+      : win.w <= w + 0.5 && win.h <= h + 0.5;
+    check(`window drawn at a whole scale @${w}x${h}`, whole && win.margin === (win.x > 0 || win.y > 0), JSON.stringify(win));
   }
-  await page.setViewportSize({ width: 980, height: 640 });
+  await page.setViewportSize({ width: 994, height: 669 });
   const ob = await page.evaluate(() => ({
     html: getComputedStyle(document.documentElement).overscrollBehaviorX,
     body: getComputedStyle(document.body).overscrollBehaviorX,
@@ -527,6 +552,11 @@ try {
   await settle(page);
   await page.evaluate(() => window.__mockEmit('button-down', { id: 12 }));
   await settle(page);
+  // Reskin Q10/Q12: a held key that is also a pale bound key shows rose, not pale.
+  check('held bound key is rose over pale', await page.evaluate(() => {
+    const t = document.querySelector('#board .pal .tile.hit.used'); if (!t) return false;
+    return getComputedStyle(t).backgroundImage.includes('rgb(233, 103, 133)');
+  }));
   check('button-down lights its slot and its line', (await slot(page, '12').getAttribute('class')).includes('hit') &&
     (await page.locator('#board .lines g.hit').count()) === 1);
   check('button-down lights the bound tile', (await tile(page, '↓').getAttribute('class')).includes('hit'));
@@ -573,10 +603,11 @@ try {
     (await countCalls(page, 'set_capture_active')) === capBefore + 1);
   check('capture bar text is exact', ((await page.locator('#board .capbar').textContent()) || '').trim() === '按鍵鼠上的鍵，或點下面的方塊（Esc 取消）');
   {
-    const c = await page.evaluate(() => { const r = document.querySelector('#board .capbar').getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }; });
-    check('capture bar sits on the gap between the two cards (centre y 400, x 490)', Math.abs(c.y - 400) <= 0.5 && Math.abs(c.x - 490) <= 1, JSON.stringify(c));
+    // Screen readers only (reskin Q8): the blue slot shows the wait; the text stays for assistive tech.
+    const c = await page.evaluate(() => { const e = document.querySelector('#board .capbar'), r = e.getBoundingClientRect(); return { w: r.width, h: r.height, role: e.getAttribute('role') }; });
+    check('capture text is for screen readers only (role=status, 1px box)', c.role === 'status' && c.w <= 1 && c.h <= 1, JSON.stringify(c));
   }
-  check('waiting slot has the keycap badge', (await slot(page, '3').locator('.kc').count()) === 1);
+  check('waiting slot has no keycap badge (reskin Q8)', (await slot(page, '3').locator('.kc').count()) === 0 && (await slot(page, '3').getAttribute('class')).includes('sel'));
   await page.keyboard.press('f');
   await settle(page);
   const capBind = await lastCall(page, 'set_binding');
