@@ -518,8 +518,15 @@ try {
   await page.click('#board [data-pad="ns_pro"]');
   await settle(page);
   check('no touchpad switch on the Switch Pro tab', (await page.locator('#board [data-act="tp"]').count()) === 0);
-  await page.click('#board [data-pad="dualsense"]');
-  await settle(page);
+  // 手把 / Xbox: the header's right-hand controls keep their place across the tabs.
+  const hdrSpots = {};
+  for (const p of ['ns_pro', 'ns2_pro', 'dualsense']) {
+    await page.click(`#board [data-pad="${p}"]`);
+    await settle(page);
+    hdrSpots[p] = await page.evaluate(() => ['[data-act="rumble"]', '.omode', '.omode [data-mode="pad"]'].map(s => {
+      const r = document.querySelector('#board .hdr ' + s).getBoundingClientRect(); return [r.left, r.width].join('/'); }).join(' '));
+  }
+  check('header controls do not move between pad tabs (手把 / Xbox)', new Set(Object.values(hdrSpots)).size === 1, JSON.stringify(hdrSpots));
 
   // ── Layout: the window never scrolls; the board always fits ──────────────
   for (const [w, h] of [[880, 560], [994, 669], [1280, 800], [1600, 1000], [1988, 1338]]) {

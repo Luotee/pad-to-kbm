@@ -372,6 +372,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 /* Q9 A steel (user): mode notices drawn like the reference KEY BINDINGS title bar; every pressed mode button is rose. */
 .mock .obanner.gold,.mock .obanner.white{height:auto;padding:4px 12px;gap:6px;border:1px solid #677888;border-radius:4px;background:#fcffff;color:#000;font-size:12px;box-shadow:0 0 0 2px #9cb1c8,0 0 0 3px #677888}
 .mock .omode .o-off[aria-pressed="true"],.mock .omode .o-pad[aria-pressed="true"],.mock .omode .o-xbox[aria-pressed="true"]{background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:inset 0 0 0 1px #0b0000,inset 1px 1px 0 1px #ffedfa;text-shadow:var(--ol-rose);color:#fff}
+/* 手把 and Xbox share one slot, so the controls left of it keep their place between pad tabs. */
+.mock .omode .o-pad,.mock .omode .o-xbox{width:61px;justify-content:center}
 
 /* Q10 fade 1 (user): keys already bound on this pad turn pale but stay draggable (the harness adds .used). */
 .mock .pal .tile.used:not(.mac){background:#dcc9d0;border-color:#8a6f7c;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f6eef1,inset -1px -1px 0 #c0a9b2;color:#fff;text-shadow:0 1px 0 #8a6f7c,1px 1px 0 #8a6f7cbf,1px 0 0 #8a6f7c80}
