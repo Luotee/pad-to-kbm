@@ -7,7 +7,7 @@
 export const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
 export const PAD_NAMES = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
 export const QUICK_IDS = [0, 1, 2, 3, 11, 12, 13, 14];
-export const MOUSE_TILE = { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '滾輪上', 'wheel-down': '滾輪下' };
+export const MOUSE_TILE = { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '上滾', 'wheel-down': '下滾' };
 const MOUSE_VALUE = Object.fromEntries(Object.entries(MOUSE_TILE).map(([v, t]) => [t, v]));
 const PAGE_FIELD = { base: 'buttons', quick_l: 'quick_l', quick_r: 'quick_r' };
 

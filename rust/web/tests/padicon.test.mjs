@@ -40,7 +40,17 @@ test('grey wraps the art in a desaturating, faded group', () => {
 
 test('board drawing is unchanged by the icon export', () => {
   assert.match(padSvg('dualsense'), /^<svg class="pad"/);
-  assert.match(padSvg('dualsense'), /opacity="\.28"/);
+});
+
+// Reskin Q5: the board pad is MapleStory line art (navy ink, slate keys, no drop shadow, no colour);
+// the app / tray icons keep their colours.
+test('board pad is line art, icons keep colour', () => {
+  const b = padSvg('dualsense');
+  assert.doesNotMatch(b, /opacity="\.28"/);
+  assert.match(b, /stroke="#2d4359"/);
+  assert.doesNotMatch(b, /#a8587a|#b0405f|#ffcf2e/);
+  assert.match(padIconSvg('dualsense', { glyphs: true, small: true }), /#a8587a/);
+  assert.doesNotMatch(padIconSvg('dualsense', { glyphs: true, small: true }), /#2d4359/);
 });
 
 test('minimal drops face buttons, d-pad keys and stick tops', () => {

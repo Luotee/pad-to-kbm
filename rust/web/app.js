@@ -9,6 +9,7 @@ import { startMacros } from './board/macros.js';
 import { startSettings } from './board/settings.js';
 import { startCalibration } from './board/calibration.js';
 import { startVigem, maybeProbe } from './board/vigem.js';
+import { fitKeyLabels } from './board/palette.js';
 
 const board = document.getElementById('board');
 
@@ -28,6 +29,7 @@ function paint() {
   const lock = boardLocked(state);
   board.className = 'mock' + (outputMode(state, state.pad) !== 'kbm' ? ' off' : '') + (lock ? ' lock' : '');
   board.innerHTML = render(state);
+  fitKeyLabels(board);
   maybeProbe();
   // A slot waiting for a key, or a picked tile, ends when the board locks.
   if (lock && (state.sel !== null || state.picked)) queueMicrotask(() => selectSlot(null));

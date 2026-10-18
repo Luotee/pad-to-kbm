@@ -111,19 +111,19 @@ function fill(role) {
   return ['#ffcf2e', 2.5];
 }
 function glyphColor(g) { return g.role === 'smallT' ? K : '#ffffff'; }
-// The board (v3.2.1 palette) recolours the pad; the app / tray icons do not.
-var BOARD = { '#a8587a': '#b0405f', '#6e3a52': '#6f2338', '#4b5a7c': '#2b2f3a', '#6c7ba0': '#555b6c' };
-function boardFill(role) { var f = fill(role); return [BOARD[f[0]] || f[0], f[1]]; }
+// The board pad is line work like the MapleStory controller (v3.3.0): navy ink, the body shows the panel
+// through, slate keys, no colour, no drop shadow. The app / tray icons keep the coloured art.
+var INK = '#2d4359';
+var LINE = { body: '#b2bac0', tpad: '#b2bac0', trig: '#7b8188', back: '#7b8188', bump: '#8f969d', well: '#b2bac0', cap: '#79838f', capTop: '#8a939d', dcross: '#79838f', dkey: '#79838f', face: '#79838f' };
+function boardFill(role) { var f = fill(role); return [LINE[role] || '#79838f', f[1] ? Math.min(f[1], 3) : 0]; }
 
 function padArt(pad, sh) {
-  var M = model(pad, sh), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true"><g transform="translate(0,5)" opacity=".28">';
-  M.parts.forEach(function (p) { if (p.role === 'body' || p.role === 'trig') h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + K + '"/>'; });
-  h += '</g>';
+  var M = model(pad, sh), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
   M.parts.forEach(function (p) {
     var f = boardFill(p.role);
-    h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + K + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';
+    h += '<path d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + INK + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';
   });
-  h += M.glyphs.map(function (g) { return glyphSvg(g, glyphColor(g)); }).join('');
+  h += M.glyphs.map(function (g) { return glyphSvg(g, g.role === 'smallT' ? INK : '#ffffff'); }).join('');
   return h + '<g class="ancg"></g></svg>';
 }
 

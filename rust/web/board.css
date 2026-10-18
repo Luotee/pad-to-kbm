@@ -274,3 +274,177 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .chip.pill{padding:0 6px;border-radius:999px;background:#e1e4ea;border:1.5px solid #9aa1b0;color:var(--ink);min-width:16px}
 .mock .chip.mac{padding:0 7px;border-radius:999px;background:var(--navy);border:1.5px solid var(--navy2);color:var(--white);font-size:11px;line-height:13px}
 .mock .chip.txt{font-size:11px;line-height:13px}
+
+/* ═══ MapleStory KEY BINDINGS skin (v3.3.0) ═════════════════════════════════════
+   Layered over the rules above. Colours, bevels and seams measured pixel by pixel on the reference
+   window; Qn notes point at the design decisions (docs, not shipped). */
+:root{
+  --bg:#f2f6f8; --panel:#b2bac0; --frame:#889399; --paper:#e6ecf1; --slot:#f8fafb;
+  --pink:#bb899a; --pinkd:#271524; --pinkhi:#e56880; --navy:#778593; --navy2:#2b2f3a;
+  --ol-mauve:0 1px 0 #0a0004,1px 1px 0 rgba(10,0,4,.75),1px 0 0 rgba(42,16,30,.5);
+  --ol-rose:1px 0 #934757,-1px 0 #934757,0 1px #934757,0 -1px #934757,1px 1px #934757,-1px -1px #934757,1px -1px #934757,-1px 1px #934757;
+  --ol-grey:1px 0 #8d8d8d,-1px 0 #8d8d8d,0 1px #8d8d8d,0 -1px #8d8d8d,1px 1px #8d8d8d,-1px -1px #8d8d8d,1px -1px #8d8d8d,-1px 1px #8d8d8d;
+}
+/* ---- header → tab row ---- */
+.mock{background:linear-gradient(#e2e2e1 0 52px,var(--bg) 52px)}
+#hband{background:#e2e2e1}
+.mock .hdr{background:#e2e2e1;color:var(--ink);align-items:flex-end;padding-bottom:4px}
+.mock .hdr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;background:linear-gradient(#880e0c 0 1px,#b40704 1px 2px,#a30f0f 2px 3px,#ffe6ec 3px);z-index:0}
+.mock .hdr>*:not(.pads){align-self:center;margin-bottom:-4px}
+.mock .ttl{display:none}
+.mock .pads{gap:0;align-items:flex-end;position:relative;z-index:1}
+.mock .pd{height:30px;box-sizing:border-box;padding:0 14px;font-size:12px;border:1px solid #656565;border-bottom:0;border-radius:4px 4px 0 0;background:#bbbbbb;color:#fff;box-shadow:inset 0 1px 0 #afafaf;text-shadow:var(--ol-grey)}
+.mock .pd.act{height:31px;background:linear-gradient(#e96785,#e86780 80%,#da6075);border-color:#0b0000;box-shadow:inset 1px 1px 0 #ffedfa,inset -1px 0 0 #ffecf4,inset 2px 2px 0 #cf6d84,inset -2px 0 0 #c96178;text-shadow:var(--ol-rose)}
+.mock .pdw{align-items:flex-end}
+.mock .pdw.c .pd{border-right:0}
+.mock .pwr{height:30px;box-sizing:border-box;border:1px solid #656565;border-left:0;border-bottom:0;border-radius:0 4px 0 0;background:#bbbbbb;color:#fff}
+.mock .pdw.act .pwr{height:31px;background:linear-gradient(#e96785,#e86780 80%,#da6075);border-color:#0b0000;color:#fff;box-shadow:inset -1px 0 0 #ffecf4,inset 0 1px 0 #ffedfa}
+.mock .live{border-color:#24521a}
+.mock .live.idle{border-color:#fff}
+.mock .hdr .sw{color:var(--ink);font-size:12px}
+.mock .sw .track,.mock .qsw .track,.mock .tstack .track{box-shadow:inset 0 0 0 2px #2b2f3a}
+.mock .omode{background:#778593;border-radius:3px}
+.mock .omode button{color:#e3e8ee}
+.mock .omode .o-kbm[aria-pressed="true"]{background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:inset 0 0 0 1px #0b0000,inset 1px 1px 0 1px #ffedfa;text-shadow:var(--ol-rose)}
+.mock .gear{width:30px;height:30px;box-sizing:border-box;border:1px solid #2b2f3a;border-radius:3px;background:linear-gradient(#f6fafb,#d8dfe6);box-shadow:inset 1px 1px 0 #fff,inset -1px -1px 0 #9aa4ad;color:#454c60}
+/* ---- controller panel ---- */
+.mock .stage{background:#b2bac0;border:1px solid #889399;border-radius:0}
+.mock .qcap>span{background:#778593;border:0;border-radius:3px;color:#fff}
+.mock .seg button{border:1px solid #656565;background:#bbbbbb;color:#fff;text-shadow:var(--ol-grey)}
+.mock .seg button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);border-color:#0b0000;text-shadow:var(--ol-rose)}
+.mock .qsw.on .track,.sw.on .track,.tstack.on .track{background:#e56880}
+.mock .tstack{border:1px solid #2b2f3a;background:#f8fafb;border-radius:3px;box-shadow:0 0 0 1px #5e5d6a}
+.mock .lines g:not(.hit) path{stroke:#8a1818;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
+.mock .lines g:not(.hit) circle{fill:#8a1818;stroke:#ffc8ce;stroke-width:1}
+/* slots: empty = dark socket + light rim + white; bound = socket + dark rim + bevel + mauve */
+/* Measured on the reference pixel by pixel: empty = light rim 1px top, 2px sides, 4px bottom, near-white fill. */
+.slot{border:solid #b0b7c3;border-width:1px 2px 4px;background:#f6fafb;border-radius:3px;box-shadow:none}
+/* one dark plate per slot, drawn under every slot; touching slots merge into one group base */
+.mock .plate{position:absolute;width:42px;height:42px;border-radius:3px;background:#5b5d6a;pointer-events:none}
+.slot .tag{left:1px;top:1px}
+/* The bound outline sits on the 2px seam (outside the cell), as in the reference, so every seam reads 2px dark whatever the slot holds. */
+.slot.on{background:#bb899a;border:0;box-shadow:0 0 0 1px #271524,inset 1px 1px 0 #fff6ff,inset 2px 0 0 #ad8e9b,inset -1px -1px 0 #886877,inset -2px 0 0 #b18898}
+.slot.on .tag{left:3px;top:3px}
+.slot .val{position:absolute;right:2px;bottom:0;margin:0;padding:1px;max-width:34px;box-sizing:border-box;white-space:normal;word-break:break-all;text-align:right;font-size:12px;line-height:12px;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:#fff;text-shadow:var(--ol-mauve)}
+.slot.wide .val{max-width:64px;color:#fff}
+.slot.on.mac{background:#999999;border:0;box-shadow:0 0 0 1px #1a1a1a,inset 1px 1px 0 #ffffff,inset -1px -1px 0 #6b6b6b}
+.tile.mac{background:#9a9a9a;border-color:#1a1a1a;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #ffffff,inset -1px -1px 0 #6b6b6b}
+.tile{display:flex;align-items:center;justify-content:center;font-size:12px;line-height:12px;border:1px solid #271524;background:#bb899a;border-radius:3px;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #fff6ff,inset -1px -1px 0 #886877;text-shadow:var(--ol-mauve)}
+.tile.sm{font-size:8px;letter-spacing:-.5px}
+.tile.dis{background:#d5d9de;border-color:#8a909c;color:#7a8190;box-shadow:none;text-shadow:none}
+.tile.picked,.tile.hit{background:#ffcf2e;color:#3a2a00;border-color:#7a5c00;text-shadow:none}
+/* palette panel */
+.mock .pal{background:#e6ecf1;border:1px solid #889399;border-radius:0}
+.mock .mnew{border:2px solid #b0b7c3;border-radius:3px;background:#f8fafb;box-shadow:0 0 0 2px #575e6b;color:#575e6b}
+.mock .mpg button{border:1px solid #656565;border-radius:2px;background:#bbbbbb;color:#fff}
+.mock .mpg .pdot{border-color:#575e6b}.mock .mpg .pdot.on{background:#e56880;border-color:#7a2236}
+/* footer */
+.mock .ftr{border-top:1px solid #687c8e;background:linear-gradient(#bdd2e6,#cbdaea 2px,#9cb1c8 6px)}
+.mock .ftr button,.mock .wft button,.mock .mbtn{height:24px;padding:0 14px;border-radius:2px;font-size:11px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
+.mock .b-def,.mock .ftr .b-clr{border:1px solid #000e00;background:linear-gradient(#6ca824,#9fd152);color:#e3ffaa;text-shadow:1px 1px 0 #4a7a18}
+.mock .b-hist,.mock .b-ok,.mock .mbtn.ok{border:1px solid #000b22;background:linear-gradient(#1a90e6,#54befe);color:#ddf7ff;text-shadow:1px 1px 0 #0c5b94}
+.mock .b-hist.redo,.mock .b-cancel,.mock .mbtn.del{border:1px solid #0e0000;background:linear-gradient(#de7b21,#fa9a52);color:#ffeada;text-shadow:1px 1px 0 #9a4c0c}
+.mock .b-cfg{border:1px solid #1a1a1a;background:linear-gradient(#8a96a6,#a9b4c2);color:#fff}
+/* macro editor + settings window: title bars become light, frames 1px */
+.mock .med{border:1px solid #2b2f3a;border-radius:0;background:#e6ecf1}
+.mock .mhd,.mock .whd{background:linear-gradient(#f6fafb,#dfe6ec);color:var(--ink);border-bottom:2px solid #a50e0f;border-radius:0}
+.mock .mname{border:2px solid #b0b7c3;border-radius:3px;box-shadow:0 0 0 1px #575e6b}
+.mock .cap.down{background:#bb899a;border:1px solid #271524;border-radius:3px;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #fff6ff,inset -1px -1px 0 #886877;text-shadow:var(--ol-mauve)}
+.mock .cap.up{background:#f8fafb;border:2px solid #b0b7c3;border-radius:3px;color:#7a2236;box-shadow:0 0 0 2px #575e6b}
+.mock .dl{border:1px solid #889399;background:#d5dce3}
+.mock .setw{border:1px solid #2b2f3a;border-radius:0;box-shadow:0 0 0 1px #5e5d6a,0 6px 0 rgba(46,56,80,.35);background:#e6ecf1}
+.mock .x{border:1px solid #2b2f3a;border-radius:3px;background:linear-gradient(#f6fafb,#d8dfe6)}
+.mock .stabs{border-right:1px solid #889399}
+.mock .stabs button{border:1px solid #656565;border-radius:3px;background:#bbbbbb;color:#fff;text-shadow:var(--ol-grey)}
+.mock .stabs button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);border-color:#0b0000;text-shadow:var(--ol-rose)}
+.mock .mini{border:1px solid #2b2f3a;border-radius:3px;background:linear-gradient(#f6fafb,#d8dfe6)}
+.mock .mini.go{border-color:#0b0000;background:linear-gradient(#e96785,#da6075);color:#fff}
+.mock .rng::-webkit-slider-thumb{border-radius:3px;background:#bb899a;border:1px solid #271524}
+.mock .calbar,.mock .cfgbox,.mock .logbox{border:1px solid #889399;border-radius:0;background:#f8fafb}
+.mock .wft{border-top:1px solid #889399}
+
+.slot.on .val{right:3px;bottom:1px}
+
+/* Mouse box at board size (no .88 scale): 229x176, tiles 51x22. */
+.mock .m3s .m3{transform:none;width:229px;height:176px}
+.mock .m3 .lines{width:229px;height:185px}
+.m3 .tile{height:22px}
+.tile.sm{font-size:12px;letter-spacing:0}
+
+/* Draw the board as one layer: the pixel font then gets greyscale AA on whole pixels (crisp), not LCD colour fringes. */
+.mock{will-change:transform}
+
+/* Q8 (user): no capture hint bar between the cards. */
+.mock .capbar{display:none}
+
+/* Q8 (user): no keycap badge on the slot waiting for a key. */
+.mock .slot .kc{display:none}
+
+/* Q8 B blue (user, tentative): the selected slot / picked tile becomes a CONFIRM-blue button. */
+.mock .slot.sel{outline:0;animation:none;background:linear-gradient(#1a90e6,#54befe);border:0;box-shadow:0 0 0 1px #000b22,inset 1px 1px 0 #bfe8ff,inset -1px -1px 0 #0c5b94}
+.mock .slot.sel .tag{left:3px;top:3px;color:#fff}
+.mock .slot.sel .val{text-shadow:0 1px 0 #00203d,1px 1px 0 #00203dbf,1px 0 0 #00203d80}
+.mock .tile.picked{background:linear-gradient(#1a90e6,#54befe);color:#fff;border-color:#000b22;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #bfe8ff,inset -1px -1px 0 #0c5b94;text-shadow:0 1px 0 #00203d,1px 1px 0 #00203dbf,1px 0 0 #00203d80}
+
+/* Q9 A steel (user): mode notices drawn like the reference KEY BINDINGS title bar; every pressed mode button is rose. */
+.mock .obanner.gold,.mock .obanner.white{height:auto;padding:4px 12px;gap:6px;border:1px solid #677888;border-radius:4px;background:#fcffff;color:#000;font-size:12px;box-shadow:0 0 0 2px #9cb1c8,0 0 0 3px #677888}
+.mock .omode .o-off[aria-pressed="true"],.mock .omode .o-pad[aria-pressed="true"],.mock .omode .o-xbox[aria-pressed="true"]{background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:inset 0 0 0 1px #0b0000,inset 1px 1px 0 1px #ffedfa;text-shadow:var(--ol-rose);color:#fff}
+
+/* Q10 fade 1 (user): keys already bound on this pad turn pale but stay draggable (the harness adds .used). */
+.mock .pal .tile.used:not(.mac){background:#dcc9d0;border-color:#8a6f7c;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f6eef1,inset -1px -1px 0 #c0a9b2;color:#fff;text-shadow:0 1px 0 #8a6f7c,1px 1px 0 #8a6f7cbf,1px 0 0 #8a6f7c80}
+.mock .pal .tile.used:not(.mac) svg path:first-of-type{fill:#8a6f7c}
+.mock .pal .tile.used.mac{background:#d2d2d2;border-color:#7a7a7a;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f2f2f2,inset -1px -1px 0 #b4b4b4;text-shadow:0 1px 0 #7a7a7a}
+/* Q12 A (user): pressing a pad button fills its slot and bound tile rose; the line keeps its shape (2px, same dot, same halo) and only turns rose. */
+.mock .lines g.hit path:first-of-type,.mock .lines g.hit circle:first-of-type{display:none}
+.mock .lines g.hit path:last-of-type{stroke:#d8506e;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
+.mock .lines g.hit circle:last-of-type{fill:#d8506e;stroke:#ffc8ce;stroke-width:1}
+.mock .slot.hit{outline:0;animation:none;border:0;background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:0 0 0 1px #0b0000,inset 1px 1px 0 #ffedfa,inset -1px -1px 0 #b84a62}
+.mock .slot.hit .val,.mock .slot.hit .tag{color:#fff;text-shadow:var(--ol-rose)}
+.mock .pal .tile.hit:not(.x1):not(.x2){background:linear-gradient(#e96785,#e86780 80%,#da6075);border-color:#0b0000;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #ffedfa,inset -1px -1px 0 #b84a62;color:#fff;text-shadow:var(--ol-rose)}
+.mock .pal .tile.hit svg path:first-of-type{fill:#0b0000}
+/* Q13 (user): no keyboard focus ring anywhere; the board is driven by mouse and pad, and Tab only lights its tile. Text fields show their caret. */
+#board button:focus-visible,#board .rng:focus-visible,#board .mname:focus-visible,#board .num:focus-visible,#board input:focus{outline:0}
+/* Q14 B (user): ViGEmBus popover like the settings window (pale steel ground, dark frame, hard drop shadow); the "!" is an orange round badge. */
+.mock .vgpop{font-size:12px;line-height:18px;color:#000;border-radius:0;background:#e6ecf1;border:1px solid #2b2f3a;box-shadow:0 0 0 1px #5e5d6a,0 6px 0 rgba(46,56,80,.35)}
+.mock .vgpop b{color:#b40704}
+.mock .vgpop::before{background:#e6ecf1;border-left:1px solid #2b2f3a;border-top:1px solid #2b2f3a;top:-7px;width:11px;height:11px}
+.mock .vgpop .mini{font-size:12px;height:22px;border:1px solid #2b2f3a;border-radius:3px;background:linear-gradient(#f6fafb,#d8dfe6);color:#000;box-shadow:inset 1px 1px 0 #fff}
+.mock .vgpop .mini.go{border-color:#000b22;background:linear-gradient(#1a90e6,#54befe);color:#ddf7ff;text-shadow:1px 1px 0 #0c5b94;box-shadow:inset 1px 1px 0 #bfe8ff}
+.mock .vgbang{width:16px;height:16px;border-radius:50%;font-size:12px;font-weight:700;margin-left:-4px;background:linear-gradient(#de7b21,#fa9a52);border:1px solid #0e0000;color:#fff;box-shadow:inset 1px 1px 0 #ffd2a8;text-shadow:1px 1px 0 #9a4c0c}
+/* Q15 A (user): macro drop marker in blue — a 2px bar with a 1px dark edge before a step, or a blue end box. */
+.mock .cap.ghost{border-radius:3px}
+.mock .st.drop-before::before{left:-5px;width:2px;height:44px;top:1px;border-radius:0;background:#1a90e6;box-shadow:0 0 0 1px #000b22}
+.mock .tl.over .cap.ghost{border-color:#1a90e6;background:rgba(84,190,254,.25);color:#1a90e6}
+/* Q16 A (user): macro delay popover like the settings window; 12px text, square steel inputs, invalid in reference red. */
+.mock .dpop{width:140px;background:#e6ecf1;border:1px solid #2b2f3a;border-radius:0;box-shadow:0 0 0 1px #5e5d6a,0 6px 0 rgba(46,56,80,.35)}
+.mock .dpop .row{font-size:12px}.mock .dpop .row svg{flex:none}
+.mock .num{font-size:12px;height:20px;border:1px solid #677888;border-radius:0;background:#fff;color:#000;box-shadow:inset 1px 1px 0 #c5cad2}
+.mock .num[aria-invalid="true"]{border-color:#b40704;background:#fbe5e5}
+/* Q17 B (user): every on/off switch is a 關｜開 pair, the current state in rose — same logic as 關／鍵鼠／手把. */
+#board .sw .track,#board .tstack .track{border-radius:3px;background:#bbbbbb;box-shadow:inset 0 0 0 1px #656565;display:flex;overflow:hidden}
+#board .sw .knob,#board .tstack .knob{display:none}
+#board .sw .track::before,#board .sw .track::after,#board .tstack .track::before,#board .tstack .track::after{flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;line-height:12px;color:#fff;text-shadow:1px 1px 0 #656565}
+#board .sw .track::before,#board .tstack .track::before{content:"關"}
+#board .sw .track::after,#board .tstack .track::after{content:"開";border-left:1px solid #656565}
+#board .sw:not(.on) .track::before,#board .tstack:not(.on) .track::before,#board .sw.on .track::after,#board .tstack.on .track::after{background:linear-gradient(#e96785,#da6075);text-shadow:1px 1px 0 #934757;box-shadow:inset 0 0 0 1px #0b0000}
+#board .sw.on .track,#board .tstack.on .track{background:#bbbbbb;box-shadow:inset 0 0 0 1px #656565}
+/* Q21 B (user): the connection lamp is an 8px cut-corner pixel LED — lit green with a highlight when connected, an unlit dark grey LED when not. */
+.mock .live,.mock .live.idle{width:8px;height:8px;border:0;border-radius:0;background:#24521a;clip-path:polygon(2px 0,6px 0,8px 2px,8px 6px,6px 8px,2px 8px,0 6px,0 2px);box-shadow:inset 1px 1px 0 1px #58c23a,inset -1px -1px 0 1px #3f8a26;position:relative}
+.mock .live:not(.idle){background:radial-gradient(circle at 3px 3px,#f0ffd8 0 1px,#9fe060 1px 3px,#58c23a 3px)}
+.mock .live.idle{background:#4a4f58;box-shadow:inset 1px 1px 0 0 #6e747e}
+/* Q22 B (user): the disconnect button is a 16px orange pixel square inside each connected pad tab (orange = stop / cancel), 8px pixel power glyph. */
+.mock .pdw{position:relative}.mock .pdw.c .pd{border-right:1px solid #656565;border-radius:4px 4px 0 0;padding-right:28px}.mock .pdw.act.c .pd{border-color:#0b0000}
+.mock .pwr,.mock .pdw.act .pwr{position:absolute;right:6px;bottom:7px;width:16px;height:16px;border:1px solid #0e0000;border-radius:2px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges' fill='white'%3E%3Cpath d='M3 0h2v4h-2zM1 1h1v1h-1zM6 1h1v1h-1zM0 2h1v4h-1zM7 2h1v4h-1zM1 6h1v1h-1zM6 6h1v1h-1zM2 7h4v1h-4z'/%3E%3C/svg%3E") center/8px 8px no-repeat,linear-gradient(#de7b21,#fa9a52);box-shadow:inset 1px 1px 0 #ffd2a8}
+.mock .pwr svg{display:none}.mock .pwr:hover{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges' fill='white'%3E%3Cpath d='M3 0h2v4h-2zM1 1h1v1h-1zM6 1h1v1h-1zM0 2h1v4h-1zM7 2h1v4h-1zM1 6h1v1h-1zM6 6h1v1h-1zM2 7h4v1h-4z'/%3E%3C/svg%3E") center/8px 8px no-repeat,linear-gradient(#c8650f,#e8822f)}
+/* bottom area: three cards */
+.mock .pal{background:none;border:0;padding:0;gap:8px;justify-content:flex-start;align-items:stretch}
+      .mock .pal>.kbd,.mock .pal>.m3s,.mock .pal>.macros{box-sizing:border-box;height:182px;background:linear-gradient(#cbd9e6,#c5cad2);border:1px solid #929eaa;border-radius:0;display:flex;align-items:flex-start}
+      .mock .kbd .tile{font-family:'Silk',var(--font);font-size:8px;line-height:8px}
+      .mock .kbd .tile svg{display:block}
+      .mock .tile.dis{background:#e1e7ee;border:1px solid #626e77;box-shadow:none;color:#8a94a0;text-shadow:none}
+      .mock .pal>.macros{width:184px;padding:12px 0 8px;flex-direction:column;align-items:center;justify-content:space-between}
+      .mock .mgrid{column-gap:6px}
+      .mock .pal>.kbd{padding:14px 13px}.mock .pal>.m3s{flex:1;width:auto;padding-top:2px}.mock .pal>.m3s>.m3{margin-left:round(down,calc((100% - 229px) / 2),1px)}
+/* pad + mouse art: line work */
+.shell .body{fill:none;stroke:#2d4359;stroke-width:3}.shell .seam{stroke:#2d4359}.shell .wheel{fill:#79838f;stroke:#2d4359}.shell .ink{fill:#2d4359}

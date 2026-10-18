@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutFor, slotsOf, lint, routeHTML } from '../board/layout.js';
+import { layoutFor, slotsOf, lint, routeHTML, groupSlots } from '../board/layout.js';
 
 const MODES = [{ l: 'page', r: 'page' }, { l: 'key', r: 'key' }, { l: 'page', r: 'key' }];
 const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
@@ -52,4 +52,19 @@ test('every_route_is_one_svg_path', () => {
       assert.ok(!h.includes('class="ln'), 'no div lines');
     }
   }
+});
+
+// Reskin (v3.3.0): a 4-slot group with no middle slot packs like the MapleStory quick slot —
+// up and down meet in the centre column, every seam 2px.
+test('four_slot_groups_pack_tight', () => {
+  const g = layoutFor('dualsense', MODES[0]).groups.find(x => x.kind === 'diamond');
+  const at = Object.fromEntries(groupSlots(g).map(s => [s.tag, [s.x - g.x, s.y - g.y]]));
+  const pos = Object.values(at);
+  assert.deepEqual(pos, [[-19, -39], [-59, -19], [21, -19], [-19, 1]]);
+});
+
+test('stick_cross_keeps_its_middle_slot', () => {
+  const g = layoutFor('dualsense', MODES[0]).groups.find(x => x.kind === 'cross');
+  const ys = groupSlots(g).map(s => s.y - g.y).sort((a, b) => a - b);
+  assert.deepEqual([ys[0], ys[ys.length - 1]], [-59, 21]);
 });

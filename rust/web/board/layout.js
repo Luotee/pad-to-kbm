@@ -2,13 +2,16 @@
 // (keymap-board.html): groups of slots around the pad and orthogonal guide
 // lines. 980×640 board units. The mockup's layout editor is not shipped.
 
+// A 4-slot group with no middle slot packs tight, like the MapleStory quick slot: up and down
+// meet in the centre column, every seam 2px (the plate under each slot shows through).
 function diamond(cx, cy, keys, tags) {
-  var pos = [[cx - 19, cy - 59], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 21]];
+  var pos = [[cx - 19, cy - 39], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 1]];
   return keys.map(function (k, i) { return { key: k, tag: tags[i], x: pos[i][0], y: pos[i][1] }; });
 }
 
 function cross(cx, cy, ids) {
-  return diamond(cx, cy, ids.slice(0, 4), ['S:up', 'S:left', 'S:right', 'S:down']).concat([{ key: ids[4], tag: 'S:press', x: cx - 19, y: cy - 19 }]);
+  var pos = [[cx - 19, cy - 59], [cx - 59, cy - 19], [cx + 21, cy - 19], [cx - 19, cy + 21]], tg = ['S:up', 'S:left', 'S:right', 'S:down'];
+  return ids.slice(0, 4).map(function (k, i) { return { key: k, tag: tg[i], x: pos[i][0], y: pos[i][1] }; }).concat([{ key: ids[4], tag: 'S:press', x: cx - 19, y: cy - 19 }]);
 }
 
 function groupSlots(g) {
@@ -27,7 +30,7 @@ function groupBox(g) {
 }
 
 function face(g, side) {
-  var e = { diamond: 59, cross: 59, quad: 42, slot: 19, pair: 124 }[g.kind], ev = g.kind === 'pair' ? 59 : e;
+  var e = { diamond: 59, cross: 59, quad: 42, slot: 19, pair: 124 }[g.kind], ev = (g.kind === 'pair' || g.kind === 'diamond') ? 39 : e;
   var vx = g.kind === 'pair' ? g.x + (g.x < 490 ? 65 : -65) : g.x;
   return side === 'r' ? [g.x + e, g.y] : side === 'l' ? [g.x - e, g.y] : side === 't' ? [vx, g.y - ev] : [vx, g.y + ev];
 }
