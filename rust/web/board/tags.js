@@ -52,3 +52,10 @@ export function inkOff(t) {
 
 // Forget measured ink boxes (call after document.fonts.ready).
 export function resetInk() { INK = {}; }
+
+// An on/off switch (reskin Q17): a 關｜開 pair, the current state in rose — the same logic as 關／鍵鼠／手把.
+export function switchHTML(act, label, on, o = {}) {
+  return '<button type="button" class="sw' + (o.cls ? ' ' + o.cls : '') + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-act="' + act + '"' +
+    (o.title ? ' title="' + esc(o.title) + '"' : '') + (o.disabled ? ' disabled' : '') + '>' + (o.icon || '') + '<span>' + esc(label) +
+    '</span><span class="track"><span>關</span><span>開</span></span></button>';
+}

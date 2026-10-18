@@ -68,3 +68,8 @@ test('stick_cross_keeps_its_middle_slot', () => {
   const ys = groupSlots(g).map(s => s.y - g.y).sort((a, b) => a - b);
   assert.deepEqual([ys[0], ys[ys.length - 1]], [-59, 21]);
 });
+
+// Reskin Q18: the touchpad-cursor switch lives in the header, not on the pad art.
+test('pad_art_has_no_switch_group', () => {
+  for (const pad of PADS) assert.ok(!layoutFor(pad, MODES[0]).groups.some(g => g.kind === 'tpsw'), pad);
+});

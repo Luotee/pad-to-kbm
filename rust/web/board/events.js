@@ -16,7 +16,7 @@ const consumed = (kind, ev, el) => hooks[kind].some(f => f(ev, el, drag));
 
 // What a locked board ignores: everything below the header except the macro
 // editor and the settings window (which are not open while it is locked).
-const LOCKED = '.slot,.tile,.tstack,.qcap,.pal,.lines,[data-act="reset"],[data-act="clear"],[data-act="undo"],[data-act="redo"],[data-mpage]';
+const LOCKED = '.slot,.tile,[data-act="tp"],.qcap,.pal,.lines,[data-act="reset"],[data-act="clear"],[data-act="undo"],[data-act="redo"],[data-mpage]';
 
 export function wire(board) {
   const gate = ev => {

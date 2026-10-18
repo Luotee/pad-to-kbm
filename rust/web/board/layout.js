@@ -25,7 +25,7 @@ function groupSlots(g) {
 
 function groupBox(g) {
   if (g.kind === 'pair') return [g.x - 124, g.y - 81, g.x + 124, g.y + 59];
-  var h = { diamond: 59, cross: 59, quad: 42, slot: 19, tpsw: 27 }[g.kind];
+  var h = { diamond: 59, cross: 59, quad: 42, slot: 19 }[g.kind];
   return [g.x - h, g.y - h, g.x + h, g.y + h];
 }
 
@@ -79,7 +79,6 @@ function defaultLayout(pad) {
       { id: 'ls', kind: 'cross', x: 244, y: 320, keys: LS },
       { id: 'share', kind: 'slot', x: 399, y: 89, keys: ['4'], tags: ['Share'] },
       { id: 'tpq', kind: 'quad', x: 490, y: 112, keys: ['25', '26', '27', '28'], tags: ['T:tl', 'T:tr', 'T:bl', 'T:br'] },
-      { id: 'tpsw', kind: 'tpsw', x: 566, y: 97 },
       { id: 'opt', kind: 'slot', x: 617, y: 89, keys: ['6'], tags: ['Opt'] },
       { id: 'ps', kind: 'slot', x: 491, y: 372, keys: ['5'], tags: ['PS'] });
     R.push({ id: 'dpad', g: 'dpad', side: 'r', pts: [[155, 288], [188, 288], [188, 234], [416, 234]], m: 'c' },

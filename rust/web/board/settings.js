@@ -3,7 +3,7 @@
 
 import { invoke, listen } from '../ipc.js';
 import { state, rerender } from './store.js';
-import { esc, tagSvg } from './tags.js';
+import { esc, tagSvg, switchHTML } from './tags.js';
 import { layoutFor, slotsOf } from './layout.js';
 import { ICON } from './icons.js';
 import { hook, selectSlot } from './events.js';
@@ -106,7 +106,7 @@ export function settingsError(d) {
 function trSvg(v) { return '<svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true"><path d="M8 40V14q0-10 15-10t15 10v26Z" fill="#f6f7fa" stroke="#454c60" stroke-width="2.5"/><rect data-vis="trigger" x="10" y="' + (6 + v * 32).toFixed(1) + '" width="26" height="3" fill="#c4232c"/></svg>'; }
 function numF(f, v, step, lab) { return '<input class="num" type="number" step="' + step + '" data-f="' + f + '" value="' + v + '" aria-label="' + lab + '" aria-invalid="' + badFields.includes(f) + '">'; }
 function slider(f, lab, min, max, step, v, out) { return '<label class="sl"><span class="lbl">' + lab + '</span><input class="rng" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + v + '" data-f="' + f + '" aria-label="' + lab + '"><output data-out="' + f + '">' + out + '</output></label>'; }
-function sw(act, label, on) { return '<button type="button" class="sw lt' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-act="' + act + '"><span>' + label + '</span><span class="track"><span class="knob"></span></span></button>'; }
+function sw(act, label, on) { return switchHTML(act, label, on, { cls: 'lt' }); }
 function tpHTML(d, k) {
   const W = 1920 * k / 10, H = 1080 * k / 10, mx = d.midX * k / 10, my = d.midY * k / 10;
   let h = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" class="tpad" role="img" aria-label="觸控板手指位置">';

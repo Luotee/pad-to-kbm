@@ -3,7 +3,7 @@
 
 import { invoke } from '../ipc.js';
 import { state, rerender, reloadConfig } from './store.js';
-import { esc } from './tags.js';
+import { esc, switchHTML } from './tags.js';
 import { LABEL, MOUSE_TILES } from './keys.js';
 import { keyToTile, tileToKey } from './model.js';
 import { ICON } from './icons.js';
@@ -27,8 +27,7 @@ export function editorHTML(st) {
   const m = st.medit;
   let h = '<section class="med" aria-label="編輯巨集">';
   h += '<div class="mhd">' + ICON.mac + '<input class="mname" data-f="mname" value="' + esc(m.name) + '" maxlength="' + NAME_MAX + '" aria-label="巨集名稱">' +
-    '<button type="button" class="sw' + (m.loop ? ' on' : '') + '" role="switch" aria-checked="' + m.loop + '" data-act="mloop" title="按住按鍵時一直重複">' + ICON.loop +
-    '<span>按住時重複</span><span class="track"><span class="knob"></span></span></button>' +
+    switchHTML('mloop', '按住時重複', m.loop, { title: '按住按鍵時一直重複', icon: ICON.loop }) +
     '<div class="sp"></div>' + (m.err ? '<span class="merr" role="alert">' + esc(m.err) + '</span>' : '') +
     '<button type="button" class="mbtn del" data-act="mdel" aria-label="刪除這個巨集" title="刪除巨集">' + ICON.trash + '</button>' +
     '<button type="button" class="mbtn ok" data-act="mdone">完成</button></div><div class="tl" data-tl="1">';
