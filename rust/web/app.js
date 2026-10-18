@@ -32,6 +32,10 @@ tbar.addEventListener('click', ev => {
   else w?.close();   // CloseRequested ends the app and releases held keys (runtime.rs)
 });
 
+// Scale before the first frame (and before any await): the board layer is rastered at its first scale.
+fit();
+addEventListener('resize', fit);
+
 function fit() {
   const f = fitWindow(innerWidth, innerHeight, devicePixelRatio || 1);
   win.style.transform = `translate(${f.x}px, ${f.y}px) scale(${f.k})`;
@@ -58,7 +62,5 @@ await startSettings(board);
 startCalibration();
 startVigem();
 paint();
-fit();
-addEventListener('resize', fit);
 // Tag ink boxes are measured with the pixel font; re-measure once it loaded.
 if (document.fonts) document.fonts.ready.then(() => { resetInk(); paint(); });

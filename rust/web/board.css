@@ -446,3 +446,14 @@ html,body,#app{background:transparent !important}
 .mock .mgrid{grid-template-columns:repeat(2,78px)}
 .mock .mt .tile{width:78px;padding-right:18px}
 .mock .mnew{width:78px}
+/* Macro tile names: a name wider than the tile shows its start and ends in an ellipsis (flex centring
+   would cut both ends). 2px edges, 18px pen: the text box is 58px, four 12px characters. */
+.mock .mt .tile{display:block;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:22px;padding-left:0}
+/* Tile states in one order — hit > picked > used > base. Every selector carries .pal and the same
+   two :not()s, so source order decides between them, not specificity. */
+.mock .pal .tile.picked:not(.x1):not(.x2){background:linear-gradient(#1a90e6,#54befe);color:#fff;border-color:#000b22;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #bfe8ff,inset -1px -1px 0 #0c5b94;text-shadow:0 1px 0 #00203d,1px 1px 0 #00203dbf,1px 0 0 #00203d80}
+.mock .pal .tile.picked:not(.x1):not(.x2) svg path:first-of-type{fill:#00203d}
+.mock .pal .tile.hit:not(.x1):not(.x2){background:linear-gradient(#e96785,#e86780 80%,#da6075);border-color:#0b0000;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #ffedfa,inset -1px -1px 0 #b84a62;color:#fff;text-shadow:var(--ol-rose)}
+.mock .pal .tile.hit:not(.x1):not(.x2) svg path:first-of-type{fill:#0b0000}
+/* Q13: no focus ring on the title-bar keys either. */
+#wtbar .wb:focus-visible{outline:0}

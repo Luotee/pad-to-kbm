@@ -196,7 +196,10 @@ macro step order) while web-smoke stays green. That shipped in v3.0.0 and
 was fixed in v3.1.1.
 
 For scroll / layout bugs, measure don't eyeball: the board is a fixed
-980×640 surface scaled to the window (`app.js`); at several viewport
+980×640 surface inside the page-drawn 994×669 window (`#win`: frame + title
+bar, v3.3.0), scaled by a whole number of device pixels per art pixel
+(`chrome.js` `fitWindow`; Rust sizes the window, `gui/winscale.rs`;
+`decorations` / `transparent` are pinned by `rust/tests/tauri_conf.rs`); at several viewport
 sizes assert `scrollWidth == clientWidth`, `scrollHeight ==
 clientHeight` and that `#board` lies inside the viewport, and read
 computed `overscroll-behavior-x` (`html, body { overscroll-behavior:

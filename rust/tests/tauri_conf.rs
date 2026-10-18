@@ -38,4 +38,6 @@ fn capability_allows_the_drawn_title_bar() {
     for want in ["core:window:allow-start-dragging", "core:window:allow-minimize", "core:window:allow-close"] {
         assert!(perms.contains(&want), "missing {want}");
     }
+    // Least privilege: Rust sizes the window itself; the page never needs set-size.
+    assert!(!perms.contains(&"core:window:allow-set-size"), "the page does not resize the window");
 }

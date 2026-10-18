@@ -506,6 +506,9 @@ try {
   check('title-bar minimise calls window.minimize', (await countCalls(page, 'window.minimize')) === 1);
   await page.mouse.move(300, 10); await page.mouse.down(); await page.mouse.up();
   check('title-bar drag calls window.startDragging', (await countCalls(page, 'window.startDragging')) >= 1);
+  await page.focus('#wtbar [data-win="min"]');
+  await page.keyboard.press('Shift');
+  check('title-bar keys draw no focus ring (Q13)', await page.evaluate(() => getComputedStyle(document.querySelector('#wtbar [data-win="min"]')).outlineStyle === 'none'));
   await page.click('#wtbar [data-win="close"]');
   check('title-bar close calls window.close', (await countCalls(page, 'window.close')) === 1);
   check('touchpad switch sits in the header left of 連線震動 (DualSense)',
@@ -553,6 +556,18 @@ try {
   await page.evaluate(() => window.__mockEmit('button-down', { id: 12 }));
   await settle(page);
   // Reskin Q10/Q12: a held key that is also a pale bound key shows rose, not pale.
+  {
+    // Final review I2: a picked key that is also bound (pale) shows the blue picked look.
+    const u = await page.evaluate(() => document.querySelector('#board .kbd .tile.used')?.dataset.tile);
+    await page.click(`#board .kbd [data-tile="${u}"]`);
+    await settle(page);
+    check('picked bound key is blue over pale', await page.evaluate(k => {
+      const t = document.querySelector(`#board .kbd [data-tile="${k}"]`);
+      return t.classList.contains('picked') && t.classList.contains('used') && getComputedStyle(t).backgroundImage.includes('rgb(26, 144, 230)');
+    }, u), u);
+    await page.click(`#board .kbd [data-tile="${u}"]`);
+    await settle(page);
+  }
   check('held bound key is rose over pale', await page.evaluate(() => {
     const t = document.querySelector('#board .pal .tile.hit.used'); if (!t) return false;
     return getComputedStyle(t).backgroundImage.includes('rgb(233, 103, 133)');
@@ -720,6 +735,23 @@ try {
     window.__mockEmit('config-changed', { source: 'watcher' });
   });
   await settle(page);
+  {
+    // Final review I1: a name wider than its tile shows its start and ends in an ellipsis (not cut on both sides).
+    await page.evaluate(() => {
+      window.__mock.config.macros['火焰連擊大招必殺'] = { loop: false, steps: [{ key: 'z', action: 'down', delay_ms: [40, 60] }, { key: 'z', action: 'up', delay_ms: [15, 25] }] };
+      window.__mockEmit('config-changed', { source: 'watcher' });
+    });
+    await settle(page);
+    const starts = await page.evaluate(() => [...document.querySelectorAll('#board .mt .tile')].map(t => {
+      const n = [...t.childNodes].find(c => c.nodeType === 3), r = document.createRange();
+      r.setStart(n, 0); r.setEnd(n, 1);
+      const a = r.getBoundingClientRect(), b = t.getBoundingClientRect();
+      return { name: t.textContent, ok: a.left >= b.left + 1 && getComputedStyle(t).textOverflow === 'ellipsis' };
+    }));
+    check('long macro names show their first character (ellipsis at the end)', starts.length > 0 && starts.every(x => x.ok), JSON.stringify(starts));
+    await page.evaluate(() => { delete window.__mock.config.macros['火焰連擊大招必殺']; window.__mockEmit('config-changed', { source: 'watcher' }); });
+    await settle(page);
+  }
   const nRename = await countCalls(page, 'rename_macro');
   await page.locator('#board [data-medit="macro_attack_combo"]').click();
   await settle(page);

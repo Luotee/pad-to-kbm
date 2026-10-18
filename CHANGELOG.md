@@ -30,8 +30,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   minimise and close; ✕ still ends the app. The window is always a whole
   number of screen pixels per drawn pixel, so it is sharp at any Windows
   display scale: it opens at the whole scale nearest the display scale that
-  fits the screen (for example 3x at 250 %, 1x at 125 % on a 1080p laptop,
-  which makes it smaller there) and a resize snaps to whole scales.
+  fits the screen (for example 3x at 250 % on a 4K screen; 1x at 125 % or
+  150 % on a 1080p laptop, which makes it smaller there: 80 % / 67 % of the
+  old size) and a resize snaps to whole scales (drag a corner to grow it).
 - Macro names are drawn in the pixel font too: the whole of Cubic 11 ships
   (about 400 KB) instead of the UI-text subset.
 - README screenshots retaken.
