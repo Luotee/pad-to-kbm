@@ -2,6 +2,7 @@
    Designed at 980×640 and scaled uniformly to the window (app.js); the
    window itself never scrolls. */
 @font-face{font-family:'Cubic11';src:url(fonts/cubic11.woff2) format('woff2');font-display:block}
+@font-face{font-family:'Silk';src:url(fonts/silkscreen.woff2) format('woff2');font-display:block}
 :root{
   color-scheme:light;
   --bg:#e4e4e0; --panel:#cfd0cc; --frame:#55596a; --ink:#2d3142; --mute:#5d6477;

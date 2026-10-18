@@ -42,6 +42,11 @@ class FontToolsTest(unittest.TestCase):
         p = self.ft.ensure_font(self.url, self.sha)
         self.assertEqual(p.read_bytes(), self.src.read_bytes())
 
+    def test_font_custom_target(self):
+        p = self.ft.ensure_font(self.url, self.sha, self.ft.silk_path())
+        self.assertEqual(p, self.ft.silk_path())
+        self.assertFalse(self.ft.font_path().exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -564,7 +564,7 @@ layer_web() {
         return
     fi
 
-    # Glyph coverage of the bundled Cubic 11 subset (spec 4.4 / 5.6). The pinned
+    # Glyph coverage of the bundled Cubic 11 + Silkscreen (spec 4.4 / 5.6). The pinned
     # venv is fetched on first use; $DSM_FONT_PY overrides it.
     local font_py font
     echo "=== font tooling (scripts/font_tools.py python)" >>"$log"
@@ -574,7 +574,7 @@ layer_web() {
         if "$font_py" "$REPO_ROOT/scripts/verify/font-coverage.py" >>"$log" 2>&1; then
             font="font ok"
         else
-            record web FAIL "font coverage: $(grep -E '^(missing|drawn)' "$log" | tail -1)"
+            record web FAIL "font coverage: $(grep -E '^(missing|drawn|cubic11|silkscreen)' "$log" | tail -1)"
             return
         fi
     else
