@@ -41,3 +41,41 @@ fn capability_allows_the_drawn_title_bar() {
     // Least privilege: Rust sizes the window itself; the page never needs set-size.
     assert!(!perms.contains(&"core:window:allow-set-size"), "the page does not resize the window");
 }
+
+/// v3.4.0: the window is a key-binding board, not a browser. No DevTools in a release build
+/// (F12 / Ctrl+Shift+I): Tauri's `devtools` feature stays off (debug builds keep DevTools), and
+/// the page gets no permission to toggle them.
+#[test]
+fn release_build_has_no_devtools() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest: toml_lite::Doc = toml_lite::parse(&std::fs::read_to_string(dir.join("Cargo.toml")).unwrap());
+    let features = manifest.tauri_features();
+    assert!(!features.iter().any(|f| f == "devtools"), "tauri features {features:?} must not include devtools");
+    let cap = std::fs::read_to_string(dir.join("capabilities/default.json")).unwrap();
+    assert!(!cap.contains("devtools"), "capability must not grant a devtools permission");
+}
+
+/// v3.4.0: WebView2's browser keys (F3 / Ctrl+F find, F5 / Ctrl+R reload, Ctrl+P print, zoom, …)
+/// are off. Tauri has no setting for it (wry's default is on), so `gui/runtime.rs` turns it off
+/// through the WebView2 settings; web-smoke cannot see WebView2, so pin the call here.
+#[test]
+fn webview2_browser_keys_are_turned_off() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui/runtime.rs");
+    let src = std::fs::read_to_string(p).unwrap();
+    assert!(src.contains("SetAreBrowserAcceleratorKeysEnabled(false)"), "runtime.rs must turn WebView2 browser keys off");
+}
+
+/// Just enough of Cargo.toml to read the `tauri` dependency's feature list.
+mod toml_lite {
+    pub struct Doc(String);
+    pub fn parse(s: &str) -> Doc {
+        Doc(s.to_string())
+    }
+    impl Doc {
+        pub fn tauri_features(&self) -> Vec<String> {
+            let line = self.0.lines().find(|l| l.trim_start().starts_with("tauri = ")).expect("tauri dependency line");
+            let list = line.split("features = [").nth(1).and_then(|r| r.split(']').next()).unwrap_or("");
+            list.split(',').map(|f| f.trim().trim_matches('"').to_string()).filter(|f| !f.is_empty()).collect()
+        }
+    }
+}

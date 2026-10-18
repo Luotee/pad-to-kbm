@@ -1,5 +1,5 @@
 // The settings window (spec 4.7): modal, four tabs by what is adjusted,
-// 取消 / 儲存, Esc closes. Ported from the mockup's settingsHTML (layout a).
+// 取消 / 儲存 close it. Ported from the mockup's settingsHTML (layout a).
 
 import { invoke, listen } from '../ipc.js';
 import { state, rerender } from './store.js';
@@ -230,11 +230,6 @@ export async function startSettings(board) {
       const xy = board.querySelector('#tpxy');
       if (xy) xy.innerHTML = tpFields(d);
     } else return el.dataset.act ? false : true;
-    return true;
-  });
-  hook('keydown', ev => {
-    if (ev.key !== 'Escape' || !state.setOpen) return false;
-    closeSettings();
     return true;
   });
   // Live edits that must not re-render (a re-render would drop the slider or caret).

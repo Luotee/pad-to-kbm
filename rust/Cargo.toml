@@ -38,7 +38,8 @@ aes = "0.8"
 rand = "0.8"
 # sha256 of the pinned ViGEmBus installer (vigem_setup.rs); already in the tree via Tauri.
 sha2 = "0.10"
-tauri = { version = "2", features = ["tray-icon", "image-ico", "devtools"], optional = true }
+# No `devtools` feature: a release build has no DevTools (v3.4.0); debug builds still do.
+tauri = { version = "2", features = ["tray-icon", "image-ico"], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
@@ -52,10 +53,14 @@ futures = "0.3"
 # Virtual Xbox 360 pad for the Switch 2 Pro in no-mapping mode
 # (xinput_sink.rs). User-mode client of an externally installed ViGEmBus.
 vigem-client = "0.1"
+# WebView2 settings Tauri does not expose (gui/runtime.rs turns the browser keys off).
+# Same versions as wry's, so the types match `PlatformWebview::controller()`.
+webview2-com = { version = "0.38", optional = true }
+windows-core = { version = "0.61", optional = true }
 
 [features]
 default = []
-gui = ["dep:tauri", "dep:tauri-plugin-single-instance", "dep:tauri-build"]
+gui = ["dep:tauri", "dep:tauri-plugin-single-instance", "dep:tauri-build", "dep:webview2-com", "dep:windows-core"]
 tray = []
 hot_reload = []
 test-utils = []

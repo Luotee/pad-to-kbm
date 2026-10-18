@@ -8,7 +8,6 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:event:allow-emit",
-    "core:webview:allow-internal-toggle-devtools",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",

@@ -319,11 +319,15 @@ try {
   await settle(page);
   await page.click('#board [data-pad="ns_pro"]');
   await settle(page);
+  const nPt = await countCalls(page, 'set_pad_tables');
   await page.keyboard.press('Control+z');
+  await settle(page);
+  check('Ctrl+Z is no shortcut (v3.4.0)', (await countCalls(page, 'set_pad_tables')) === nPt);
+  await page.click('#board [data-act="undo"]');
   await settle(page);
   const ux = await lastCall(page, 'set_pad_tables');
   const shownPad = await page.locator('#board .hdr [data-pad][aria-pressed="true"]').getAttribute('data-pad');
-  check('undo switches to the pad it changes (Ctrl+Z)', ux?.args?.pad === 'dualsense' && shownPad === 'dualsense', `${ux?.args?.pad} ${shownPad}`);
+  check('undo switches to the pad it changes (復原)', ux?.args?.pad === 'dualsense' && shownPad === 'dualsense', `${ux?.args?.pad} ${shownPad}`);
 
   // Review focus 1: an external config-changed keeps the selected pad.
   await page.click('#board [data-pad="ns2_pro"]');
@@ -633,7 +637,7 @@ try {
   await settle(page);
   check('clicking a slot starts key capture', (await lastCall(page, 'set_capture_active'))?.args?.active === true &&
     (await countCalls(page, 'set_capture_active')) === capBefore + 1);
-  check('capture bar text is exact', ((await page.locator('#board .capbar').textContent()) || '').trim() === '按鍵鼠上的鍵，或點下面的方塊（Esc 取消）');
+  check('capture bar text is exact', ((await page.locator('#board .capbar').textContent()) || '').trim() === '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）');
   {
     // Screen readers only (reskin Q8): the blue slot shows the wait; the text stays for assistive tech.
     const c = await page.evaluate(() => { const e = document.querySelector('#board .capbar'), r = e.getBoundingClientRect(); return { w: r.width, h: r.height, role: e.getAttribute('role') }; });
@@ -661,9 +665,9 @@ try {
   const nBind = await countCalls(page, 'set_binding');
   await slot(page, '0').click();
   await settle(page);
-  await page.keyboard.press('Escape');
+  await slot(page, '0').click();
   await settle(page);
-  check('Esc cancels capture without binding', (await countCalls(page, 'set_binding')) === nBind &&
+  check('clicking the waiting slot again cancels capture without binding', (await countCalls(page, 'set_binding')) === nBind &&
     (await lastCall(page, 'set_capture_active'))?.args?.active === false);
   await slot(page, '0').click();
   await settle(page);
@@ -713,7 +717,7 @@ try {
     (await page.locator('#board .dpop').count()) === 1 && (await page.locator('#board .med').count()) === 1);
   await page.locator('#board .dpop [data-f="dhi"]').fill('70');
   await page.locator('#board .dpop [data-f="dhi"]').dispatchEvent('input');
-  await page.keyboard.press('Escape');
+  await page.click('#board .med .mhd .mname');
   await page.locator('#board .med .mname').fill('連發');
   await page.locator('#board .med .mname').dispatchEvent('input');
   await page.click('#board .med [data-act="mloop"]');
@@ -858,7 +862,10 @@ try {
   const nS2 = await countCalls(page, 'set_settings');
   await page.keyboard.press('Escape');
   await settle(page);
-  check('Esc closes without saving', (await page.locator('#board .setw').count()) === 0 && (await countCalls(page, 'set_settings')) === nS2);
+  check('Esc does not close settings (v3.4.0: no shortcuts)', (await page.locator('#board .setw').count()) === 1);
+  if (await page.locator('#board .setw').count()) await page.click('#board [data-act="setclose"]');
+  await settle(page);
+  check('取消 closes without saving', (await page.locator('#board .setw').count()) === 0 && (await countCalls(page, 'set_settings')) === nS2);
   await page.click('#board [data-act="setopen"]');
   await settle(page);
   await page.click('#board [data-stab="tp"]');
@@ -915,8 +922,105 @@ try {
   await page.evaluate(() => { window.__mock.sticks = { pad: 'ns2_pro', raw: [0, 0, 0, 0], cal: [0, 0, 0, 0] }; });
   await page.waitForTimeout(200);
   check('capture cancels when another pad takes over', /手把換了/.test(await page.locator('#board #calbar').textContent()));
-  await page.keyboard.press('Escape');
+  if (await page.locator('#board .setw').count()) await page.click('#board [data-act="setclose"]');
+  await settle(page);
   await page.evaluate(() => { window.__mock.sticks = null; });
+
+  // ── v3.4.0: the keyboard only lights and binds keys ───────────────────────
+  // No shortcuts and no browser key behaviour on the board: every real key
+  // lights its palette tile while held (bound or not, in every mode, except
+  // while typing in a text field), and binds a waiting slot. Disabled tiles
+  // (Caps / Ins / Menu) never light.
+  {
+    const { MAIN, NAV } = await import(path.join(webDir, 'board', 'keys.js'));
+    const CODE = { LShift: 'ShiftLeft', RShift: 'ShiftRight', LCtrl: 'ControlLeft', RCtrl: 'ControlRight', LAlt: 'AltLeft', RAlt: 'AltRight',
+      Win: 'MetaLeft', '↑': 'ArrowUp', '↓': 'ArrowDown', '←': 'ArrowLeft', '→': 'ArrowRight', Esc: 'Escape', Space: 'Space', Enter: 'Enter',
+      Tab: 'Tab', Backspace: 'Backspace', Del: 'Delete', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', '-': 'Minus',
+      '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote' };
+    const codeOf = t => CODE[t] || (/^[A-Z]$/.test(t) ? 'Key' + t : /^\d$/.test(t) ? 'Digit' + t : /^F\d+$/.test(t) ? t : null);
+    const all = [...MAIN, ...NAV].flat().filter(x => x && x[0]);
+    const usable = all.filter(x => x[2] !== 'dis').map(x => x[0]);
+    const tileEsc = t => page.locator(`#board [data-tile="${t.replace(/["\\]/g, '\\$&')}"]`);
+    const hit = async t => ((await tileEsc(t).getAttribute('class')) || '').split(' ').includes('hit');
+    const lit = async (code, t) => {
+      await page.keyboard.down(code);
+      await page.waitForTimeout(60);   // past the 30 ms synthesized-key window
+      const on = await hit(t);
+      await page.keyboard.up(code);
+      await page.waitForTimeout(20);
+      return on && !(await hit(t));
+    };
+    check('palette has 80 bindable keys', usable.length === 80, String(usable.length));
+    check('undo / redo titles name no shortcut', (await page.locator('#board [data-act="undo"]').getAttribute('title')) === '復原' &&
+      (await page.locator('#board [data-act="redo"]').getAttribute('title')) === '重做');
+
+    // The activity check above left the engine holding Space; release it.
+    await page.evaluate(() => window.__mockEmit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'Space', action: 'up' }));
+    await settle(page);
+    // A focused button: Enter / Space must not press it, Tab must not move focus.
+    await page.evaluate(() => {
+      window.__alive = true;
+      window.__focusMoves = [];
+      document.addEventListener('focusin', e => window.__focusMoves.push(e.target.dataset?.act || e.target.tagName));
+    });
+    const mut0 = (await calls(page)).length;
+    for (const k of ['Enter', 'Space', 'Tab']) {
+      await page.evaluate(() => document.querySelector('#board [data-act="setopen"]').focus());
+      await page.keyboard.press(k);
+      await settle(page);
+    }
+    const moves = await page.evaluate(() => window.__focusMoves.filter(a => a !== 'setopen'));
+    check('Enter / Space do not press the focused button, Tab does not move focus', moves.length === 0 &&
+      (await page.locator('#board .setw').count()) === 0, moves.join(' '));
+    const dark = [];
+    for (const t of usable) if (!(await lit(codeOf(t), t))) dark.push(t);
+    check('every key lights its tile while held (nothing waiting)', dark.length === 0, dark.join(' '));
+    const st = await page.evaluate(() => ({ alive: window.__alive === true, moves: window.__focusMoves.filter(a => a !== 'setopen') }));
+    check('no key reloads the page or moves focus', st.alive && st.moves.length === 0, JSON.stringify(st));
+    check('no key opens a window or sends a command', (await page.locator('#board .setw, #board .med').count()) === 0 &&
+      (await calls(page)).slice(mut0).every(c => c.cmd.startsWith('get_')), JSON.stringify((await calls(page)).slice(mut0).map(c => c.cmd)));
+    const disLit = [];
+    for (const [t, code] of [['Caps', 'CapsLock'], ['Ins', 'Insert'], ['Menu', 'ContextMenu']]) {
+      await page.keyboard.down(code);
+      await page.waitForTimeout(60);
+      const cls = (await page.locator(`#board .pal button[disabled][aria-label^="${t}（"]`).getAttribute('class')) || '';
+      if (cls.split(' ').includes('hit')) disLit.push(t);
+      await page.keyboard.up(code);
+    }
+    check('Caps / Ins / Menu never light', disLit.length === 0, disLit.join(' '));
+
+    // Every key binds a waiting slot, Ctrl / Win / Esc included.
+    const unbound = [];
+    for (const t of usable) {
+      const n0 = await countCalls(page, 'set_binding');
+      await slot(page, '3').click();
+      await settle(page);
+      await page.keyboard.press(codeOf(t));
+      await settle(page);
+      const b = (await countCalls(page, 'set_binding')) > n0 ? (await lastCall(page, 'set_binding')).args.entry : null;
+      const back = b ? await page.evaluate(v => import('/board/model.js').then(m => m.keyToTile(v)), b.value) : null;
+      if (back !== t) unbound.push(`${t}→${back}`);
+      if (await page.locator('#board .slot.sel').count()) { await slot(page, '3').click(); await settle(page); }
+    }
+    check('every key binds a waiting slot (Ctrl, Win, Esc too)', unbound.length === 0, unbound.join(' '));
+
+    // Lights in the macro editor and in settings too, but not while typing.
+    await page.locator('#board [data-medit]').first().click();
+    await settle(page);
+    const inEditor = (await page.locator('#board .med').count()) === 1 && await lit('KeyQ', 'Q');
+    await page.locator('#board .med .mname').focus();
+    await page.keyboard.down('KeyQ');
+    await page.waitForTimeout(60);
+    const typingLit = await hit('Q');
+    await page.keyboard.up('KeyQ');
+    check('keys light in the macro editor, not while typing its name', inEditor && !typingLit, `${inEditor} ${typingLit}`);
+    if (await page.locator('#board .med').count()) { await page.click('#board .med [data-act="mdone"]'); await settle(page); }
+    await page.click('#board [data-act="setopen"]');
+    await settle(page);
+    check('keys light while settings are open', await lit('KeyQ', 'Q'));
+    await page.click('#board [data-act="setclose"]');
+    await settle(page);
+  }
 
   // @@NEXT-TASKS
 

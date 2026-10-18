@@ -8,7 +8,7 @@ import { macroPages, dragGhostHTML } from './palette.js';
 import { boardLocked } from './view.js';
 
 const drag = { key: null, from: null, dropped: false, step: null };
-const hooks = { click: [], dragover: [], drop: [], dragstart: [], dragend: [], keydown: [] };
+const hooks = { click: [], dragover: [], drop: [], dragstart: [], dragend: [] };
 // Later features (capture, macro editor, settings) register handlers that run
 // first and return true when they consumed the event.
 export function hook(kind, f) { hooks[kind].push(f); }
@@ -108,14 +108,6 @@ export function wire(board) {
     // A bound slot dragged out to empty space is deleted (spec 4.5).
     if (drag.from !== null && !drag.dropped) { const key = drag.from; drag.from = null; act.clearSlot(key); }
     drag.from = null; drag.dropped = false; drag.key = null;
-  });
-
-  document.addEventListener('keydown', ev => {
-    if (consumed('keydown', ev)) return;
-    if (!(ev.ctrlKey || ev.metaKey) || state.setOpen || state.medit || boardLocked(state) || /INPUT|TEXTAREA/.test(ev.target.tagName)) return;
-    const k = ev.key.toLowerCase();
-    if (k === 'z' && !ev.shiftKey) { ev.preventDefault(); act.undo(); }
-    else if (k === 'y' || (k === 'z' && ev.shiftKey)) { ev.preventDefault(); act.redo(); }
   });
 }
 

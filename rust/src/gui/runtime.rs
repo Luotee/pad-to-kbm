@@ -71,6 +71,13 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
                     let _ = w.set_size(tauri::PhysicalSize::new(tw, th));
                     let _ = w.center();
                 }
+                // A key-binding board, not a browser: no find bar, reload, print or zoom keys.
+                #[cfg(windows)]
+                let _ = w.with_webview(|wv| {
+                    if let Err(e) = browser_keys_off(&wv) {
+                        tracing::warn!("could not turn the WebView2 browser keys off: {e}");
+                    }
+                });
             }
 
             let tray = crate::gui::tray::build(&app.handle(), handle_for_setup.clone())?;
@@ -204,5 +211,17 @@ fn snap_window(w: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let (tw, th) = crate::gui::winscale::size_for(crate::gui::winscale::snap_scale(size.width, size.height, ww, wh));
     if (tw, th) != (size.width, size.height) {
         let _ = w.set_size(tauri::PhysicalSize::new(tw, th));
+    }
+}
+
+/// Turn WebView2's browser accelerator keys off (F3 / Ctrl+F, F5 / Ctrl+R,
+/// Ctrl+P, zoom, …; v3.4.0). Tauri has no setting for it and wry leaves it on.
+#[cfg(windows)]
+fn browser_keys_off(wv: &tauri::webview::PlatformWebview) -> windows_core::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+    unsafe {
+        let settings = wv.controller().CoreWebView2()?.Settings()?;
+        settings.cast::<ICoreWebView2Settings3>()?.SetAreBrowserAcceleratorKeysEnabled(false)
     }
 }

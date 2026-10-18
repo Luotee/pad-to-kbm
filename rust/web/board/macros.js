@@ -155,15 +155,6 @@ export function startMacros(board) {
     }
   });
 
-  hook('keydown', ev => {
-    if (ev.key !== 'Escape' || !state.medit || state.mpop === null) return false;
-    const i = state.mpop;
-    state.mpop = null;
-    rerender();
-    board.querySelector('[data-act="sdelay"][data-i="' + i + '"]')?.focus();
-    return true;
-  });
-
   // Steps: drag to reorder, drag out to delete; key tiles drop in before a step.
   const sd = { step: null, dropped: false };
   const stepTarget = ev => {
