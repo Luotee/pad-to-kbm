@@ -3,6 +3,42 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-10-19
+
+### Changed
+
+- **The keyboard only lights and binds keys.** Every key you hold lights
+  its key on the board's keyboard, bound or not, also while a slot waits,
+  in the macro editor and in settings (not while typing in a text field).
+  Caps / Ins / Menu cannot be bound and never light.
+- **No keyboard shortcuts.** Ctrl+Z / Ctrl+Y and Esc do nothing on the
+  board any more: undo / redo are the buttons, a second click on the
+  waiting slot cancels it, and Esc binds like any other key. Tab, Space and
+  Enter no longer move between or press buttons.
+- **Settings open while you edit a macro.** The gear opens settings over
+  the macro editor; 儲存 / 取消 bring you back to the macro as you left it.
+- **One file beside the exe.** The pad the board showed last is kept in
+  `padtokbm.json` (`last_pad`); `padtokbm.ui.json` is gone.
+- A new `padtokbm.json` no longer logs every key: 「記錄每個按鍵事件」 is off
+  until you turn it on, as the README says.
+
+### Fixed
+
+- LCtrl, RCtrl and Win could not be bound by pressing them (only by
+  clicking their key).
+- F3 / Ctrl+F opened a find bar, F5 / Ctrl+R reloaded the window, Ctrl+P
+  opened printing, F12 opened DevTools. The browser keys are off and the
+  release build has no DevTools (Windows; macOS is Phase 2 TBD).
+
+### Migration
+
+- On the first start, a `padtokbm.ui.json` (or `dualsense-mapper.ui.json`
+  and its `.bak`) next to the exe hands its last pad to `padtokbm.json` and
+  is deleted. Nothing to do.
+- An existing `padtokbm.json` keeps its `log_events` setting, and one
+  written by an earlier version has it on. To stop `padtokbm-events.log`,
+  switch 「記錄每個按鍵事件」 off in 設定 → 一般 and delete the log.
+
 ## [3.3.0] - 2026-10-18
 
 ### Changed

@@ -945,35 +945,53 @@ pub fn get_controller_status(
 
 // ─── UiPrefs ──────────────────────────────────────────────────────────────────
 
-/// Tauri command: load UI preferences from disk (drawer state, last tab, etc.).
+/// Tauri command: the board's UI state (the pad it showed last).
 ///
-/// Returns default prefs if the file is missing or corrupt — never an error.
-/// Spec §11: ui-prefs live at `<exe-dir>/padtokbm.ui.json`.
+/// v3.4.0: read from the config (`last_pad`), not from a second file.
 #[cfg(feature = "gui")]
 #[tauri::command]
-pub fn get_ui_prefs(
-    config_path: State<'_, PathBuf>,
-) -> Result<crate::gui::ui_prefs::UiPrefs, String> {
-    Ok(crate::gui::ui_prefs::load(
-        &crate::gui::ui_prefs::path_beside(&config_path),
-    ))
+pub fn get_ui_prefs(engine: State<'_, Handle>) -> Result<crate::gui::ui_prefs::UiPrefs, String> {
+    Ok(get_ui_prefs_impl(&engine))
 }
 
-/// Tauri command: persist UI preferences to disk.
-///
-/// Called only on drawer toggle (~once per minute at most); synchronous write
-/// is fine. Errors are surfaced as IPC error strings but the UI continues.
+/// Pure implementation of `get_ui_prefs`.
+pub fn get_ui_prefs_impl(engine: &Handle) -> crate::gui::ui_prefs::UiPrefs {
+    crate::gui::ui_prefs::UiPrefs { last_pad: engine.config_read().last_pad.clone() }
+}
+
+/// Tauri command: remember the pad the board shows (`last_pad` in the
+/// config, v3.4.0). Writes only when it changed, and then emits
+/// `config-changed` (iron rule 10) marked `ui` so the activity log does not
+/// report a settings change for a pad switch.
 #[cfg(feature = "gui")]
 #[tauri::command]
 pub fn set_ui_prefs(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
     config_path: State<'_, PathBuf>,
     prefs: crate::gui::ui_prefs::UiPrefs,
 ) -> Result<(), String> {
-    crate::gui::ui_prefs::save(
-        &crate::gui::ui_prefs::path_beside(&config_path),
-        &prefs,
-    )
-    .map_err(|e| format!("{e:#}"))
+    if set_ui_prefs_impl(&engine, &config_path, prefs).map_err(|e| format!("{e:#}"))? {
+        let _ = app.emit("config-changed", serde_json::json!({"source": "ipc", "ui": true}));
+    }
+    Ok(())
+}
+
+/// Pure implementation of `set_ui_prefs`: `true` when the config was written.
+pub fn set_ui_prefs_impl(
+    engine: &Handle,
+    config_path: &Path,
+    prefs: crate::gui::ui_prefs::UiPrefs,
+) -> anyhow::Result<bool> {
+    let Some(pad) = prefs.last_pad else { return Ok(false) };
+    if engine.config_read().last_pad.as_deref() == Some(pad.as_str()) {
+        return Ok(false);
+    }
+    mutate_config(engine, config_path, |doc| {
+        doc.set_last_pad(&pad);
+        Ok(())
+    })?;
+    Ok(true)
 }
 
 /// Tauri command: return the build-time `CARGO_PKG_VERSION`.

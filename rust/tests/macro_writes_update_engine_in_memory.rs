@@ -51,6 +51,7 @@ fn baseline_config() -> Config {
         mapping_enabled: Default::default(),
         rumble_on_connect: true,
         stick_cal: Default::default(),
+        last_pad: None,
     }
 }
 

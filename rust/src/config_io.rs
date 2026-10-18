@@ -140,6 +140,11 @@ impl ConfigDoc {
         self.raw["rumble_on_connect"] = Value::from(v);
     }
 
+    pub fn set_last_pad(&mut self, pad: &str) {
+        self.typed.last_pad = Some(pad.to_string());
+        self.raw["last_pad"] = Value::from(pad);
+    }
+
     pub fn set_touchpad_click_freeze_enabled(&mut self, v: bool) {
         self.typed.touchpad_click_freeze_enabled = v;
         self.raw["touchpad_click_freeze_enabled"] = Value::from(v);

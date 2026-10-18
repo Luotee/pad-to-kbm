@@ -12,7 +12,7 @@ import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
 import { bangHTML, popHTML, vigemBlocksBanner } from './vigem.js';
 
-export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（Esc 取消）';
+export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）';
 
 export function triggerModes(config, pad) {
   return config?.pads?.[pad]?.trigger_mode || { l: 'page', r: 'page' };
@@ -117,8 +117,8 @@ export function render(st) {
   const lk = boardLocked(st), dis = on => (on && !lk ? '' : ' disabled');
   h += '<footer class="ftr"><button type="button" class="b-def" data-act="reset"' + dis(true) + '>恢復預設</button><button type="button" class="b-clr" data-act="clear"' + dis(true) + '>全部清除</button>' +
     '<span class="note">' + esc(st.note) + '</span><div class="sp"></div>' +
-    '<button type="button" class="b-hist" data-act="undo" title="復原（Ctrl+Z）"' + dis(st.canUndo) + '>' + ICON.undo + '復原</button>' +
-    '<button type="button" class="b-hist redo" data-act="redo" title="重做（Ctrl+Y）"' + dis(st.canRedo) + '><span class="flip">' + ICON.undo + '</span>重做</button></footer>';
+    '<button type="button" class="b-hist" data-act="undo" title="復原"' + dis(st.canUndo) + '>' + ICON.undo + '復原</button>' +
+    '<button type="button" class="b-hist redo" data-act="redo" title="重做"' + dis(st.canRedo) + '><span class="flip">' + ICON.undo + '</span>重做</button></footer>';
   return h;
 }
 

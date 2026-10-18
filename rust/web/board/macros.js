@@ -133,7 +133,8 @@ export function startMacros(board) {
     if (a === 'mdel') { remove(); return true; }
     if (a === 'stoggle') { m.steps[i].action = m.steps[i].action === 'down' ? 'up' : 'down'; rerender(); return true; }
     if (a === 'sdelay') { state.mpop = state.mpop === i ? null : i; rerender(); if (state.mpop !== null) board.querySelector('.dpop .num')?.focus(); return true; }
-    return ['reset', 'clear', 'undo', 'redo', 'setopen'].includes(a);   // board actions wait for 完成
+    // Board actions wait for 完成; the gear does not (settings open over the editor, v3.4.0).
+    return ['reset', 'clear', 'undo', 'redo'].includes(a);
   });
 
   // Live edits that must not re-render (a re-render would drop the caret).
@@ -153,15 +154,6 @@ export function startMacros(board) {
       msg.textContent = bad ? '前面要比後面小' : '每次隨機，毫秒';
       msg.classList.toggle('bad', bad);
     }
-  });
-
-  hook('keydown', ev => {
-    if (ev.key !== 'Escape' || !state.medit || state.mpop === null) return false;
-    const i = state.mpop;
-    state.mpop = null;
-    rerender();
-    board.querySelector('[data-act="sdelay"][data-i="' + i + '"]')?.focus();
-    return true;
   });
 
   // Steps: drag to reorder, drag out to delete; key tiles drop in before a step.

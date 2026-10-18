@@ -58,7 +58,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
   </tr>
   <tr>
     <td><sub><b>快捷頁。</b>按住 ZL 時，十字鍵和面鍵改用這一頁（這裡 ← 送出 F3）。每個扳機都能切換「快捷頁」或「單鍵」。</sub></td>
-    <td><sub><b>按一下就綁。</b>點格子，再按鍵盤或滑鼠（中鍵、右鍵、滾輪），或點下方的方塊。Esc 取消。</sub></td>
+    <td><sub><b>按一下就綁。</b>點格子，再按鍵盤或滑鼠（中鍵、右鍵、滾輪），或點下方的方塊。再點一次格子取消。</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/readme/macro-editor.png" alt="巨集編輯：按下／放開的鍵帽，每步下面有最短～最長的延遲"></td>

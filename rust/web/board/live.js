@@ -11,7 +11,7 @@ import * as act from './actions.js';
 
 // ─── Real key → palette tile (from the mockup's keyName) ─────────────────────
 const CODE = { ShiftLeft: 'LShift', ShiftRight: 'RShift', ControlLeft: 'LCtrl', ControlRight: 'RCtrl', AltLeft: 'LAlt', AltRight: 'RAlt',
-  MetaLeft: 'Win', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', Space: 'Space', Enter: 'Enter',
+  MetaLeft: 'Win', MetaRight: 'Win', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', Space: 'Space', Enter: 'Enter',
   Tab: 'Tab', Backspace: 'Backspace', Delete: 'Del', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', Minus: '-',
   Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`' };
 export function keyName(ev) {
@@ -78,11 +78,12 @@ function up(id) {
 const recentEmit = new Map();   // tile -> time of the last engine emit 'down'
 function typing(ev) { return /INPUT|TEXTAREA|SELECT/.test(ev.target?.tagName || ''); }
 
+// Every held key lights its tile, bound or not, in every mode (v3.4.0);
+// not while typing in a text field.
 function revDown(ev) {
-  if (ev.repeat || ev.ctrlKey || ev.metaKey || typing(ev) || state.sel !== null || state.medit || state.setOpen) return;
+  if (ev.repeat || typing(ev)) return;
   const k = keyName(ev);
   if (!k) return;
-  if (ev.code === 'Space' || ev.code === 'Tab' || /^Arrow/.test(ev.code)) ev.preventDefault();
   const t0 = performance.now();
   // Defer 30 ms: an engine emit of the same key inside that window means the
   // engine typed it, not the user.
@@ -137,11 +138,14 @@ export async function startLive() {
   });
   await listen('controller-status', s => { if (s.connected === false) { pressed.clear(); triggers.length = 0; paintLit(); } });
 
+  // The board has no keyboard shortcuts and keeps no browser key behaviour
+  // (focus moves, Space / Enter pressing a button, F5, …): outside a text
+  // field a key only lights its tile and binds a waiting slot (v3.4.0).
+  const swallow = ev => { if (!typing(ev)) ev.preventDefault(); };
+  document.addEventListener('keydown', swallow, true);
+  document.addEventListener('keyup', swallow, true);
   document.addEventListener('keydown', ev => {
-    if (!capturing() || ev.ctrlKey || ev.metaKey || typing(ev)) return;
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    if (ev.key === 'Escape') { selectSlot(null); return; }
+    if (!capturing() || typing(ev)) return;
     const k = keyName(ev);
     if (k) bindCaptured(k);
   }, true);

@@ -38,7 +38,7 @@
   "trigger_threshold": 0.5,
   "min_press_ms": [8, 25],
   "tick_jitter_ms": [0, 3],
-  "log_events": true,
+  "log_events": false,
   "pads": {
     "dualsense": {
       "buttons": {

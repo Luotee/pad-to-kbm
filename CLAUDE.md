@@ -4,9 +4,10 @@ PadToKBM was called DualSense Mapper until v3.1.0. Names deliberately kept
 from then: the Rust crate / lib (`dualsense-mapper` / `dualsense_mapper`,
 never shown to users), the Tauri `identifier` `com.luotee.dualsense-mapper`
 (changing it moves the WebView2 user-data dir and the single-instance key),
-and the legacy file names `file_names.rs` adopts on first start
-(`dualsense-mapper.json` / `.ui.json` → `padtokbm.json` / `.ui.json`, `.bak`
-kept). Only the `[[bin]]` name (`PadToKBM.exe`) and visible strings changed.
+and the legacy config name `file_names.rs` adopts on first start
+(`dualsense-mapper.json` → `padtokbm.json`, `.bak` kept; since v3.4.0 the old
+`.ui.json` files are folded into the config by `gui/ui_prefs.rs` and
+deleted). Only the `[[bin]]` name (`PadToKBM.exe`) and visible strings changed.
 
 ## If You Are an AI Agent
 
