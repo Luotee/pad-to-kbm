@@ -61,6 +61,18 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             //
             // We just wire the tray + event bridge + file watcher here.
 
+            // The page draws the window as pixel art (v3.3.0): open it at the whole scale nearest the
+            // display scale that fits the screen (gui/winscale.rs), centred.
+            if let Some(w) = app.get_webview_window("main") {
+                if let Ok(Some(m)) = w.current_monitor() {
+                    let area = m.work_area().size;
+                    let n = crate::gui::winscale::pick_scale(m.scale_factor(), area.width, area.height);
+                    let (tw, th) = crate::gui::winscale::size_for(n);
+                    let _ = w.set_size(tauri::PhysicalSize::new(tw, th));
+                    let _ = w.center();
+                }
+            }
+
             let tray = crate::gui::tray::build(&app.handle(), handle_for_setup.clone())?;
             // Store the tray so it persists for the app lifetime and can be
             // retrieved in Task 25 via `app.state::<TrayIcon<_>>()`.
@@ -151,8 +163,18 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             // background mapping while the window is hidden should
             // minimise to the taskbar instead, or use the tray's Open
             // entry to re-show the window after this exits.
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                window.app_handle().exit(0);
+            match event {
+                tauri::WindowEvent::CloseRequested { .. } => window.app_handle().exit(0),
+                // Keep the drawn window at whole scales (gui/winscale.rs): a resize snaps to the
+                // nearest one that fits, a move to a monitor with another display scale re-picks.
+                tauri::WindowEvent::Resized(size) => snap_window(window, *size),
+                tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    if let Some((ww, wh)) = work_area(window) {
+                        let (tw, th) = crate::gui::winscale::size_for(crate::gui::winscale::pick_scale(*scale_factor, ww, wh));
+                        let _ = window.set_size(tauri::PhysicalSize::new(tw, th));
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!());
@@ -163,4 +185,24 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
 
     result.context("Tauri event loop terminated unexpectedly")?;
     Ok(())
+}
+
+fn work_area(w: &tauri::Window) -> Option<(u32, u32)> {
+    let m = w.current_monitor().ok().flatten()?;
+    let s = m.work_area().size;
+    Some((s.width, s.height))
+}
+
+/// Snap a resized window to the nearest whole scale. Minimised (0 x 0) and maximised windows are
+/// left alone (the page centres the drawing in a maximised one); a size already on a whole scale
+/// is a no-op, which also ends the Resized event our own set_size causes.
+fn snap_window(w: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+    if size.width == 0 || size.height == 0 || w.is_maximized().unwrap_or(false) || w.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let Some((ww, wh)) = work_area(w) else { return };
+    let (tw, th) = crate::gui::winscale::size_for(crate::gui::winscale::snap_scale(size.width, size.height, ww, wh));
+    if (tw, th) != (size.width, size.height) {
+        let _ = w.set_size(tauri::PhysicalSize::new(tw, th));
+    }
 }
