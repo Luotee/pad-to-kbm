@@ -1022,6 +1022,50 @@ try {
     await settle(page);
   }
 
+  // ── v3.4.0: settings open over the macro editor ──────────────────────────
+  // The gear works while a macro is being edited; the draft is untouched by
+  // 儲存 / 取消, and both changes land (they write different config fields).
+  {
+    for (let i = 0; i < 5 && !(await page.locator('#board .macros .mnew').count()); i++) { await page.click('#board [data-act="mnext"]'); await settle(page); }
+    await page.click('#board .macros .mnew');
+    await settle(page);
+    await tile(page, 'A').click();
+    await page.locator('#board .med .mname').fill('設定中');
+    await page.locator('#board .med .mname').dispatchEvent('input');
+    await page.click('#board .med [data-act="sdelay"][data-i="0"]');
+    await settle(page);
+    const draft = async () => ({
+      med: await page.locator('#board .med').count(),
+      steps: await page.locator('#board .med .st[data-step]:not([data-step="end"])').count(),
+      name: await page.locator('#board .med .mname').inputValue().catch(() => null),
+    });
+    const same = d => d.med === 1 && d.steps === 2 && d.name === '設定中';
+    await page.click('#board [data-act="setopen"]');
+    await settle(page);
+    const d1 = await draft();
+    check('the gear opens settings over the macro editor', (await page.locator('#board .setw').count()) === 1 && same(d1), JSON.stringify(d1));
+    await page.click('#board [data-stab="stick"]');
+    await page.locator('#board [data-f="deadzone"]').fill('0.35');
+    await page.locator('#board [data-f="deadzone"]').dispatchEvent('input');
+    await page.click('#board [data-act="setsave"]');
+    await settle(page);
+    const d2 = await draft();
+    check('儲存 closes settings back to the untouched draft', (await page.locator('#board .setw').count()) === 0 && same(d2) &&
+      Math.abs((await lastCall(page, 'set_settings'))?.args?.settings?.deadzone - 0.35) < 1e-6, JSON.stringify(d2));
+    await page.click('#board [data-act="setopen"]');
+    await settle(page);
+    await page.click('#board [data-act="setclose"]');
+    await settle(page);
+    const d3 = await draft();
+    check('取消 closes settings back to the untouched draft', (await page.locator('#board .setw').count()) === 0 && same(d3), JSON.stringify(d3));
+    await page.click('#board .med [data-act="mdone"]');
+    await settle(page);
+    const sv = await lastCall(page, 'set_macro');
+    const kept = await page.evaluate(() => ({ dz: window.__mock.config.deadzone, m: window.__mock.config.macros['設定中'] }));
+    check('完成 saves the macro and keeps the saved settings', sv?.args?.name === '設定中' && sv.args.def.steps.length === 2 &&
+      kept.m?.steps?.length === 2 && Math.abs(kept.dz - 0.35) < 1e-6, JSON.stringify(kept));
+  }
+
   // @@NEXT-TASKS
 
   const inPageErrors = await page.evaluate(() => window.__mockErrors);
