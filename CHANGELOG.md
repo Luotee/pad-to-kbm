@@ -35,6 +35,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   old size) and a resize snaps to whole scales (drag a corner to grow it).
 - Macro names are drawn in the pixel font too: the whole of Cubic 11 ships
   (about 400 KB) instead of the UI-text subset.
+- **Icons are pixel art.** Every icon in the window is drawn on whole pixels
+  in its label's colour. The icon-only buttons (settings, edit macro, macro
+  pages) are the title bar's blue keys, and the settings close button is the
+  title bar's close key.
+- **New app and tray icon:** a Famicom-style pad drawn like the reference's
+  emoticons (black outline, cream body). Every size is a whole multiple of a
+  hand-placed 16, 24 or 32 px grid. The tray icon is grey without a
+  controller, as before.
 - README screenshots retaken.
 
 ## [3.2.1] - 2026-10-15

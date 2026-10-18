@@ -48,3 +48,10 @@ test('fit_never_scales_to_zero', () => {
   assert.equal(f.k, 0.5);
   assert.ok(f.k > 0);
 });
+
+// Reskin Q24 B: the settings ✕ is the title-bar close key, drawn 2x.
+test('win_key_scales_the_reference_key', async () => {
+  const { winKey } = await import('../chrome.js');
+  assert.equal(winKey('close'), BTN.close);
+  assert.match(winKey('close', 24), /^<svg width="24" height="24" viewBox="0 0 12 12"/);
+});

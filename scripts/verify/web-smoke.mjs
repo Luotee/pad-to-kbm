@@ -527,6 +527,16 @@ try {
       const r = document.querySelector('#board .hdr ' + s).getBoundingClientRect(); return [r.left, r.width].join('/'); }).join(' '));
   }
   check('header controls do not move between pad tabs (手把 / Xbox)', new Set(Object.values(hdrSpots)).size === 1, JSON.stringify(hdrSpots));
+  // Reskin Q24 B: pixel icons; icon-only buttons are the title bar's blue key.
+  check('header / footer / macro-box icons are crisp pixel art', await page.evaluate(() => {
+    const svgs = [...document.querySelectorAll('#board .omode svg, #board .gear svg, #board .b-hist svg, #board .pen svg, #board .mpg svg, #board .pwr svg')];
+    return svgs.length >= 8 && svgs.every(s => s.getAttribute('shape-rendering') === 'crispEdges' && !s.querySelector('[stroke], circle'));
+  }));
+  check('gear, pen and page keys are the blue title-bar key', await page.evaluate(() =>
+    ['#board .hdr .gear', '#board .mpg button:not(.pdot)', '#board .mt .pen'].map(q => document.querySelector(q)).filter((e, i) => e || i < 2).every(e => {
+      const c = e && getComputedStyle(e);
+      return !!c && c.borderTopColor === 'rgb(0, 7, 20)' && c.color === 'rgb(196, 252, 255)' && /linear-gradient/.test(c.backgroundImage);
+    })));
 
   // ── Layout: the window never scrolls; the board always fits ──────────────
   for (const [w, h] of [[880, 560], [994, 669], [1280, 800], [1600, 1000], [1988, 1338]]) {
@@ -715,6 +725,10 @@ try {
     saved.args.name === '連發' && saved.args.def.loop === true && saved.args.def.steps[0].key === 'a' &&
     JSON.stringify(saved.args.def.steps[0].delay_ms) === '[40,70]', seq.join(',') + ' ' + JSON.stringify(saved?.args));
   check('the editor closes after 完成', (await page.locator('#board .med').count()) === 0);
+  check('macro pen is the blue title-bar key (Q24 B)', await page.evaluate(() => {
+    const c = getComputedStyle(document.querySelector('#board .mt .pen'));
+    return c.borderTopColor === 'rgb(0, 7, 20)' && /linear-gradient/.test(c.backgroundImage);
+  }));
   await page.locator('#board [data-medit="連發"]').click();
   await settle(page);
   await page.click('#board .med [data-act="mdel"]');
@@ -780,6 +794,10 @@ try {
   await page.click('#board [data-act="opencfg"]');
   await page.click('#board [data-act="opendir"]');
   await settle(page);
+  check('settings close is the title-bar close key at 2x (Q24 B)', await page.evaluate(() => {
+    const k = document.querySelector('#board .whd .x svg');
+    return !!k && k.getAttribute('width') === '24' && k.getAttribute('viewBox') === '0 0 12 12' && !!k.querySelector('path[fill="#000714"]');
+  }));
   check('用記事本開啟 / 開啟所在資料夾 invoke their commands', (await countCalls(page, 'open_config_in_editor')) === 1 && (await countCalls(page, 'open_config_folder')) === 1);
   for (let i = 0; i < 8; i++) {
     await page.evaluate(i => window.__mockEmit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'k' + i, action: i % 2 ? 'up' : 'down' }), i);

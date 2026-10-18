@@ -6,6 +6,7 @@ import { state, rerender } from './store.js';
 import { esc, tagSvg, switchHTML } from './tags.js';
 import { layoutFor, slotsOf } from './layout.js';
 import { ICON } from './icons.js';
+import { winKey } from '../chrome.js';
 import { hook, selectSlot } from './events.js';
 import { settingsFrom } from './actions.js';
 import { PAD_NAMES, keyToTile } from './model.js';
@@ -148,7 +149,7 @@ function pane(d, t) {
 export function settingsHTML(st) {
   const d = st.draft, t = st.setTab;
   let h = '<div class="ovl"><section class="setw" role="dialog" aria-modal="true" aria-labelledby="set-t">';
-  h += '<div class="whd">' + ICON.gear + '<h2 id="set-t">設定</h2><div class="sp"></div><button type="button" class="x" data-act="setclose" aria-label="關閉">' + ICON.close + '</button></div><div class="wbody"><nav class="stabs" aria-label="設定分類">';
+  h += '<div class="whd">' + ICON.gear + '<h2 id="set-t">設定</h2><div class="sp"></div><button type="button" class="x" data-act="setclose" aria-label="關閉">' + winKey('close', 24) + '</button></div><div class="wbody"><nav class="stabs" aria-label="設定分類">';
   for (const [id, label] of TABS) h += '<button type="button" data-stab="' + id + '" aria-pressed="' + (t === id) + '">' + label + '</button>';
   h += '</nav><div class="spane">' + pane(d, t) + '</div></div>';
   h += '<div class="wft"><span class="err" role="alert">' + esc(st.setErr) + '</span><div class="sp"></div><button type="button" class="b-cancel" data-act="setclose">取消</button><button type="button" class="b-ok" data-act="setsave">儲存</button></div></section></div>';

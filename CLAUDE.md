@@ -184,9 +184,9 @@ What a PASS requires, captured as evidence:
   `${XDG_CACHE_HOME:-~/.cache}/pad-to-kbm-tools/`; nothing to install by hand.
 - Screenshot `rust/target/verify/web-main.png`; README pictures come from
   `scripts/readme-shots.mjs`.
-- The app and tray icons (`rust/icons/*.ico`) are rendered from the
-  board's DualSense art by `scripts/build-icons.mjs` (previews in
-  `rust/target/icons-preview/`); re-run it when `padart.js` changes.
+- The app and tray icons (`rust/icons/*.ico`) are the pixel grids in
+  `scripts/icon-art.mjs`, rendered by `scripts/build-icons.mjs` (previews in
+  `rust/target/icons-preview/`); re-run it when `icon-art.mjs` changes.
 
 web-smoke runs in plain Chromium, so it cannot see what WebView2's host
 layer changes. One such trap is pinned by `rust/tests/tauri_conf.rs`: the

@@ -459,3 +459,10 @@ html,body,#app{background:transparent !important}
 .mock .pal .tile.hit:not(.x1):not(.x2) svg path:first-of-type{fill:#0b0000}
 /* Q13: no focus ring on the title-bar keys either. */
 #wtbar .wb:focus-visible{outline:0}
+/* Q24 B: pixel icons. The ring around an icon-only key's glyph is drawn only where --iol is set. */
+.mock svg .iol{fill:var(--iol,transparent)}
+/* Icon-only buttons are the title bar's blue key (chrome.js): ten blue bands, black edge, pale glyph. */
+.mock .hdr .gear,.mock .mt .pen,.mock .mpg button:not(.pdot){background:linear-gradient(#69c3f2 0 1px,#1f88bd 1px 2px,#2a8fc6 2px,#3c9fd0 40%,#47acd6 70%,#5ac2f2 calc(100% - 1px),#6bc2eb 0);border:1px solid #000714;border-radius:2px;color:#c4fcff;box-shadow:none;--iol:#0b4a74}
+.mock .hdr .gear:hover,.mock .mt .pen:hover,.mock .mpg button:not(.pdot):not(:disabled):hover{background:linear-gradient(#7fcff6 0 1px,#2b95ca 1px 2px,#3a9ad0 2px,#4dabd9 40%,#58b7de 70%,#6bcaf4 calc(100% - 1px),#7ccaee 0);color:#e6feff}
+/* The settings close is the close key itself, drawn 2x: no box of its own. */
+.mock .whd .x{width:24px;height:24px;border:0;border-radius:0;background:none;box-shadow:none}

@@ -7,19 +7,20 @@ export const W = 994, H = 669;          // the whole window at 1x: board 980x640
 export const TITLE = 'PAD TO KBM';
 
 // Reference close key, 12x12: black edge with cut corners, ten blue bands, and 2x2 blocks on a 3x3 grid
-// (pale corners + centre read as an X, dark edges between). Minimise = a pale bottom bar.
+// (pale corners + centre read as an X, dark edges between). Minimise = a pale bottom bar. size: drawn
+// size in css px, a whole multiple of 12 (the settings close is this key at 24, reskin Q24 B).
 const BANDS = ['#69c3f2', '#1f88bd', '#2a8fc6', '#3196c8', '#3c9fd0', '#45a8d6', '#47acd6', '#4bb2dc', '#5ac2f2', '#6bc2eb'];
 const GRID = { close: ['P.P', '.P.', 'P.P'], min: ['...', '...', 'PPP'] };
-function key(kind) {
+export function winKey(kind, size = 12) {
   let r = '<path d="M1 0h10v1h-10zM1 11h10v1h-10zM0 1h1v10h-1zM11 1h1v10h-1z" fill="#000714"/>';
   BANDS.forEach((c, i) => { r += '<rect x="1" y="' + (i + 1) + '" width="10" height="1" fill="' + c + '"/>'; });
   GRID[kind].forEach((row, j) => [...row].forEach((ch, i) => {
     const fill = ch === 'P' ? '#c4fcff' : (kind === 'close' ? '#3a7fa8' : null);
     if (fill) r += '<rect x="' + (3 + 2 * i) + '" y="' + (3 + 2 * j) + '" width="2" height="2" fill="' + fill + '"/>';
   }));
-  return '<svg width="12" height="12" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">' + r + '</svg>';
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">' + r + '</svg>';
 }
-export const BTN = { min: key('min'), close: key('close') };
+export const BTN = { min: winKey('min'), close: winKey('close') };
 
 // White outer line and dark steel line, both following the 4px cut corners.
 function poly(d) {
