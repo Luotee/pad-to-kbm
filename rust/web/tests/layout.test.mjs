@@ -48,7 +48,10 @@ test('every_route_is_one_svg_path', () => {
   for (const rt of L.routes) {
     for (const hit of [false, true]) {
       const h = routeHTML(rt.pts, rt.r, rt.m, hit);
-      assert.equal((h.match(/<path/g) || []).length, hit ? 2 : 1, `${rt.id} hit=${hit}`);
+      // Reskin Q12: a lit line keeps its shape (one path, one end dot) and only changes colour (CSS).
+      assert.equal((h.match(/<path/g) || []).length, 1, `${rt.id} hit=${hit}`);
+      assert.equal((h.match(/<circle/g) || []).length, 1, `${rt.id} hit=${hit}`);
+      assert.equal(h.startsWith('<g class="hit">'), hit, `${rt.id} hit=${hit}`);
       assert.ok(!h.includes('class="ln'), 'no div lines');
     }
   }

@@ -212,10 +212,6 @@ export function routeHTML(p, r, m, hit) {
   }
   var d = pts.map(function (q, i) { return (i ? 'L' : 'M') + (q[0] + 0.5) + ',' + (q[1] + 0.5); }).join(' '), e = pts[n - 1];
   var ex = e[0] + 0.5, ey = e[1] + 0.5;
-  if (hit) {
-    return '<g class="hit"><path d="' + d + '" fill="none" stroke="#7a5c00" stroke-width="5" stroke-linejoin="miter"/>' +
-      '<circle cx="' + ex + '" cy="' + ey + '" r="4.5" fill="#7a5c00"/><path d="' + d + '" fill="none" stroke="#ffcf2e" stroke-width="3" stroke-linejoin="miter"/>' +
-      '<circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#ffcf2e"/></g>';
-  }
-  return '<g><path d="' + d + '" fill="none" stroke="#c4232c" stroke-width="3" stroke-linejoin="miter"/><circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#c4232c"/></g>';
+  // A lit line (pad button held) keeps its shape and only changes colour: `g.hit` in board.css.
+  return '<g' + (hit ? ' class="hit"' : '') + '><path d="' + d + '" fill="none" stroke="#c4232c" stroke-width="3" stroke-linejoin="miter"/><circle cx="' + ex + '" cy="' + ey + '" r="3.5" fill="#c4232c"/></g>';
 }

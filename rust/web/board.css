@@ -299,8 +299,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .qcap>span{background:#778593;border:0;border-radius:3px;color:#fff}
 .mock .seg button{border:1px solid #656565;background:#bbbbbb;color:#fff;text-shadow:var(--ol-grey)}
 .mock .seg button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);border-color:#0b0000;text-shadow:var(--ol-rose)}
-.mock .lines g:not(.hit) path{stroke:#8a1818;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
-.mock .lines g:not(.hit) circle{fill:#8a1818;stroke:#ffc8ce;stroke-width:1}
+.mock .lines g path{stroke:#8a1818;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
+.mock .lines g circle{fill:#8a1818;stroke:#ffc8ce;stroke-width:1}
 /* slots: empty = dark socket + light rim + white; bound = socket + dark rim + bevel + mauve */
 /* Measured on the reference pixel by pixel: empty = light rim 1px top, 2px sides, 4px bottom, near-white fill. */
 .slot{border:solid #b0b7c3;border-width:1px 2px 4px;background:#f6fafb;border-radius:3px;box-shadow:none}
@@ -381,9 +381,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .pal .tile.used:not(.mac) svg path:first-of-type{fill:#8a6f7c}
 .mock .pal .tile.used.mac{background:#d2d2d2;border-color:#7a7a7a;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f2f2f2,inset -1px -1px 0 #b4b4b4;text-shadow:0 1px 0 #7a7a7a}
 /* Q12 A (user): pressing a pad button fills its slot and bound tile rose; the line keeps its shape (2px, same dot, same halo) and only turns rose. */
-.mock .lines g.hit path:first-of-type,.mock .lines g.hit circle:first-of-type{display:none}
-.mock .lines g.hit path:last-of-type{stroke:#d8506e;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
-.mock .lines g.hit circle:last-of-type{fill:#d8506e;stroke:#ffc8ce;stroke-width:1}
+.mock .lines g.hit path{stroke:#d8506e;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
+.mock .lines g.hit circle{fill:#d8506e;stroke:#ffc8ce;stroke-width:1}
 .mock .slot.hit{outline:0;animation:none;border:0;background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:0 0 0 1px #0b0000,inset 1px 1px 0 #ffedfa,inset -1px -1px 0 #b84a62}
 .mock .slot.hit .val,.mock .slot.hit .tag{color:#fff;text-shadow:var(--ol-rose)}
 .mock .pal .tile.hit:not(.x1):not(.x2){background:linear-gradient(#e96785,#e86780 80%,#da6075);border-color:#0b0000;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #ffedfa,inset -1px -1px 0 #b84a62;color:#fff;text-shadow:var(--ol-rose)}
@@ -406,6 +405,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .dpop .row{font-size:12px}.mock .dpop .row svg{flex:none}
 .mock .num{font-size:12px;height:20px;border:1px solid #677888;border-radius:0;background:#fff;color:#000;box-shadow:inset 1px 1px 0 #c5cad2}
 .mock .num[aria-invalid="true"]{border-color:#b40704;background:#fbe5e5}
+.mock .dpop .hint{color:var(--mute)}.mock .dpop .hint.bad{color:#b40704}
 /* Q17 B (user): every on/off switch is a 關｜開 pair, the current state in rose — same logic as 關／鍵鼠／手把. */
 #board .sw .track{border-radius:3px;background:#bbbbbb;box-shadow:inset 0 0 0 1px #656565;display:flex;overflow:hidden}
 #board .sw .track>span{flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;line-height:12px;color:#fff;text-shadow:1px 1px 0 #656565}
