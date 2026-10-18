@@ -114,7 +114,7 @@ function tauriMock({ config, version }) {
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const errors = [];
 try {
-  const context = await browser.newContext({ viewport: { width: 980, height: 640 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 994, height: 669 }, deviceScaleFactor: 2 });   // the drawn window at 2x
   await context.addInitScript(tauriMock, { config, version });
   const page = await context.newPage();
   page.on('pageerror', e => errors.push(String(e)));

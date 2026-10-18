@@ -442,3 +442,7 @@ html,body,#app{background:transparent !important}
 #wtbar .wt{letter-spacing:-1px}
 #wtbar .wsp{flex:1}
 #wtbar .wb{width:12px;height:12px;padding:0;border:0;background:none;display:block;line-height:0;cursor:pointer}
+/* Macro tiles fit a 4-character name beside the pen (78px: 2px edges + 48px text + 18px pen + air). */
+.mock .mgrid{grid-template-columns:repeat(2,78px)}
+.mock .mt .tile{width:78px;padding-right:18px}
+.mock .mnew{width:78px}
