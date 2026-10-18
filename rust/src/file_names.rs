@@ -56,20 +56,14 @@ pub fn default_config_path(dir: &Path) -> (PathBuf, Adoption) {
     (path, got)
 }
 
-/// Startup adoption for `dir` (the exe dir when no `--config` is given):
-/// the config and the ui-prefs file, each logged. Returns the config path
-/// to use (see [`default_config_path`]).
+/// Startup adoption of the config in `dir` (the exe dir when no `--config`
+/// is given), logged. Returns the config path to use (see
+/// [`default_config_path`]). The old ui-prefs files are not renamed any more:
+/// `gui::ui_prefs::absorb` folds them into the config (v3.4.0).
 pub fn adopt_all(dir: &Path) -> PathBuf {
     let (path, got) = default_config_path(dir);
     log_adoption(&got, LEGACY_CONFIG_FILE, CONFIG_FILE);
-    adopt_ui_prefs(dir);
     path
-}
-
-/// Adopt only the ui-prefs file in `dir` (the `--config` case: the chosen
-/// config file is never renamed).
-pub fn adopt_ui_prefs(dir: &Path) {
-    log_adoption(&adopt_legacy(dir, LEGACY_UI_PREFS_FILE, UI_PREFS_FILE), LEGACY_UI_PREFS_FILE, UI_PREFS_FILE);
 }
 
 /// One log line for an adoption outcome of `legacy` → `new` (nothing for

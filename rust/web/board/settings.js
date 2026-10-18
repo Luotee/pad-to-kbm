@@ -267,7 +267,8 @@ export async function startSettings(board) {
     if (s.connected && s.kind) { if (s.kind !== lastKind) log('連線', (PAD_NAMES[s.kind] || s.kind) + ' 已連線'); lastKind = s.kind; }
     else if (lastKind) { log('連線', (PAD_NAMES[lastKind] || lastKind) + ' 已斷開'); lastKind = null; }
   });
-  await listen('config-changed', () => log('設定', '設定已變更'));
+  // Remembering the shown pad (`ui`, v3.4.0) is not a settings change.
+  await listen('config-changed', p => { if (!p?.ui) log('設定', '設定已變更'); });
   await listen('touchpad-hover', p => { finger = p.quadrant === 255 ? null : [p.raw_x, p.raw_y]; paintTouchpad(); });
   await listen('touchpad-click', p => { finger = [p.raw_x, p.raw_y]; paintTouchpad(); });
 }

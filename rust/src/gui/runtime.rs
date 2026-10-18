@@ -107,6 +107,10 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             std::thread::spawn(move || {
                 for _ in notify_rx.iter() {
                     match ConfigDoc::load(&path_for_watcher) {
+                        // Our own IPC writes come back here too; the engine
+                        // already has them and the IPC command emitted
+                        // config-changed, so only a real external edit goes on.
+                        Ok(doc) if *handle_for_watcher.config_read() == *doc.typed() => {}
                         Ok(doc) => {
                             *handle_for_watcher.config_write() = doc.typed().clone();
                             let _ = app_for_watcher.emit(

@@ -93,7 +93,6 @@ function tauriMock({ config, version }) {
   const defaults = clone(config.pads);   // the example's pads = the default tables
   const state = {
     config: clone(config),
-    prefs: { drawer_open: false, last_tab: null, last_pad: null },
     status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [] },
     sticks: null,
     vigem: 'installed',          // get_vigem_status reply
@@ -141,8 +140,13 @@ function tauriMock({ config, version }) {
     switch (cmd) {
       case 'get_controller_status': return clone(state.status);
       case 'get_config': return clone(c);
-      case 'get_ui_prefs': return clone(state.prefs);
-      case 'set_ui_prefs': state.prefs = clone(a.prefs); return null;
+      case 'get_ui_prefs': return { last_pad: c.last_pad ?? null };
+      case 'set_ui_prefs':   // v3.4.0: last_pad is a config field; a change emits config-changed marked ui
+        if (a.prefs.last_pad && a.prefs.last_pad !== c.last_pad) {
+          c.last_pad = a.prefs.last_pad;
+          setTimeout(() => emit('config-changed', { source: 'ipc', ui: true }), 0);
+        }
+        return null;
       case 'get_app_version': return version;
       case 'get_config_path': return 'D:\\Games\\PadToKBM\\padtokbm.json';
       case 'get_stick_positions': return state.sticks ? clone(state.sticks) : null;
@@ -1064,6 +1068,26 @@ try {
     const kept = await page.evaluate(() => ({ dz: window.__mock.config.deadzone, m: window.__mock.config.macros['設定中'] }));
     check('完成 saves the macro and keeps the saved settings', sv?.args?.name === '設定中' && sv.args.def.steps.length === 2 &&
       kept.m?.steps?.length === 2 && Math.abs(kept.dz - 0.35) < 1e-6, JSON.stringify(kept));
+  }
+
+  // ── v3.4.0: one file beside the exe ───────────────────────────────────────
+  // The last pad is a config field; remembering it is not a settings change
+  // in the activity log.
+  {
+    await page.evaluate(() => window.__mockEmit('activity', { ts_ms: Date.now(), kind: 'macro-start', name: '探針' }));
+    await page.click('#board [data-pad="ns_pro"]');
+    await settle(page);
+    check('the last pad is written into the config', await page.evaluate(() => window.__mock.config.last_pad) === 'ns_pro');
+    await page.click('#board [data-act="setopen"]');
+    await settle(page);
+    await page.click('#board [data-stab="gen"]');
+    await settle(page);
+    const top = ((await page.locator('#board #logrows .lr').first().textContent()) || '').trim();
+    check('a pad switch logs no 設定已變更', /巨集「探針」開始/.test(top), top);
+    await page.click('#board [data-act="setclose"]');
+    await settle(page);
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
   }
 
   // @@NEXT-TASKS

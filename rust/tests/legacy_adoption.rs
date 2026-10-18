@@ -6,7 +6,6 @@ use dualsense_mapper::file_names::{
     adopt_all, adopt_legacy, default_config_path, Adoption, CONFIG_FILE, LEGACY_CONFIG_FILE,
     LEGACY_UI_PREFS_FILE, UI_PREFS_FILE,
 };
-use dualsense_mapper::gui::ui_prefs::path_beside;
 use std::fs;
 
 const OLD: &str = "{\"x\":1}";
@@ -75,38 +74,19 @@ fn stale_bak_is_overwritten() {
     assert_eq!(fs::read_to_string(dir.path().join("dualsense-mapper.json.bak")).unwrap(), OLD);
 }
 
+/// v3.4.0: adoption moves the config only; the old ui-prefs file is left
+/// for `gui::ui_prefs::absorb` (tests/ui_prefs.rs), which folds it in.
 #[test]
-fn ui_prefs_adopted_beside_config() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(LEGACY_UI_PREFS_FILE), "{\"last_pad\":\"ns_pro\"}").unwrap();
-    let cfg = adopt_all(dir.path());
-    let p = path_beside(&cfg);
-    assert_eq!(p, dir.path().join(UI_PREFS_FILE));
-    assert_eq!(fs::read_to_string(&p).unwrap(), "{\"last_pad\":\"ns_pro\"}");
-    assert!(!dir.path().join(LEGACY_UI_PREFS_FILE).exists());
-}
-
-#[test]
-fn path_beside_does_not_rename() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(LEGACY_UI_PREFS_FILE), "{}").unwrap();
-    let p = path_beside(&dir.path().join(CONFIG_FILE));
-    assert_eq!(p, dir.path().join(UI_PREFS_FILE));
-    assert!(dir.path().join(LEGACY_UI_PREFS_FILE).exists());
-    assert!(!p.exists());
-}
-
-#[test]
-fn adopt_all_moves_both() {
+fn adopt_all_moves_the_config_only() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join(LEGACY_CONFIG_FILE), OLD).unwrap();
     fs::write(dir.path().join(LEGACY_UI_PREFS_FILE), "{}").unwrap();
     let cfg = adopt_all(dir.path());
     assert_eq!(cfg, dir.path().join(CONFIG_FILE));
     assert_eq!(fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap(), OLD);
-    assert_eq!(fs::read_to_string(dir.path().join(UI_PREFS_FILE)).unwrap(), "{}");
     assert!(!dir.path().join(LEGACY_CONFIG_FILE).exists());
-    assert!(!dir.path().join(LEGACY_UI_PREFS_FILE).exists());
+    assert_eq!(fs::read_to_string(dir.path().join(LEGACY_UI_PREFS_FILE)).unwrap(), "{}");
+    assert!(!dir.path().join(UI_PREFS_FILE).exists());
 }
 
 #[test]
@@ -127,12 +107,10 @@ fn already_new_reports_legacy_presence() {
 #[test]
 fn explicit_config_is_never_renamed() {
     // `--config <dir>/dualsense-mapper.json` is a path the user chose: only
-    // default_config_path adopts, path_beside touches the ui file only.
+    // default_config_path adopts; nothing else renames a config.
     let dir = tempfile::tempdir().unwrap();
     let chosen = dir.path().join(LEGACY_CONFIG_FILE);
     fs::write(&chosen, OLD).unwrap();
-    let ui = path_beside(&chosen);
-    assert_eq!(ui, dir.path().join(UI_PREFS_FILE));
     assert_eq!(fs::read_to_string(&chosen).unwrap(), OLD);
     assert!(!dir.path().join(CONFIG_FILE).exists());
 }

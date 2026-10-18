@@ -65,3 +65,12 @@ fn example_help_is_accurate_about_applying_edits() {
         .expect("a help line says how edits are applied");
     assert!(line.contains("--cli") && line.to_lowercase().contains("restart"), "got: {line}");
 }
+
+/// README FAQ: the event log is something the user turns on. The first-run
+/// config (a copy of this file) must not write padtokbm-events.log (v3.4.0).
+#[test]
+fn first_run_config_does_not_log_events() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.example.json");
+    let cfg = Config::load_from_path(&path).expect("load+validate");
+    assert!(!cfg.log_events);
+}

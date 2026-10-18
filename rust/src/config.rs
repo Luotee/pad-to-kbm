@@ -46,6 +46,12 @@ pub struct Config {
     /// pad's factory calibration only.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub stick_cal: BTreeMap<String, crate::gamepad::stick_cal::PadStickCal>,
+    /// The pad the board showed last (`ControllerKind::slug()`), restored on
+    /// start when no controller is connected. A UI hint, not validated: an
+    /// unknown slug is ignored by the board. Until v3.3.0 it sat in a second
+    /// file, padtokbm.ui.json (`gui::ui_prefs::absorb`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_pad: Option<String>,
 }
 
 fn default_rumble_on_connect() -> bool { true }
@@ -688,6 +694,7 @@ mod tests {
             mapping_enabled: Default::default(),
             rumble_on_connect: true,
             stick_cal: Default::default(),
+            last_pad: None,
         }
     }
 
@@ -805,6 +812,7 @@ mod tests {
             mapping_enabled: Default::default(),
             rumble_on_connect: true,
             stick_cal: Default::default(),
+            last_pad: None,
         }
     }
 
