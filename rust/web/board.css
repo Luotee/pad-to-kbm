@@ -223,7 +223,6 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 #app{position:fixed;inset:0;overflow:hidden;background:var(--bg)}
 #board{position:absolute;left:0;top:0}
 /* Full-width header band behind the scaled board (app.js sets its height). */
-#hband{position:absolute;left:0;top:0;width:100%;height:0;background:var(--navy)}
 .mock .lines{position:absolute;left:0;top:0;width:980px;height:640px;pointer-events:none;overflow:visible;z-index:3}
 .mock .m3 .lines{width:260px;height:210px;z-index:1}
 .mock .med .merr{color:#8f1c22;font-size:11px;margin-right:6px;white-space:nowrap}
@@ -275,7 +274,6 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 }
 /* ---- header → tab row ---- */
 .mock{background:linear-gradient(#e2e2e1 0 52px,var(--bg) 52px)}
-#hband{background:#e2e2e1}
 .mock .hdr{background:#e2e2e1;color:var(--ink);align-items:flex-end;padding-bottom:4px}
 .mock .hdr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;background:linear-gradient(#880e0c 0 1px,#b40704 1px 2px,#a30f0f 2px 3px,#ffe6ec 3px);z-index:0}
 .mock .hdr>*:not(.pads){align-self:center;margin-bottom:-4px}
@@ -433,3 +431,15 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
       .mock .pal>.kbd{padding:14px 13px}.mock .pal>.m3s{flex:1;width:auto;padding-top:2px}.mock .pal>.m3s>.m3{margin-left:round(down,calc((100% - 229px) / 2),1px)}
 /* pad + mouse art: line work */
 .shell .body{fill:none;stroke:#2d4359;stroke-width:3}.shell .seam{stroke:#2d4359}.shell .wheel{fill:#79838f;stroke:#2d4359}.shell .ink{fill:#2d4359}
+/* = window chrome (Q19/Q20): Tauri draws no title bar; the page draws the MapleStory window = */
+html,body,#app{background:transparent !important}
+#app.margin{background:#9cb1c8 !important}
+#win{position:absolute;left:0;top:0;width:994px;height:669px;transform-origin:0 0}
+#win>#board{left:7px;top:22px}
+#wbg{position:absolute;inset:0;background:#9cb1c8;clip-path:polygon(4px 0,990px 0,994px 4px,994px 665px,990px 669px,4px 669px,0 665px,0 4px)}
+#wframe{position:absolute;left:0;top:0;pointer-events:none;z-index:50;line-height:0}
+#wtbar{position:absolute;left:4px;right:4px;top:3px;height:16px;box-sizing:border-box;display:flex;align-items:center;gap:2px;padding:0 1px 0 4px;background:#fcffff;border:1px solid #8fa0b0;border-radius:2px;
+  font:8px/8px Silk,sans-serif;color:#000;z-index:51;will-change:transform;-webkit-font-smoothing:none;cursor:default;user-select:none}
+#wtbar .wt{letter-spacing:-1px}
+#wtbar .wsp{flex:1}
+#wtbar .wb{width:12px;height:12px;padding:0;border:0;background:none;display:block;line-height:0;cursor:pointer}

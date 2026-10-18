@@ -31,3 +31,11 @@ export function invoke(cmd, args) {
 export function listen(name, cb) {
   return T.event.listen(name, e => cb(e.payload));
 }
+
+/**
+ * The app window (Tauri 2 window API), or null where there is none (plain browser tests).
+ * Used by the drawn title bar: drag, minimise, close.
+ */
+export function appWindow() {
+  return T.window && T.window.getCurrentWindow ? T.window.getCurrentWindow() : null;
+}
