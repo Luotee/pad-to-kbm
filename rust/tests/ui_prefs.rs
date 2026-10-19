@@ -2,6 +2,8 @@
 //! padtokbm.json (`last_pad`); an old ui-prefs file (padtokbm.ui.json, or the
 //! pre-v3.1.0 dualsense-mapper.ui.json and its .bak) hands its last pad over
 //! once at startup and is deleted.
+//! v3.4.1: that start also turns `log_events` off, which every config written
+//! before v3.4.0 had on by default.
 
 use dualsense_mapper::config::Config;
 use dualsense_mapper::engine::Engine;
@@ -12,6 +14,13 @@ use std::fs;
 
 const EXAMPLE: &str = include_str!("../config.example.json");
 const LEGACY_UI_BAK: &str = "dualsense-mapper.ui.json.bak";
+
+/// A config as v3.3.0 and earlier wrote it on the first start: logging on.
+fn old_example() -> String {
+    let mut raw: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+    raw["log_events"] = true.into();
+    serde_json::to_string_pretty(&raw).unwrap()
+}
 
 fn dir_with_config(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -41,7 +50,7 @@ fn last_pad_is_an_optional_config_field() {
 fn old_ui_file_hands_its_pad_to_the_config_and_goes() {
     let (dir, cfg) = dir_with_config(EXAMPLE);
     fs::write(dir.path().join(UI_PREFS_FILE), r#"{"drawer_open":false,"last_tab":null,"last_pad":"ns_pro"}"#).unwrap();
-    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: Some("ns_pro".into()) });
+    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: Some("ns_pro".into()), log_off: false });
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
     let after = Config::load_from_path(&cfg).unwrap();
     assert_eq!(after.last_pad.as_deref(), Some("ns_pro"));
@@ -58,7 +67,7 @@ fn pre_rename_ui_files_go_too() {
     let (dir, cfg) = dir_with_config(EXAMPLE);
     fs::write(dir.path().join(LEGACY_UI_PREFS_FILE), r#"{"last_pad":"ns2_pro"}"#).unwrap();
     fs::write(dir.path().join(LEGACY_UI_BAK), r#"{"last_pad":"dualsense"}"#).unwrap();
-    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: Some("ns2_pro".into()) });
+    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: Some("ns2_pro".into()), log_off: false });
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
     assert_eq!(Config::load_from_path(&cfg).unwrap().last_pad.as_deref(), Some("ns2_pro"));
 }
@@ -70,7 +79,7 @@ fn a_pad_already_in_the_config_wins() {
     let text = serde_json::to_string_pretty(&raw).unwrap();
     let (dir, cfg) = dir_with_config(&text);
     fs::write(dir.path().join(UI_PREFS_FILE), r#"{"last_pad":"ns_pro"}"#).unwrap();
-    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: None });
+    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: None, log_off: false });
     assert_eq!(fs::read_to_string(&cfg).unwrap(), text, "config untouched");
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
 }
@@ -79,7 +88,7 @@ fn a_pad_already_in_the_config_wins() {
 fn unreadable_ui_file_is_just_deleted() {
     let (dir, cfg) = dir_with_config(EXAMPLE);
     fs::write(dir.path().join(UI_PREFS_FILE), "not json").unwrap();
-    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: None });
+    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: None, log_off: false });
     assert_eq!(fs::read_to_string(&cfg).unwrap(), EXAMPLE, "config untouched");
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
 }
@@ -99,6 +108,41 @@ fn nothing_to_do_without_old_files() {
     assert_eq!(absorb(&cfg), Absorb::Nothing);
     assert_eq!(fs::read_to_string(&cfg).unwrap(), EXAMPLE);
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
+}
+
+#[test]
+fn an_old_config_stops_logging_when_its_ui_file_is_absorbed() {
+    let (dir, cfg) = dir_with_config(&old_example());
+    fs::write(dir.path().join(UI_PREFS_FILE), r#"{"last_pad":"ns_pro"}"#).unwrap();
+    assert_eq!(absorb(&cfg), Absorb::Done { last_pad: Some("ns_pro".into()), log_off: true });
+    let mut want = Config::load_from_str(EXAMPLE).unwrap();
+    want.last_pad = Some("ns_pro".into());
+    assert_eq!(Config::load_from_path(&cfg).unwrap(), want, "log off, pad in, nothing else");
+    assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()]);
+}
+
+#[test]
+fn logging_goes_off_even_when_the_pad_is_not_moved() {
+    for (ui, cfg_pad) in [(r#"{"last_pad":"ns_pro"}"#, Some("dualsense")), ("not json", None)] {
+        let mut raw: serde_json::Value = serde_json::from_str(&old_example()).unwrap();
+        if let Some(p) = cfg_pad {
+            raw["last_pad"] = p.into();
+        }
+        let (dir, cfg) = dir_with_config(&raw.to_string());
+        fs::write(dir.path().join(UI_PREFS_FILE), ui).unwrap();
+        assert_eq!(absorb(&cfg), Absorb::Done { last_pad: None, log_off: true }, "{ui}");
+        let after = Config::load_from_path(&cfg).unwrap();
+        assert!(!after.log_events);
+        assert_eq!(after.last_pad.as_deref(), cfg_pad, "the config's pad stays");
+    }
+}
+
+#[test]
+fn logging_chosen_after_the_move_is_kept() {
+    // No old file: a v3.4.0+ config whose user turned logging on.
+    let (_dir, cfg) = dir_with_config(&old_example());
+    assert_eq!(absorb(&cfg), Absorb::Nothing);
+    assert!(Config::load_from_path(&cfg).unwrap().log_events);
 }
 
 #[test]
