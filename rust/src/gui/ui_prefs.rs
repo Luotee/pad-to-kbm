@@ -4,7 +4,8 @@
 //! keeps one file beside it. Up to v3.3.0 it sat in a second file there,
 //! `padtokbm.ui.json` (before v3.1.0 `dualsense-mapper.ui.json`, whose rename
 //! left a `.bak`). [`absorb`] runs once at startup: an old file hands its last
-//! pad to the config, then all of them are deleted. Never blocks startup.
+//! pad to the config and turns its `log_events` off (v3.4.1), then all of them
+//! are deleted. Never blocks startup.
 
 use crate::config_io::{write_atomic, ConfigDoc};
 use crate::file_names::{LEGACY_UI_PREFS_FILE, UI_PREFS_FILE};
@@ -29,8 +30,9 @@ pub enum Absorb {
     /// No old file beside the config.
     Nothing,
     /// The old files are gone; `last_pad` is the pad written into the
-    /// config (`None`: nothing to hand over, or the config already had one).
-    Done { last_pad: Option<String> },
+    /// config (`None`: nothing to hand over, or the config already had one);
+    /// `log_off`: the config's `log_events` was on and is now off.
+    Done { last_pad: Option<String>, log_off: bool },
     /// The config could not take the pad (unreadable / invalid / not
     /// writable): the old files stay so the next start can retry.
     Kept { error: String },
@@ -42,7 +44,8 @@ fn old_pad(path: &Path) -> Option<String> {
 }
 
 /// Move the last pad from an old ui-prefs file beside `config_path` into the
-/// config (unless it already has one), then delete the old files. Logged.
+/// config (unless it already has one), turn the config's `log_events` off,
+/// then delete the old files. Logged.
 pub fn absorb(config_path: &Path) -> Absorb {
     let dir = config_path.parent().unwrap_or_else(|| Path::new(""));
     let present: Vec<_> = OLD_FILES
@@ -54,23 +57,36 @@ pub fn absorb(config_path: &Path) -> Absorb {
     if present.is_empty() {
         return Absorb::Nothing;
     }
-    let mut moved = None;
-    if let Some(pad) = OLD_FILES.iter().find_map(|f| old_pad(&dir.join(f))) {
-        let result = ConfigDoc::load(config_path).and_then(|mut doc| {
-            if doc.typed().last_pad.is_some() {
-                return Ok(false);
+    // An old file means the config was written before v3.4.0, when the first
+    // start turned logging on; this start turns it off (v3.4.1). Once: the
+    // old files go below, so a user who turns it back on keeps it.
+    let pad = OLD_FILES.iter().find_map(|f| old_pad(&dir.join(f)));
+    let result = ConfigDoc::load(config_path).and_then(|mut doc| {
+        let moved = match pad {
+            Some(pad) if doc.typed().last_pad.is_none() => {
+                doc.set_last_pad(&pad);
+                Some(pad)
             }
-            doc.set_last_pad(&pad);
-            write_atomic(config_path, &doc).map(|_| true)
-        });
-        match result {
-            Ok(true) => moved = Some(pad),
-            Ok(false) => {}
-            Err(e) => {
-                tracing::warn!("kept {}: could not move its last pad into {}: {e:#}", UI_PREFS_FILE, config_path.display());
-                return Absorb::Kept { error: format!("{e:#}") };
-            }
+            _ => None,
+        };
+        let log_off = doc.typed().log_events;
+        if log_off {
+            doc.set_log_events(false);
         }
+        if moved.is_some() || log_off {
+            write_atomic(config_path, &doc)?;
+        }
+        Ok((moved, log_off))
+    });
+    let (moved, log_off) = match result {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("kept {}: could not update {}: {e:#}", UI_PREFS_FILE, config_path.display());
+            return Absorb::Kept { error: format!("{e:#}") };
+        }
+    };
+    if log_off {
+        tracing::info!("turned log_events off in {} (on by default before v3.4.0)", config_path.display());
     }
     for p in &present {
         match std::fs::remove_file(p) {
@@ -78,5 +94,5 @@ pub fn absorb(config_path: &Path) -> Absorb {
             Err(e) => tracing::warn!("could not remove {}: {e}", p.display()),
         }
     }
-    Absorb::Done { last_pad: moved }
+    Absorb::Done { last_pad: moved, log_off }
 }
