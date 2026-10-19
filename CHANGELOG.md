@@ -3,6 +3,22 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-10-19
+
+### Fixed
+
+- A `padtokbm.json` from before v3.4.0 kept logging every key to
+  `padtokbm-events.log`, because the first start of those versions turned
+  「記錄每個按鍵事件」 on. The first start of this version turns it off, once.
+
+### Migration
+
+- The switch happens when the old `padtokbm.ui.json` (or
+  `dualsense-mapper.ui.json`) is folded into `padtokbm.json`. A folder that
+  already ran v3.4.0, or never had that file, keeps its setting: switch it
+  off in 設定 → 一般. Delete an old `padtokbm-events.log` by hand. Turn
+  logging back on in 設定 → 一般 if you want it; it stays on.
+
 ## [3.4.0] - 2026-10-19
 
 ### Changed
