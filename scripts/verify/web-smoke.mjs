@@ -580,9 +580,13 @@ try {
         const mark = await marked(strip), field = await hexv();
         check(`${strip} drag ${from} → ${to}: no set_lightbar before release`, (await nCalls()) === n);
         check(`${strip} drag mid-drag: marker on cell ${to}, 色碼 shows the live colour`, mark === to && field === want(to), `marker ${mark}, field ${field}, want ${want(to)}`);
-        check(`${strip} drag mid-drag: preview swatch and 自訂 slot follow`,
-          (await page.locator('#board .lbcpop .lbprev').evaluate(e => e.style.backgroundColor)) !== '' &&
-          (await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbpop .lbadd[data-which="kbm"] i')).backgroundColor)) === (await page.evaluate(c => { const d = document.createElement('i'); d.style.background = c; document.body.append(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; }, want(to))));
+        const rgb = c => page.evaluate(c => { const d = document.createElement('i'); d.style.background = c; document.body.append(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; }, c);
+        const wantRgb = await rgb(want(to));
+        const prev = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbcpop .lbprev')).backgroundColor);
+        const slot = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbpop .lbadd[data-which="kbm"] i')).backgroundColor);
+        check(`${strip} drag mid-drag: preview swatch and 自訂 slot show the live colour`, prev === wantRgb && slot === wantRgb, `${prev} / ${slot} want ${wantRgb}`);
+        const padFill = await page.evaluate(() => { const r = document.querySelector('#board .lbarsvg .lbar rect[opacity]') || document.querySelector('#board .lbarsvg .lbar rect'); return r ? getComputedStyle(r).fill : ''; });
+        check(`${strip} drag mid-drag: pad-art strip follows`, padFill === wantRgb, `${padFill} want ${wantRgb}`);
         await page.mouse.up();
         await settle(page);
         exp.kbm.color = want(to);
@@ -613,6 +617,37 @@ try {
         exp.kbm.color = hsvHex(hi * 15, 1 / 24 * 1, 1);
         check('drag released outside: dropdown and K2 stay open', (await page.locator('#board .lbcpop').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
         check('drag released outside: 1 call, clamped to cell 0', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), canon(await sentLb()));
+      }
+      for (const [strip, k, side] of [['hue', 23, 'left'], ['hue', 0, 'right'], ['sat', 23, 'left'], ['sat', 0, 'right']]) {
+        // Cell edges: a press 0.5 px inside the edge belongs to that cell (the strip's border is not part of the span).
+        const b = await cellBox(strip, k);
+        const x = side === 'left' ? b.x + 0.5 : b.x + b.width - 0.5, y = b.y + b.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        check(`${strip} cell ${k} ${side} edge ±0.5px → marker on ${k}`, (await marked(strip)) === k, `marker ${await marked(strip)}`);
+      }
+      {
+        // Window blur mid-drag ends it like a release: one commit, drag cleared.
+        const n = await nCalls(), { hi } = pickerIndex(exp.kbm.color);
+        const k = hi === 12 ? 11 : 12, p0 = await mid('hue', 1), p1 = await mid('hue', k);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(p1.x, p1.y, { steps: 5 });
+        await settle(page);
+        check('blur: nothing sent while dragging', (await nCalls()) === n);
+        await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(k * 15, (si + 1) / 24, 1);
+        check('window blur mid-drag → exactly 1 set_lightbar, full object', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s)`);
+        await page.mouse.move(p0.x, p0.y, { steps: 3 });
+        await settle(page);
+        check('blur: drag cleared (later moves change nothing)', (await nCalls()) === n + 1 && (await hexv()) === exp.kbm.color);
+        await page.mouse.up();
+        await settle(page);
+        check('blur: release afterwards sends nothing more', (await nCalls()) === n + 1);
       }
       {
         // Press and release on one cell without moving: one call, no duplicate from the click.

@@ -138,7 +138,8 @@ const close = () => { LB.open = false; LB.pick = null; rerender(); };
 export function startLightbar(board) {
   // Click outside closes. Capture phase, so it also runs on a locked board, whose gate (events.js) stops the click.
   board.addEventListener('click', ev => {
-    // The click that ends a strip drag lands on whatever the re-render left under the pointer: not a click outside, not a pick.
+    // Guard: should an engine deliver a click after a strip drag (Chromium does not, the pointerdown re-render replaces the node),
+    // it is neither a click outside nor a pick.
     if (LB.suppress) { LB.suppress = false; ev.stopPropagation(); return; }
     if (LB.open && !ev.target.closest('.lbpop, .lbdl, .lbcpop, [data-act="lbopen"]')) close();
   }, true);
@@ -170,8 +171,9 @@ export function startLightbar(board) {
   board.addEventListener('pointerdown', ev => {
     const bar = ev.button === 0 && !LB.drag && LB.open && ev.target.closest && ev.target.closest('.lbcpop .lbbar[data-strip]');
     if (!bar) return;
-    const w = bar.dataset.which, { hi, si } = pickerIndex(lightOf(state.config)[w].color), r = bar.getBoundingClientRect();
-    LB.drag = { w, strip: bar.dataset.strip, hi, si, color: '', rect: { left: r.left, width: r.width }, id: ev.pointerId };
+    const w = bar.dataset.which, { hi, si } = pickerIndex(lightOf(state.config)[w].color), cells = bar.querySelectorAll('button'), first = cells[0].getBoundingClientRect(), last = cells[cells.length - 1].getBoundingClientRect();
+    LB.drag = { w, strip: bar.dataset.strip, hi, si, color: '', rect: { left: first.left, width: last.right - first.left }, id: ev.pointerId };
+    clearTimeout(LB.suppressTimer);
     ev.preventDefault();
     try { board.setPointerCapture(ev.pointerId); } catch (e) { /* no capture: the move still tracks while over the board */ }
     pickAt(ev);
@@ -182,11 +184,13 @@ export function startLightbar(board) {
     if (!d || ev.pointerId !== d.id) return;
     LB.drag = null;
     LB.suppress = true;
-    setTimeout(() => { LB.suppress = false; }, 100);
+    LB.suppressTimer = setTimeout(() => { LB.suppress = false; }, 100);
     const lb = lightOf(state.config);
     if (!same(d.color, lb[d.w].color)) save({ ...lb, [d.w]: { ...lb[d.w], color: d.color } }); else rerender();
   };
   for (const kind of ['pointerup', 'pointercancel', 'lostpointercapture']) board.addEventListener(kind, release);
+  // Losing the window mid-drag (alt-tab) ends it like a release, so no unsaved colour stays on screen.
+  window.addEventListener('blur', () => { if (LB.drag) release({ pointerId: LB.drag.id }); });
   // 色碼: six hex digits are sent; anything else puts the field back to the current colour.
   board.addEventListener('change', ev => {
     const w = ev.target.dataset && ev.target.dataset.lbhex;
