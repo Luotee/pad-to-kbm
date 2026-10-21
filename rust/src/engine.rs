@@ -136,6 +136,9 @@ struct HandleInner {
     /// `set_settings` mutates these through the handle so changes take
     /// effect on the next decoded frame without rebuilding the engine.
     cursor_params: CursorParams,
+    /// Lightbar state shared with the HID worker: the engine feeds it the
+    /// config and whether the DualSense is on 鍵鼠.
+    lightbar: LightbarLive,
     /// Commands for the session owner: the Tauri `disconnect_gamepad` IPC
     /// sends `Disconnect` through this (the worker turns its pad off and
     /// goes back to searching without exiting the thread); the engine sends
@@ -177,6 +180,12 @@ impl Handle {
     /// engine thread so changes take effect without a config rebuild.
     pub fn cursor_params(&self) -> CursorParams {
         self.inner.cursor_params.clone()
+    }
+
+    /// Whether the lightbar currently counts as 鍵鼠. Test hook.
+    #[doc(hidden)]
+    pub fn lightbar_kbm(&self) -> bool {
+        self.inner.lightbar.kbm()
     }
 
     /// The session owner's latest stick positions, raw and corrected
@@ -378,11 +387,12 @@ impl Engine {
         // Bounded: workers `try_send`, and each warning is sent at most once.
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let (cal, probe) = (StickCalTable::default(), StickProbe::default());
-        let src = GamepadSource::new(cursor_params.clone(), LightbarLive::default(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
+        let lightbar = LightbarLive::default();
+        let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
         // Dry run synthesizes no OS input: that includes the virtual pad.
         let pad: Box<dyn VirtualPad> =
             if dry_run { Box::new(xinput_sink::NullPad) } else { xinput_sink::platform_pad() };
-        Self::spawn_inner(cfg, dry_run, src, cursor_params, cmd_tx, warn_rx, pad, cal, probe)
+        Self::spawn_inner(cfg, dry_run, src, cursor_params, lightbar, cmd_tx, warn_rx, pad, cal, probe)
     }
 
     /// Spawn with a fake gamepad source. Events are injected via
@@ -412,7 +422,7 @@ impl Engine {
         let src = GamepadSource::fake_with_disconnect(fake_rx, cmd_rx, source_cmd_tx).with_stick_cal(cal.clone(), probe.clone());
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let engine = Self::spawn_inner(
-            cfg, /*dry_run=*/true, src, cursor_params, cmd_tx, warn_rx, pad, cal, probe,
+            cfg, /*dry_run=*/true, src, cursor_params, LightbarLive::default(), cmd_tx, warn_rx, pad, cal, probe,
         )?;
         // Install the sender into HandleInner.
         *engine.handle.inner.fake_tx.lock().unwrap() = Some(fake_tx);
@@ -426,6 +436,7 @@ impl Engine {
         dry_run: bool,
         src: GamepadSource,
         cursor_params: CursorParams,
+        lightbar: LightbarLive,
         source_cmd: crossbeam_channel::Sender<HubCmd>,
         warn_rx: Receiver<String>,
         pad: Box<dyn VirtualPad>,
@@ -433,6 +444,7 @@ impl Engine {
         stick_probe: StickProbe,
     ) -> Result<Self> {
         stick_cal.replace_from(&cfg);
+        lightbar.set_config(cfg.lightbar);
         let key_state = safety::shared();
         let pad: SharedPad = Arc::new(Mutex::new(pad));
         let (event_tx, event_rx) = unbounded::<EngineEvent>();
@@ -452,6 +464,7 @@ impl Engine {
             fake_cmd_buf: Mutex::new(Vec::new()),
             current_status: RwLock::new(None),
             cursor_params,
+            lightbar,
             source_cmd,
             warn_rx,
             fake_warn_tx: Mutex::new(None),
@@ -563,6 +576,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
         if current_gen != last_config_gen {
             let cfg = h.config.read().unwrap();
             h.stick_cal.replace_from(&cfg);
+            h.lightbar.set_config(cfg.lightbar);
             mapper.replace_config(cfg.clone());
             last_config_gen = current_gen;
         }
@@ -609,6 +623,12 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
         if warnings_changed {
             publish_warnings(&h, status_warnings(&worker_warnings, &pad));
         }
+
+        // ── Lightbar: 鍵鼠 only for a live DualSense under mapping ───────────
+        // Before the `paused` gate so it keeps following while paused.
+        h.lightbar.set_kbm(
+            current_kind == Some(ControllerKind::DualSense) && mapping_on && !pad_off && !paused,
+        );
 
         if !paused {
             // ── Poll gamepad ─────────────────────────────────────────────────
