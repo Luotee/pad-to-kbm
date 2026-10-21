@@ -490,12 +490,11 @@ html,body,#app{background:transparent !important}
 .mock .qsg button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);text-shadow:var(--ol-rose)}
 /* the pad art's two strips beside the touchpad, over the dimmed pad; the preview runs the Rust periods */
 .mock .lbarsvg{position:absolute;left:340px;top:150px;overflow:visible;z-index:2;pointer-events:none}
-.mock .lbar.lit{filter:drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor)}
 .mock .lbar.breathe{animation:lbBreathe 3s ease-in-out infinite}
 .mock .lbar.rainbow{animation:lbRainbow 3s linear infinite}
 .mock .lbar.rainstep{animation:lbRainbow 18s steps(6) infinite,lbBreathe 3s ease-in-out infinite}
 @keyframes lbBreathe{0%,100%{opacity:1}50%{opacity:.12}}
-@keyframes lbRainbow{from{filter:drop-shadow(0 0 2px #ff2a2a) drop-shadow(0 0 5px #ff2a2a) hue-rotate(0deg)}to{filter:drop-shadow(0 0 2px #ff2a2a) drop-shadow(0 0 5px #ff2a2a) hue-rotate(360deg)}}
+@keyframes lbRainbow{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.mock .lbar.breathe,.mock .lbar.rainbow,.mock .lbar.rainstep{animation:none}}
 /* the settings window covers the strips: no hidden animation while it is open (its 搖桿 tab repaints at 30 Hz) */
 .mock:has(.setw) .lbar{animation-play-state:paused}

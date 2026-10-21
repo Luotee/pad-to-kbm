@@ -47,8 +47,13 @@ export function lbarHTML(st) {
     style = 'color:' + fill + ';animation-duration:' + (s.kind === 'rainstep' ? P + 's,' + s.p + 's' : s.p + 's') +
       ';animation-delay:-' + (now % P).toFixed(3) + 's' + (s.kind === 'rainstep' ? ',-' + (now % s.p).toFixed(3) + 's' : '');
   }
-  const strip = x => '<rect x="' + x + '" y="45" width="5" height="48" rx="2.5" fill="' + fill + '" stroke="#2d4359" stroke-width="1.5"/>';
-  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g' + dim + '><g class="' + cls + '" style="' + style + '">' + strip(102) + strip(193) + '</g></g></svg>';
+  // Design G (no outline, no blur): lit strips get two stepped rings of the colour (.18, .38), every state a 3 px core
+  // and a 1 px pale centre. 關燈 / 原廠燈 have no rings and no visible centre line.
+  const ring = !(s.kind === 'off' || s.kind === 'none'), core = ring ? 'color-mix(in srgb,' + fill + ' 45%,#fff)' : fill;
+  const strip = c => '<g shape-rendering="crispEdges">' +
+    (ring ? '<rect x="' + (c - 2) + '" y="44" width="7" height="50" fill="' + fill + '" opacity=".18"/><rect x="' + (c - 1) + '" y="45" width="5" height="48" fill="' + fill + '" opacity=".38"/>' : '') +
+    '<rect x="' + c + '" y="46" width="3" height="46" fill="' + fill + '"/><rect x="' + (c + 1) + '" y="47" width="1" height="44" fill="' + core + '"/></g>';
+  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g' + dim + '><g class="' + cls + '" style="' + style + '">' + strip(103) + strip(194) + '</g></g></svg>';
 }
 
 // ─── The dropdown in the caption row ─────────────────────────────────────────
