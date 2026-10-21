@@ -23,6 +23,9 @@ use super::rumble::{
 };
 use super::controller::ControllerKind;
 use super::events::GamepadEvent;
+use super::lightbar::{
+    ds_lightbar_report, ds_lightbar_setup_report, LightWrite, LightbarLive, LightbarPlayer,
+};
 use super::SourceCmd;
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -464,8 +467,8 @@ const NS_MIN_WRITE_GAP: Duration = Duration::from_millis(30);
 
 /// Per-device-session protocol state: the kind's decoder, the Switch Pro
 /// stick calibration and subcommand counter (one per session), the time of
-/// the last 0x3F re-init and of the last output write, and the DualSense
-/// rumble flag set (firmware dependent).
+/// the last 0x3F re-init and of the last output write, the DualSense
+/// rumble flag set (firmware dependent) and the DualSense lightbar.
 struct Session {
     kind: ControllerKind,
     cal: StickCal,
@@ -473,6 +476,10 @@ struct Session {
     last_reinit: Option<Instant>,
     ds_rumble_v2: bool,
     last_write: Option<Instant>,
+    /// DualSense only: the live settings and this session's scheduler.
+    lightbar: Option<(LightbarLive, LightbarPlayer)>,
+    /// A lightbar write failure was already logged this session.
+    lightbar_warned: bool,
 }
 
 impl Session {
@@ -484,6 +491,16 @@ impl Session {
             last_reinit: None,
             ds_rumble_v2: true,
             last_write: None,
+            lightbar: None,
+            lightbar_warned: false,
+        }
+    }
+
+    /// Give a DualSense session its lightbar scheduler; other kinds have no
+    /// lightbar this worker drives.
+    fn attach_lightbar(&mut self, live: &LightbarLive) {
+        if self.kind == ControllerKind::DualSense {
+            self.lightbar = Some((live.clone(), LightbarPlayer::new(Instant::now())));
         }
     }
 
@@ -562,13 +579,16 @@ impl Session {
 /// Write at most one due rumble step. On a Switch Pro a step that would
 /// land within `NS_MIN_WRITE_GAP` of the last write waits for a later loop
 /// iteration (the 4 ms read timeout bounds the delay). A failed write skips
-/// the rest of the buzz; the stops are still tried.
-fn play_rumble(d: &dyn HidIo, session: &mut Session, plan: &mut Option<RumblePlan>) {
-    let Some(p) = plan.as_mut() else { return };
+/// the rest of the buzz; the stops are still tried. Returns whether a step
+/// was written (or tried) this iteration.
+fn play_rumble(d: &dyn HidIo, session: &mut Session, plan: &mut Option<RumblePlan>) -> bool {
+    let Some(p) = plan.as_mut() else { return false };
     if session.too_soon_to_write(Instant::now()) {
-        return;
+        return false;
     }
+    let mut wrote = false;
     if let Some(step) = p.take_due(Instant::now()) {
+        wrote = true;
         if let Err(e) = session.write_rumble(d, step) {
             // Read errors decide liveness; the session carries on.
             tracing::warn!(error = %e, ?step, "rumble write failed; dropping it");
@@ -578,6 +598,40 @@ fn play_rumble(d: &dyn HidIo, session: &mut Session, plan: &mut Option<RumblePla
     if p.finished() {
         tracing::info!(kind = ?session.kind, "rumble: done");
         *plan = None;
+    }
+    wrote
+}
+
+/// Write at most one due lightbar report (DualSense sessions only). An
+/// iteration that wrote a rumble step belongs to the rumble. A failed write
+/// is offered again next iteration and never ends the session (iron rule
+/// 11); it is logged once per session.
+fn play_lightbar(d: &dyn HidIo, session: &mut Session, wrote_rumble: bool) {
+    if wrote_rumble {
+        return;
+    }
+    let Some((live, player)) = session.lightbar.as_mut() else { return };
+    let (cfg, kbm) = live.snapshot();
+    let Some(w) = player.take_due(Instant::now(), &cfg, kbm) else { return };
+    let report = match w {
+        LightWrite::Setup => ds_lightbar_setup_report(),
+        LightWrite::Color(c) => ds_lightbar_report(c),
+    };
+    if let Err(e) = d.write(&report) {
+        player.on_write_failed();
+        if !session.lightbar_warned {
+            session.lightbar_warned = true;
+            tracing::warn!(error = %e, "lightbar write failed; retrying (logged once per session)");
+        }
+    }
+}
+
+/// The app is closing: leave the exit frame on the bar, best effort.
+fn write_exit_frame(d: &dyn HidIo, session: &Session) {
+    let Some((live, player)) = session.lightbar.as_ref() else { return };
+    let (cfg, _) = live.snapshot();
+    if let Some(c) = player.exit_frame(Instant::now(), &cfg) {
+        let _ = d.write(&ds_lightbar_report(c));
     }
 }
 
@@ -591,9 +645,15 @@ fn stop_rumble(d: &dyn HidIo, session: &mut Session, plan: &mut Option<RumblePla
     }
 }
 
+/// How long dropping the production source waits for its worker to finish
+/// (and write the lightbar's exit frame).
+const SHUTDOWN_WAIT: Duration = Duration::from_millis(200);
+
 pub struct HidSource {
     rx: Receiver<GamepadEvent>,
     stop: Arc<AtomicBool>,
+    /// Production worker only: signalled just before the worker thread exits.
+    done_rx: Option<Receiver<()>>,
 }
 
 impl HidSource {
@@ -601,17 +661,26 @@ impl HidSource {
     /// `Searching` and emits no events until the first decoded report.
     /// `params` carries the live touchpad cursor sensitivity and on/off
     /// flag; the engine mutates them through `set_settings`.
+    /// `lightbar` carries the live lightbar settings for DualSense sessions.
     /// `cmd_rx` receives the hub's commands: manual disconnect from the GUI,
     /// and rumble requests.
-    pub fn new(params: CursorParams, cmd_rx: crossbeam_channel::Receiver<SourceCmd>) -> Result<Self> {
+    pub fn new(
+        params: CursorParams,
+        lightbar: LightbarLive,
+        cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
+    ) -> Result<Self> {
         let (tx, rx) = unbounded::<GamepadEvent>();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = stop.clone();
+        let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
         thread::Builder::new()
             .name("dualsense-hid".into())
-            .spawn(move || worker_real(tx, stop_for_thread, params, cmd_rx))
+            .spawn(move || {
+                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx);
+                let _ = done_tx.send(());
+            })
             .map_err(|e| anyhow!("spawning HID worker thread: {e}"))?;
-        Ok(Self { rx, stop })
+        Ok(Self { rx, stop, done_rx: Some(done_rx) })
     }
 
     /// Test-only constructor for engine integration tests. Drains
@@ -619,7 +688,7 @@ impl HidSource {
     /// pipeline, no state machine.
     #[doc(hidden)]
     pub fn fake(rx: Receiver<GamepadEvent>) -> Self {
-        Self { rx, stop: Arc::new(AtomicBool::new(false)) }
+        Self { rx, stop: Arc::new(AtomicBool::new(false)), done_rx: None }
     }
 
     /// Test-only constructor for state-machine tests. Decodes
@@ -667,7 +736,7 @@ impl HidSource {
                 worker_byte_stream(kind, byte_rx, tx, stop_for_thread, params, dummy_rx)
             })
             .expect("spawning fake HID worker");
-        Self { rx, stop }
+        Self { rx, stop, done_rx: None }
     }
 
     /// Drain pending events into `out`. Non-blocking.
@@ -681,6 +750,10 @@ impl HidSource {
 impl Drop for HidSource {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        // Give the worker a moment to write the exit frame; never hang.
+        if let Some(done) = &self.done_rx {
+            let _ = done.recv_timeout(SHUTDOWN_WAIT);
+        }
     }
 }
 
@@ -688,6 +761,7 @@ fn worker_real(
     tx: Sender<GamepadEvent>,
     stop: Arc<AtomicBool>,
     params: CursorParams,
+    lightbar: LightbarLive,
     cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
 ) {
     let mut api = match hidapi::HidApi::new() {
@@ -732,6 +806,7 @@ fn worker_real(
                     }
                     ControllerKind::Ns2Pro => {}
                 }
+                session.attach_lightbar(&lightbar);
                 let mut prev_buttons = [false; BUTTON_SLOTS];
                 let mut last_state: Option<PadState> = None;
                 let mut touchpad = TouchpadState::default();
@@ -834,7 +909,8 @@ fn read_loop(
                 }
             }
         }
-        play_rumble(d, session, &mut plan);
+        let wrote_rumble = play_rumble(d, session, &mut plan);
+        play_lightbar(d, session, wrote_rumble);
         match d.read_timeout(&mut buf, READ_TIMEOUT_MS) {
             Ok(0) => {}
             Ok(n) => {
@@ -859,6 +935,7 @@ fn read_loop(
         }
     }
     stop_rumble(d, session, &mut plan);
+    write_exit_frame(d, session);
     "stop-signal"
 }
 
@@ -1258,6 +1335,7 @@ mod tests {
 mod read_loop_tests {
     use super::*;
     use crate::gamepad::ns_protocol::{build_subcmd, NEUTRAL_RUMBLE};
+    use crate::gamepad::lightbar::{Effect, LightMode, LightbarConfig, Rgb};
     use crate::gamepad::rumble::{ds_report, ns_rumble_report, DS_BUZZ_MOTOR, NS_BUZZ};
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -1271,17 +1349,22 @@ mod read_loop_tests {
 
     /// Scripted device for `read_loop`. When the script runs out every
     /// read is a timeout of the requested length. Each write is recorded
-    /// with its time; `fail_write(n)` makes the Nth write (1-based) fail.
+    /// with its time and the number of reads before it (one read per loop
+    /// iteration); `fail_write(n)` makes the Nth write (1-based) fail.
     /// `inject` sends commands on the loop's own channel when the Nth
-    /// read (1-based) happens.
+    /// read (1-based) happens; `stop_at` raises the loop's stop flag (app
+    /// shutdown) when the Nth read happens.
     struct ScriptIo {
         steps: Mutex<VecDeque<Step>>,
         writes: Mutex<Vec<Vec<u8>>>,
         stamps: Mutex<Vec<Instant>>,
+        at_read: Mutex<Vec<usize>>,
         fail_write: fn(usize) -> bool,
         reads: Mutex<usize>,
         inject: Option<(usize, Vec<SourceCmd>)>,
         cmd_tx: Mutex<Option<Sender<SourceCmd>>>,
+        stop_at: Option<usize>,
+        stop: Mutex<Option<Arc<AtomicBool>>>,
     }
 
     impl ScriptIo {
@@ -1290,10 +1373,13 @@ mod read_loop_tests {
                 steps: Mutex::new(steps.into()),
                 writes: Mutex::new(Vec::new()),
                 stamps: Mutex::new(Vec::new()),
+                at_read: Mutex::new(Vec::new()),
                 fail_write: |_| false,
                 reads: Mutex::new(0),
                 inject: None,
                 cmd_tx: Mutex::new(None),
+                stop_at: None,
+                stop: Mutex::new(None),
             }
         }
     }
@@ -1306,6 +1392,7 @@ mod read_loop_tests {
                 w.len()
             };
             self.stamps.lock().unwrap().push(Instant::now());
+            self.at_read.lock().unwrap().push(*self.reads.lock().unwrap());
             if (self.fail_write)(n_write) {
                 return Err(anyhow!("write failed"));
             }
@@ -1322,6 +1409,11 @@ mod read_loop_tests {
                     if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
                         cmds.iter().for_each(|&c| tx.send(c).unwrap());
                     }
+                }
+            }
+            if self.stop_at == Some(n_read) {
+                if let Some(stop) = self.stop.lock().unwrap().as_ref() {
+                    stop.store(true, Ordering::SeqCst);
                 }
             }
             let step = self.steps.lock().unwrap().pop_front();
@@ -1384,6 +1476,7 @@ mod read_loop_tests {
         }
         *io.cmd_tx.lock().unwrap() = Some(dtx.clone());
         let stop = Arc::new(AtomicBool::new(false));
+        *io.stop.lock().unwrap() = Some(stop.clone());
         let mut last_state = None;
         let mut prev_buttons = [false; BUTTON_SLOTS];
         let mut touchpad = TouchpadState::default();
@@ -1701,6 +1794,155 @@ mod read_loop_tests {
             let gap = w[1] - w[0];
             assert!(gap >= Duration::from_millis(30), "gap {gap:?} under 30 ms");
         }
+    }
+
+    /// A DualSense session with the lightbar attached the way `worker_real`
+    /// attaches it.
+    fn ds_session_with(cfg: LightbarConfig, kbm: bool) -> Session {
+        let live = LightbarLive::default();
+        live.set_config(cfg);
+        live.set_kbm(kbm);
+        let mut s = Session::new(ControllerKind::DualSense);
+        s.attach_lightbar(&live);
+        s
+    }
+
+    fn is_setup(w: &[u8]) -> bool {
+        w[0] == 0x31 && w[41] == 0x02 && w[44] == 0x02
+    }
+
+    fn is_color(w: &[u8]) -> bool {
+        w[0] == 0x31 && w[4] == 0x04
+    }
+
+    const BLUE: Rgb = Rgb([0, 0, 255]);
+
+    /// kbm = the default rainbow at 80 % (never pure blue); other = fixed
+    /// blue at 100 %, so a pure-blue write can only be `other`'s frame.
+    fn blue_other_cfg() -> LightbarConfig {
+        let mut cfg = LightbarConfig::default();
+        cfg.other.effect = Effect::Fixed;
+        cfg.other.color = BLUE;
+        cfg.other.brightness = 100;
+        cfg
+    }
+
+    #[test]
+    fn lightbar_writes_while_streaming() {
+        let io = ScriptIo::new(frames(ds_frame, 150));
+        let mut s = ds_session_with(LightbarConfig::default(), true);
+        let (outcome, elapsed, _) = run(&io, &mut s);
+        assert_eq!(outcome, "read-error");
+        assert!(elapsed >= Duration::from_millis(250), "{elapsed:?}");
+        let (writes, _) = writes_and_stamps(&io);
+        assert!(!writes.is_empty() && is_setup(&writes[0]), "first write is the setup report");
+        let colors = writes[1..].iter().filter(|w| is_color(w)).count();
+        assert!(colors >= 4, "rainbow animates: {colors} colour reports");
+        assert!(writes.iter().all(|w| is_setup(w) || is_color(w)), "only lightbar reports");
+    }
+
+    #[test]
+    fn native_mode_writes_nothing() {
+        // Stopped by the app (the exit-frame path) so no write path is skipped.
+        let mut io = ScriptIo::new(frames(ds_frame, 150));
+        io.stop_at = Some(40);
+        let mut cfg = LightbarConfig::default();
+        cfg.mode = LightMode::Native;
+        let mut s = ds_session_with(cfg, true);
+        let (outcome, _, _) = run(&io, &mut s);
+        assert_eq!(outcome, "stop-signal");
+        assert!(io.writes.lock().unwrap().is_empty(), "native mode writes not a byte");
+    }
+
+    #[test]
+    fn lightbar_write_failure_never_ends_session() {
+        let mut io = ScriptIo::new(frames(ds_frame, 150));
+        io.fail_write = |_| true;
+        let mut s = ds_session_with(LightbarConfig::default(), true);
+        let (outcome, elapsed, events) = run(&io, &mut s);
+        assert_eq!(outcome, "read-error", "only the scripted read error ends it");
+        assert!(elapsed >= Duration::from_millis(250), "ended early: {elapsed:?}");
+        assert_eq!(events.first(), Some(&GamepadEvent::Connected(ControllerKind::DualSense)));
+        let (writes, _) = writes_and_stamps(&io);
+        assert!(writes.len() > 1, "a failed write is retried: {}", writes.len());
+    }
+
+    #[test]
+    fn rumble_step_wins_the_iteration() {
+        let io = ScriptIo::new(frames(ds_frame, 150));
+        let mut s = ds_session_with(LightbarConfig::default(), true);
+        let (outcome, _, _) = run_with_cmds(&io, &mut s, vec![SourceCmd::Rumble]);
+        assert_eq!(outcome, "read-error");
+        let (writes, stamps) = writes_and_stamps(&io);
+        assert_eq!(writes[0][5], DS_BUZZ_MOTOR, "the buzz goes out before the setup");
+        // Rumble reports set r[3] (motor flags); lightbar reports never do.
+        let rumble: Vec<(Vec<u8>, Instant)> = writes
+            .iter()
+            .zip(&stamps)
+            .filter(|(w, _)| w[3] != 0)
+            .map(|(w, t)| (w.clone(), *t))
+            .collect();
+        assert_eq!(
+            rumble.iter().map(|(w, _)| w.clone()).collect::<Vec<_>>(),
+            vec![
+                ds_report(DS_BUZZ_MOTOR, true).to_vec(),
+                ds_report(0, true).to_vec(),
+                ds_report(0, true).to_vec(),
+            ],
+            "every rumble step still goes out"
+        );
+        let buzz = rumble[1].1 - rumble[0].1;
+        assert!(buzz >= Duration::from_millis(199), "buzz lasted {buzz:?}");
+        assert!(writes.iter().any(|w| is_setup(w)), "the lightbar still runs");
+        // One write per loop iteration: the rumble's iteration has no lightbar write.
+        let at_read = io.at_read.lock().unwrap().clone();
+        for (i, w) in at_read.windows(2).enumerate() {
+            assert_ne!(w[0], w[1], "writes {i} and {} share an iteration", i + 1);
+        }
+    }
+
+    #[test]
+    fn stop_signal_writes_exit_frame() {
+        // App stop on the 20th read, mid-buzz.
+        let mut io = ScriptIo::new(frames(ds_frame, 150));
+        io.stop_at = Some(20);
+        let mut s = ds_session_with(blue_other_cfg(), true);
+        let (outcome, _, _) = run_with_cmds(&io, &mut s, vec![SourceCmd::Rumble]);
+        assert_eq!(outcome, "stop-signal");
+        let (writes, _) = writes_and_stamps(&io);
+        let blue = ds_lightbar_report(BLUE).to_vec();
+        assert_eq!(writes.last(), Some(&blue), "the exit frame is the last write");
+        assert_eq!(writes.iter().filter(|w| **w == blue).count(), 1, "written once, at exit");
+        assert_eq!(writes[writes.len() - 2], ds_report(0, true).to_vec(), "the rumble stop first");
+    }
+
+    #[test]
+    fn manual_disconnect_writes_no_exit_frame() {
+        let mut io = ScriptIo::new(frames(ds_frame, 150));
+        io.inject = Some((20, vec![SourceCmd::Disconnect]));
+        let mut s = ds_session_with(blue_other_cfg(), true);
+        let (outcome, _, _) = run(&io, &mut s);
+        assert_eq!(outcome, "manual-disconnect");
+        let (writes, _) = writes_and_stamps(&io);
+        let blue = ds_lightbar_report(BLUE).to_vec();
+        assert!(!writes.is_empty(), "the lightbar ran before the disconnect");
+        assert_ne!(writes.last(), Some(&blue));
+        assert!(writes.iter().all(|w| *w != blue), "no exit frame on manual disconnect");
+    }
+
+    #[test]
+    fn ns_session_has_no_lightbar() {
+        let live = LightbarLive::default();
+        live.set_kbm(true);
+        let mut s = Session::new(ControllerKind::NsPro);
+        s.attach_lightbar(&live);
+        let mut io = ScriptIo::new(frames(ns_frame, 150));
+        io.stop_at = Some(60);
+        let (outcome, _, _) = run_with_cmds(&io, &mut s, vec![SourceCmd::Rumble]);
+        assert_eq!(outcome, "stop-signal");
+        let (writes, _) = writes_and_stamps(&io);
+        assert!(!writes.is_empty(), "the rumble still goes out");
+        assert!(writes.iter().all(|w| w[0] != 0x31), "no 0x31 report on a Switch Pro");
     }
 
     #[test]

@@ -295,6 +295,7 @@ fn list_buttons(cfg: Option<Config>) -> Result<()> {
     let (warn_tx, _warn_rx) = crossbeam_channel::bounded::<String>(8);
     let mut source = GamepadSource::new(
         dualsense_mapper::gamepad::CursorParams::default(),
+        dualsense_mapper::gamepad::lightbar::LightbarLive::default(),
         dummy_disconnect_rx,
         warn_tx,
     )?;

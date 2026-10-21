@@ -10,6 +10,7 @@
 
 use crate::config::Config;
 use crate::event_log::{self, EventLog};
+use crate::gamepad::lightbar::LightbarLive;
 use crate::gamepad::stick_cal::{StickCalTable, StickPositions, StickProbe};
 use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
 use crate::keyboard::KeyboardSink;
@@ -377,7 +378,7 @@ impl Engine {
         // Bounded: workers `try_send`, and each warning is sent at most once.
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let (cal, probe) = (StickCalTable::default(), StickProbe::default());
-        let src = GamepadSource::new(cursor_params.clone(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
+        let src = GamepadSource::new(cursor_params.clone(), LightbarLive::default(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
         // Dry run synthesizes no OS input: that includes the virtual pad.
         let pad: Box<dyn VirtualPad> =
             if dry_run { Box::new(xinput_sink::NullPad) } else { xinput_sink::platform_pad() };
