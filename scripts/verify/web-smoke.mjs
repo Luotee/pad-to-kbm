@@ -691,9 +691,53 @@ try {
     await page.keyboard.press('Escape');
     await settle(page);
     check('Esc does not close the dropdown', await panelOpen() && (await page.locator('#board .lbcpop').count()) === 1);
+    // Layered dismissal (ruling R27): each outside click closes one layer and never swallows the click.
+    const lbCalls = () => countCalls(page, 'set_lightbar');
+    const k2 = () => page.locator('#board .lbcpop').count();
+    const bothOpen = async () => (await page.locator('#board .lbpop').count()) === 1 && (await page.locator('#board .lbdl').count()) === 1;
+    {
+      const n = await lbCalls();
+      await page.click('#board .lbcpop .lbxk');
+      await settle(page);
+      check('K2 close key → K2 gone, list and panel stay, 0 set_lightbar', (await k2()) === 0 && await bothOpen() && (await lbCalls()) === n);
+    }
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot reopens K2 after the close key', (await k2()) === 1);
+    await act('K2 open, click panel 鍵鼠時 紅色格 → K2 closes, control still acts', `#board .lbpop .lbslot[data-which="kbm"][data-v="#FF2A2A"]`, e => { e.kbm.color = '#FF2A2A'; });
+    check('…and the panel stays open with K2 gone', (await k2()) === 0 && await bothOpen());
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('K2 open again', (await k2()) === 1);
+    {
+      const n = await lbCalls();
+      await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+      await settle(page);
+      check('click outside the menu with K2 open → K2 closes, dropdown stays, 0 calls', (await k2()) === 0 && await bothOpen() && (await lbCalls()) === n);
+    }
     await page.click('#board .hdr', { position: { x: 4, y: 4 } });
     await settle(page);
-    check('click outside closes list, panel and K2', !(await panelOpen()) && (await page.locator('#board .lbcpop').count()) === 0);
+    check('second click outside closes list and panel', !(await panelOpen()) && (await k2()) === 0);
+    await dd().click();
+    await settle(page);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2 from a reopened dropdown', (await k2()) === 1);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot again closes K2 (kept), panel stays', (await k2()) === 0 && await bothOpen());
+    await act('非鍵鼠時 固定 (so it has a 自訂 slot) → other.effect fixed', sec('other', 'effect', 'fixed'), e => { e.other.effect = 'fixed'; });
+    await page.click('#board .lbpop .lbadd[data-which="other"]');
+    await settle(page);
+    check('K2 open on 非鍵鼠時 (top 265)', (await k2()) === 1 && (await page.locator('#board .lbcpop').evaluate(e => e.style.top)) === '265px');
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check("K2 open on other, 鍵鼠時's 自訂 slot → K2 switches to kbm (top 165)", (await k2()) === 1 && (await page.locator('#board .lbcpop').evaluate(e => e.style.top)) === '165px');
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    check('both layers closed again', !(await panelOpen()));
     await dd().click();
     await settle(page);
     check('click the field opens it again', await panelOpen());

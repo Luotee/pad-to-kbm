@@ -547,5 +547,6 @@ html,body,#app{background:transparent !important}
 .mock .lbhb[aria-pressed="true"],.mock .lbsb[aria-pressed="true"]{z-index:1}
 .mock .lbhb[aria-pressed="true"]::after,.mock .lbsb[aria-pressed="true"]::after{content:"";position:absolute;left:-1px;right:-1px;top:-2px;bottom:-2px;box-sizing:border-box;border:1px solid #2b2f3a;box-shadow:inset 0 0 0 1px #fff;pointer-events:none}
 .mock .lbcrow{display:flex;align-items:center;justify-content:flex-end;gap:6px;height:18px}
+.mock .lbcpop .lbxk{padding-top:4px}
 .mock .lbprev{display:block;width:18px;height:18px;box-sizing:border-box;border:1px solid #2b2f3a;box-shadow:inset 1px 1px 0 rgba(255,255,255,.5)}
 .mock .lbhexin{width:72px;height:18px;box-sizing:border-box;padding:3px 0 0;font:inherit;font-size:11px;line-height:11px;text-align:center;color:#000;border:1px solid #a1a4a3;border-radius:0;outline:0;background:var(--cream)}

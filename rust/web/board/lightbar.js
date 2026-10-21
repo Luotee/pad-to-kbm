@@ -67,6 +67,7 @@ export function lbarHTML(st) {
 // The reference's notched 7x4 pixel arrow (D-Pad Slots ▼); the right arrow of the keys and the 自訂 row.
 const ARROW = pixelSvg(['###.###', '.#####.', '..###..', '...#...'], { '#': 'currentColor' });
 const ICON_L = pixelSvg(withRing(['...#', '..##', '.###', '####', '.###', '..##', '...#']), { '#': 'currentColor', r: 'iol' });
+const ICON_X = pixelSvg(withRing(['#....#', '.#..#.', '..##..', '..##..', '.#..#.', '#....#']), { '#': 'currentColor', r: 'iol' });
 const ICON_R = pixelSvg(withRing(['#...', '##..', '###.', '####', '###.', '##..', '#...']), { '#': 'currentColor', r: 'iol' });
 const MODES = [['off', '關閉'], ['native', '原廠燈'], ['custom', '自訂']];
 const FX = [['off', '關燈'], ['fixed', '固定'], ['breathe', '呼吸'], ['rainbow', '彩虹']];
@@ -113,7 +114,8 @@ function pickerHTML(lb, w) {
   const sb = sat.map((v, k) => cell('lbsb', v, v, '飽和度 ' + (k + 1), k === si)).join('');
   return '<section class="lbcpop" style="top:' + (w === 'kbm' ? 165 : 265) + 'px" role="dialog" aria-label="自訂顏色">' +
     '<div class="lbopt2"><span class="lbl">色相</span><div class="lbbar" data-strip="hue" data-which="' + w + '">' + hb + '</div></div><div class="lbopt2"><span class="lbl">飽和</span><div class="lbbar" data-strip="sat" data-which="' + w + '">' + sb + '</div></div>' +
-    '<div class="lbcrow"><i class="lbprev" style="background:' + s.color + '"></i><input class="lbhexin" data-lbhex="' + w + '" value="' + s.color + '" maxlength="7" aria-label="色碼"></div></section>';
+    '<div class="lbcrow"><i class="lbprev" style="background:' + s.color + '"></i><input class="lbhexin" data-lbhex="' + w + '" value="' + s.color + '" maxlength="7" aria-label="色碼">' +
+    '<button type="button" class="lbkey lbxk" data-act="lbpickclose" aria-label="關閉">' + ICON_X + '</button></div></section>';
 }
 
 export function popHTML(st) {
@@ -141,7 +143,11 @@ export function startLightbar(board) {
     // Guard: should an engine deliver a click after a strip drag (Chromium does not, the pointerdown re-render replaces the node),
     // it is neither a click outside nor a pick.
     if (LB.suppress) { LB.suppress = false; ev.stopPropagation(); return; }
-    if (LB.open && !ev.target.closest('.lbpop, .lbdl, .lbcpop, [data-act="lbopen"]')) close();
+    // Layered: with K2 open, a click outside it closes K2 only, and the click still reaches what it hit (R27).
+    // The 自訂 slot is left to its own toggle.
+    if (!LB.open) return;
+    if (LB.pick && !ev.target.closest('.lbcpop, [data-act="lbpickopen"]')) { LB.pick = null; rerender(); return; }
+    if (!ev.target.closest('.lbpop, .lbdl, .lbcpop, [data-act="lbopen"]')) close();
   }, true);
   hook('click', ev => {
     const el = ev.target.closest('[data-act]'), a = el && el.dataset.act;
@@ -149,6 +155,7 @@ export function startLightbar(board) {
     if (!LB.open || !ev.target.closest('.lbpop, .lbdl, .lbcpop')) return false;
     const lb = lightOf(state.config), w = el && el.dataset.which;
     if (a === 'lbmode') save({ ...lb, mode: el.dataset.v });
+    else if (a === 'lbpickclose') { LB.drag = null; LB.pick = null; rerender(); }
     else if (a === 'lbpickopen') { LB.pick = LB.pick === w ? null : w; rerender(); }
     else if (a === 'lbset') { if (el.dataset.k === 'effect' && LB.pick === w) LB.pick = null; save({ ...lb, [w]: { ...lb[w], [el.dataset.k]: el.dataset.v } }); }
     else if (a === 'lbstep') {
