@@ -19,6 +19,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
@@ -183,6 +184,7 @@ function tauriMock({ config, version }) {
         setTimeout(() => emit('controller-status', { connected: true, ...clone(state.status), connected_pads: state.status.connected }), 0);
         return clone(state.status.off_pads);
       }
+      case 'set_lightbar': c.lightbar = clone(a.lightbar); changed(); return null;
       case 'set_rumble_on_connect': c.rumble_on_connect = a.enabled; changed(); return null;
       case 'save_stick_cal': c.stick_cal = c.stick_cal || {}; c.stick_cal[a.pad] = clone(a.cal); changed(); return null;
       case 'reset_stick_cal': if (c.stick_cal) delete c.stick_cal[a.pad]; changed(); return null;
@@ -507,6 +509,284 @@ try {
   check('header fits 980 px (no overflow)', await page.evaluate(() => { const h = document.querySelector('#board .hdr'); return h.scrollWidth <= h.clientWidth; }));
   await page.click('#board [data-pad="dualsense"]');
   await settle(page);
+
+  // ── v3.5.0: DualSense light bar (燈條 dropdown, 自訂 panel, K2 picker) ──────
+  {
+    const { hueCells, pickerIndex } = await import(pathToFileURL(path.join(webDir, 'board', 'lightcolor.js')).href);
+    const canon = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v);
+    const exp = JSON.parse(JSON.stringify(exampleConfig.lightbar));
+    const sentLb = async () => (await lastCall(page, 'set_lightbar'))?.args?.lightbar;
+    // Click `sel`, apply `edit` to the expected object, then the FULL object sent must equal it.
+    async function act(name, how, edit) {
+      const n = await countCalls(page, 'set_lightbar');
+      if (typeof how === 'string') await page.click(how); else await how();
+      await settle(page);
+      edit(exp);
+      const got = await sentLb();
+      check(name, (await countCalls(page, 'set_lightbar')) === n + 1 && canon(got) === canon(exp), `${(await countCalls(page, 'set_lightbar')) - n} call(s) ${canon(got)}`);
+    }
+    const sec = (w, k, v) => `#board .lbpop [data-which="${w}"][data-k="${k}"][data-v="${v}"]`;
+    const stepBtn = (w, k, d) => `#board .lbpop [data-act="lbstep"][data-which="${w}"][data-k="${k}"][data-d="${d}"]`;
+    const dd = () => page.locator('#board .lbdd');
+    check('DualSense board has the 燈條 field, list and panel closed', (await dd().count()) === 1 && (await page.locator('#board .lbdl, #board .lbpop').count()) === 0);
+    await dd().click();
+    await settle(page);
+    check('click 燈條 → list and 自訂 panel appear', (await page.locator('#board .lbdl').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+    await page.screenshot({ path: path.join(outDir, 'web-lightbar.png') });
+    await act('關閉 → mode off', '#board .lbdl [data-v="off"]', e => { e.mode = 'off'; });
+    check('mode 關閉: list only, no panel', (await page.locator('#board .lbdl').count()) === 1 && (await page.locator('#board .lbpop').count()) === 0);
+    await act('原廠燈 → mode native', '#board .lbdl [data-v="native"]', e => { e.mode = 'native'; });
+    check('mode 原廠燈: list only, no panel', (await page.locator('#board .lbpop').count()) === 0);
+    await act('自訂 → mode custom', '#board .lbdl [data-v="custom"]', e => { e.mode = 'custom'; });
+    check('mode 自訂: panel appears', (await page.locator('#board .lbpop').count()) === 1);
+
+    await act('鍵鼠時 固定 → kbm.effect fixed', sec('kbm', 'effect', 'fixed'), e => { e.kbm.effect = 'fixed'; });
+    await act('鍵鼠時 紅色格 → kbm.color #FF2A2A', `#board .lbpop .lbslot[data-which="kbm"][data-v="#FF2A2A"]`, e => { e.kbm.color = '#FF2A2A'; });
+    await act('非鍵鼠時 呼吸 → other.effect breathe', sec('other', 'effect', 'breathe'), e => { e.other.effect = 'breathe'; });
+    check('呼吸 row is labelled 呼吸速度', /呼吸速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+    await act('呼吸速度 右鍵 → other.speed fast (from medium)', stepBtn('other', 'speed', 1), e => { e.other.speed = 'fast'; });
+    await act('亮度 左鍵 → other.brightness 70', stepBtn('other', 'brightness', -1), e => { e.other.brightness = 70; });
+    await act('非鍵鼠時 彩虹 → other.effect rainbow', sec('other', 'effect', 'rainbow'), e => { e.other.effect = 'rainbow'; });
+    check('彩虹 (no 呼吸換色) row is labelled 換色速度', /換色速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+    await act('呼吸換色 右鍵 → other.rainbow_breath true', stepBtn('other', 'rainbow_breath', 1), e => { e.other.rainbow_breath = true; });
+    check('彩虹 with 呼吸換色 on: row relabelled 呼吸速度', /呼吸速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+
+    // K2: opens from the 自訂 slot of a 固定 / 呼吸 state only.
+    check('K2 closed before the 自訂 slot is clicked', (await page.locator('#board .lbcpop').count()) === 0);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2', (await page.locator('#board .lbcpop').count()) === 1);
+    const hue3 = hueCells(pickerIndex(exp.kbm.color).si)[3];
+    await act('K2 色相第 3 格 → colour hueCells(si)[3]', '#board .lbcpop .lbhb >> nth=3', e => { e.kbm.color = hue3; });
+    check('K2 stays open after picking', (await page.locator('#board .lbcpop').count()) === 1);
+    // Drag along the strips: nothing is sent until release, then exactly one full set_lightbar.
+    {
+      const { hsvHex } = await import(pathToFileURL(path.join(webDir, 'board', 'lightcolor.js')).href);
+      const cellBox = async (strip, k) => page.locator(`#board .lbcpop [data-strip="${strip}"] button >> nth=${k}`).boundingBox();
+      const mid = async (strip, k) => { const b = await cellBox(strip, k); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+      const marked = async strip => page.evaluate(s => [...document.querySelectorAll(`#board .lbcpop [data-strip="${s}"] button`)].findIndex(b => b.getAttribute('aria-pressed') === 'true'), strip);
+      const hexv = () => page.locator('#board .lbcpop .lbhexin').inputValue();
+      const nCalls = () => countCalls(page, 'set_lightbar');
+      for (const [strip, from, to] of [['hue', 2, 10], ['sat', 20, 5]]) {
+        const { hi, si } = pickerIndex(exp.kbm.color);
+        const want = k => strip === 'hue' ? hsvHex(k * 15, (si + 1) / 24, 1) : hsvHex(hi * 15, (k + 1) / 24, 1);
+        const n = await nCalls();
+        const p0 = await mid(strip, from), p1 = await mid(strip, to);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move((p0.x + p1.x) / 2, p0.y, { steps: 6 });
+        await page.mouse.move(p1.x, p1.y, { steps: 6 });
+        await settle(page);
+        const mark = await marked(strip), field = await hexv();
+        check(`${strip} drag ${from} → ${to}: no set_lightbar before release`, (await nCalls()) === n);
+        check(`${strip} drag mid-drag: marker on cell ${to}, 色碼 shows the live colour`, mark === to && field === want(to), `marker ${mark}, field ${field}, want ${want(to)}`);
+        const rgb = c => page.evaluate(c => { const d = document.createElement('i'); d.style.background = c; document.body.append(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; }, c);
+        const wantRgb = await rgb(want(to));
+        const prev = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbcpop .lbprev')).backgroundColor);
+        const slot = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbpop .lbadd[data-which="kbm"] i')).backgroundColor);
+        check(`${strip} drag mid-drag: preview swatch and 自訂 slot show the live colour`, prev === wantRgb && slot === wantRgb, `${prev} / ${slot} want ${wantRgb}`);
+        const padFill = await page.evaluate(() => { const r = document.querySelector('#board .lbarsvg .lbar rect[opacity]') || document.querySelector('#board .lbarsvg .lbar rect'); return r ? getComputedStyle(r).fill : ''; });
+        check(`${strip} drag mid-drag: pad-art strip follows`, padFill === wantRgb, `${padFill} want ${wantRgb}`);
+        await page.mouse.up();
+        await settle(page);
+        exp.kbm.color = want(to);
+        check(`${strip} drag release: exactly 1 full set_lightbar`, (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s) ${canon(await sentLb())}`);
+        check(`${strip} drag release: K2 and dropdown stay open`, (await page.locator('#board .lbcpop').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+      }
+      {
+        // Past the right end clamps to cell 23; y is ignored.
+        const n = await nCalls(), p0 = await mid('hue', 3), end = await cellBox('hue', 23);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(end.x + end.width + 8, p0.y + 3, { steps: 8 });
+        await page.mouse.up();
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(23 * 15, (si + 1) / 24, 1);
+        check('drag past the right end → cell 23', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), canon(await sentLb()));
+      }
+      {
+        // Started on a strip, released outside the popover: nothing closes.
+        const n = await nCalls(), p0 = await mid('sat', 4);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(8, 8, { steps: 8 });
+        await page.mouse.up();
+        await settle(page);
+        const { hi } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(hi * 15, 1 / 24 * 1, 1);
+        check('drag released outside: dropdown and K2 stay open', (await page.locator('#board .lbcpop').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+        check('drag released outside: 1 call, clamped to cell 0', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), canon(await sentLb()));
+      }
+      for (const [strip, k, side] of [['hue', 23, 'left'], ['hue', 0, 'right'], ['sat', 23, 'left'], ['sat', 0, 'right']]) {
+        // Cell edges: a press 0.5 px inside the edge belongs to that cell (the strip's border is not part of the span).
+        const b = await cellBox(strip, k);
+        const x = side === 'left' ? b.x + 0.5 : b.x + b.width - 0.5, y = b.y + b.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        check(`${strip} cell ${k} ${side} edge ±0.5px → marker on ${k}`, (await marked(strip)) === k, `marker ${await marked(strip)}`);
+      }
+      {
+        // Window blur mid-drag ends it like a release: one commit, drag cleared.
+        const n = await nCalls(), { hi } = pickerIndex(exp.kbm.color);
+        const k = hi === 12 ? 11 : 12, p0 = await mid('hue', 1), p1 = await mid('hue', k);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(p1.x, p1.y, { steps: 5 });
+        await settle(page);
+        check('blur: nothing sent while dragging', (await nCalls()) === n);
+        await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(k * 15, (si + 1) / 24, 1);
+        check('window blur mid-drag → exactly 1 set_lightbar, full object', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s)`);
+        await page.mouse.move(p0.x, p0.y, { steps: 3 });
+        await settle(page);
+        check('blur: drag cleared (later moves change nothing)', (await nCalls()) === n + 1 && (await hexv()) === exp.kbm.color);
+        await page.mouse.up();
+        await settle(page);
+        check('blur: release afterwards sends nothing more', (await nCalls()) === n + 1);
+      }
+      {
+        // Press and release on one cell without moving: one call, no duplicate from the click.
+        const n = await nCalls(), p0 = await mid('hue', 7);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(7 * 15, (si + 1) / 24, 1);
+        check('press + release on one cell → exactly 1 call', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s)`);
+        // Same cell again: colour unchanged, nothing sent.
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        check('press + release on the already chosen cell → no call', (await nCalls()) === n + 1);
+      }
+    }
+    const hex = () => page.locator('#board .lbcpop .lbhexin');
+    await act('色碼 2ea8ff + Enter (change) → #2EA8FF', async () => { await hex().fill('2ea8ff'); await hex().press('Enter'); }, e => { e.kbm.color = '#2EA8FF'; });
+    check('色碼 field shows the stored colour', (await hex().inputValue()) === '#2EA8FF');
+    {
+      const n = await countCalls(page, 'set_lightbar');
+      await hex().fill('xyz');
+      await hex().press('Enter');
+      await settle(page);
+      check('色碼 xyz → no set_lightbar, field back to #2EA8FF', (await countCalls(page, 'set_lightbar')) === n && (await hex().inputValue()) === '#2EA8FF');
+    }
+    await act('鍵鼠時 彩虹 → kbm.effect rainbow', sec('kbm', 'effect', 'rainbow'), e => { e.kbm.effect = 'rainbow'; });
+    check('K2 gone when the state is 彩虹', (await page.locator('#board .lbcpop').count()) === 0);
+    await act('鍵鼠時 呼吸 → kbm.effect breathe', sec('kbm', 'effect', 'breathe'), e => { e.kbm.effect = 'breathe'; });
+    check('K2 stays closed after an effect change (opens only from the 自訂 slot)', (await page.locator('#board .lbcpop').count()) === 0);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2 again for 呼吸', (await page.locator('#board .lbcpop').count()) === 1);
+    await page.screenshot({ path: path.join(outDir, 'web-lightbar-k2.png') });
+
+    // Closing: only a click on the field again or outside; Esc does nothing.
+    const panelOpen = async () => (await page.locator('#board .lbpop').count()) === 1 || (await page.locator('#board .lbdl').count()) === 1;
+    await page.keyboard.press('Escape');
+    await settle(page);
+    check('Esc does not close the dropdown', await panelOpen() && (await page.locator('#board .lbcpop').count()) === 1);
+    // Layered dismissal (ruling R27): each outside click closes one layer and never swallows the click.
+    const lbCalls = () => countCalls(page, 'set_lightbar');
+    const k2 = () => page.locator('#board .lbcpop').count();
+    const bothOpen = async () => (await page.locator('#board .lbpop').count()) === 1 && (await page.locator('#board .lbdl').count()) === 1;
+    {
+      const n = await lbCalls();
+      await page.click('#board .lbcpop .lbxk');
+      await settle(page);
+      check('K2 close key → K2 gone, list and panel stay, 0 set_lightbar', (await k2()) === 0 && await bothOpen() && (await lbCalls()) === n);
+    }
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot reopens K2 after the close key', (await k2()) === 1);
+    await act('K2 open, click panel 鍵鼠時 紅色格 → K2 closes, control still acts', `#board .lbpop .lbslot[data-which="kbm"][data-v="#FF2A2A"]`, e => { e.kbm.color = '#FF2A2A'; });
+    check('…and the panel stays open with K2 gone', (await k2()) === 0 && await bothOpen());
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('K2 open again', (await k2()) === 1);
+    {
+      const n = await lbCalls();
+      await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+      await settle(page);
+      check('click outside the menu with K2 open → K2 closes, dropdown stays, 0 calls', (await k2()) === 0 && await bothOpen() && (await lbCalls()) === n);
+    }
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    check('second click outside closes list and panel', !(await panelOpen()) && (await k2()) === 0);
+    await dd().click();
+    await settle(page);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2 from a reopened dropdown', (await k2()) === 1);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot again closes K2 (kept), panel stays', (await k2()) === 0 && await bothOpen());
+    await act('非鍵鼠時 固定 (so it has a 自訂 slot) → other.effect fixed', sec('other', 'effect', 'fixed'), e => { e.other.effect = 'fixed'; });
+    await page.click('#board .lbpop .lbadd[data-which="other"]');
+    await settle(page);
+    check('K2 open on 非鍵鼠時 (top 265)', (await k2()) === 1 && (await page.locator('#board .lbcpop').evaluate(e => e.style.top)) === '265px');
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check("K2 open on other, 鍵鼠時's 自訂 slot → K2 switches to kbm (top 165)", (await k2()) === 1 && (await page.locator('#board .lbcpop').evaluate(e => e.style.top)) === '165px');
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    check('both layers closed again', !(await panelOpen()));
+    await dd().click();
+    await settle(page);
+    check('click the field opens it again', await panelOpen());
+    await dd().click();
+    await settle(page);
+    check('click the field again closes it', !(await panelOpen()));
+    await dd().click();
+    await settle(page);
+    await page.keyboard.press('Escape');
+    await settle(page);
+    check('Esc leaves a reopened dropdown open', await panelOpen());
+
+    // The cap is not drawn over the macro editor, and comes back after it.
+    // A scratch macro seeded in the mock only (removed again below), so the later macro checks see none.
+    await page.evaluate(() => { window.__mock.config.macros['燈條測試'] = { loop: false, steps: [] }; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    await page.locator('#board [data-medit="燈條測試"]').click();
+    await settle(page);
+    check('macro editor open: no 燈條 cap, list, panel', (await page.locator('#board .med').count()) === 1 &&
+      (await page.locator('#board .lbcap, #board .lbdl, #board .lbpop, #board .lbcpop').count()) === 0);
+    await page.click('#board .med [data-act="mdone"]');
+    await settle(page);
+    check('macro editor closed: 燈條 cap is back, dropdown stayed closed', (await dd().count()) === 1 && !(await panelOpen()));
+    await page.evaluate(() => { delete window.__mock.config.macros['燈條測試']; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+
+    // Locked board (手把): the dropdown still opens and still saves.
+    await page.click('#board .omode [data-mode="pad"]');
+    await settle(page);
+    check('手把 locks the board', await locked());
+    await dd().click();
+    await settle(page);
+    check('locked board: dropdown still opens', await panelOpen());
+    await act('locked board: 非鍵鼠時 固定 → other.effect fixed', sec('other', 'effect', 'fixed'), e => { e.other.effect = 'fixed'; });
+    await act('locked board: 天藍 → other.color #2EA8FF', `#board .lbpop .lbslot[data-which="other"][data-v="#2EA8FF"]`, e => { e.other.color = '#2EA8FF'; });
+    await dd().click();
+    await settle(page);
+    check('locked board: field closes it', !(await panelOpen()));
+    await page.click('#board .omode [data-mode="kbm"]');
+    await settle(page);
+
+    // Not a DualSense: no cap.
+    await page.click('#board [data-pad="ns_pro"]');
+    await settle(page);
+    check('Switch Pro board has no 燈條 cap', (await page.locator('#board .lbcap').count()) === 0 && (await page.locator('#board .lbdd').count()) === 0);
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+    check('back on DualSense the cap returns', (await dd().count()) === 1);
+  }
 
   // ── The drawn window (v3.3.0): title bar, minimise / close, touchpad switch in the header ──
   check('title bar reads PAD TO KBM', ((await page.locator('#wtbar .wt').textContent()) || '') === 'PAD TO KBM');

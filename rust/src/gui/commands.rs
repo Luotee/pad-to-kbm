@@ -16,6 +16,7 @@
 use crate::config::{Binding, ButtonEntry, Config, MacroDef, ADDED_IDS};
 use crate::config_io::{write_atomic, ConfigDoc};
 use crate::engine::Handle;
+use crate::gamepad::lightbar::LightbarConfig;
 use crate::gamepad::ControllerKind;
 use crate::pad_bindings::{
     default_pad_bindings, PadBindings, Page, Side, TriggerMode, LABELS, QUICK_IDS,
@@ -763,6 +764,30 @@ pub fn set_rumble_on_connect_impl(engine: &Handle, config_path: &Path, enabled: 
     })
 }
 
+// ─── set_lightbar ────────────────────────────────────────────────────────────
+
+/// Tauri command: the whole 燈條 setting (`lightbar`, global).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn set_lightbar(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+    lightbar: LightbarConfig,
+) -> Result<(), String> {
+    set_lightbar_impl(&*engine, &config_path, lightbar).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    Ok(())
+}
+
+/// Pure implementation of `set_lightbar`.
+pub fn set_lightbar_impl(engine: &Handle, config_path: &Path, lightbar: LightbarConfig) -> anyhow::Result<()> {
+    mutate_config(engine, config_path, |doc| {
+        doc.set_lightbar(lightbar);
+        Ok(())
+    })
+}
+
 /// Tauri command: the config file's full path, shown in 設定 → 一般.
 #[cfg(feature = "gui")]
 #[tauri::command]
@@ -881,10 +906,10 @@ fn open_path(path: &std::path::Path) -> anyhow::Result<()> {
 
 /// Tauri command: exit the process cleanly via Tauri's event loop.
 ///
-/// `app.exit(0)` causes `.run(...)` in `runtime::run` to return, after which
-/// `engine.shutdown()` fires and `KeyboardSink::drop` releases held keys
-/// (Iron rule #3). This IPC wrapper exists for frontend use (e.g. Settings
-/// tab About → Quit button).
+/// `app.exit(0)` ends the event loop: `App::run_return` in `runtime::run`
+/// returns, `engine.shutdown()` fires and `KeyboardSink::drop` releases held
+/// keys (Iron rule #3), then the process exits. This IPC wrapper exists for
+/// frontend use (e.g. Settings tab About → Quit button).
 #[cfg(feature = "gui")]
 #[tauri::command]
 pub fn quit(app: tauri::AppHandle) -> Result<(), String> {

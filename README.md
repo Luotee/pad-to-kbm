@@ -110,6 +110,11 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 可以，點手把名稱旁的電源鍵。配對會保留，按 PS／HOME 鍵就能再連上。
 只想讓遊戲直接用手把（不轉鍵鼠）就選「手把」；暫時不想讓它送東西就選「關」。
 
+### 想讓遊戲或 Steam 控制燈條，怎麼辦？
+
+把「燈條」選成「原廠燈」，PadToKBM 就一個位元組都不寫，燈交給遊戲或 Steam。
+從別的選項切回原廠燈後，要重新連線手把，燈才會恢復。
+
 ### 支援 USB、DualSense Edge、Xbox 手把或 macOS 嗎？
 
 目前不支援：只走藍牙，Windows 限定。macOS 版還在計畫中；那之前 macOS 可以用 [`legacy-python/`](legacy-python/README.md) 的舊版 Python 程式（只支援 DualSense）。

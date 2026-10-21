@@ -11,6 +11,7 @@ use crossbeam_channel;
 use dualsense_mapper::app;
 use dualsense_mapper::config::Config;
 use dualsense_mapper::gamepad::{GamepadEvent, GamepadSource, HubCmd};
+use dualsense_mapper::gamepad::lightbar::{LightMode, LightbarConfig, LightbarLive};
 use dualsense_mapper::safety;
 use std::io::Write;
 use std::path::PathBuf;
@@ -293,8 +294,12 @@ fn list_buttons(cfg: Option<Config>) -> Result<()> {
 
     let (_dummy_disconnect_tx, dummy_disconnect_rx) = crossbeam_channel::bounded::<HubCmd>(4);
     let (warn_tx, _warn_rx) = crossbeam_channel::bounded::<String>(8);
+    // A diagnostic: leave the lightbar to the controller (native mode writes nothing).
+    let lightbar = LightbarLive::default();
+    lightbar.set_config(LightbarConfig { mode: LightMode::Native, ..Default::default() });
     let mut source = GamepadSource::new(
         dualsense_mapper::gamepad::CursorParams::default(),
+        lightbar,
         dummy_disconnect_rx,
         warn_tx,
     )?;

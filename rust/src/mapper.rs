@@ -393,6 +393,7 @@ mod tests {
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            lightbar: Default::default(),
         }
     }
 

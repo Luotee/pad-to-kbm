@@ -149,10 +149,7 @@ pub fn ds_report(motor: u8, v2: bool) -> [u8; 78] {
     if v2 {
         r[41] = 0x04;
     }
-    let mut h = crc32fast::Hasher::new();
-    h.update(&[0xA2]);
-    h.update(&r[..74]);
-    r[74..78].copy_from_slice(&h.finalize().to_le_bytes());
+    super::lightbar::seal(&mut r);
     r
 }
 

@@ -56,13 +56,7 @@ button:focus-visible,.mock .rng:focus-visible{outline:3px solid var(--gold);outl
 .mock .live.idle{background:transparent;border:2px solid currentColor}
 .mock .sp{flex:1}
 .mock .stage{position:absolute;left:12px;top:60px;width:956px;height:336px;box-sizing:border-box;background:var(--panel);border:2px solid var(--frame);border-radius:4px}
-.mock .qcap{position:absolute;width:248px;text-align:center;font-size:11px;color:var(--ink)}
-.mock .qcap>span{display:inline-flex;align-items:center;gap:8px;height:16px;padding:0 10px;line-height:16px;border:1px solid var(--frame);border-radius:4px;background:var(--bg)}
-.mock .qcap .seg{padding:0 0 0 10px;gap:0}
-.mock .seg button{font:inherit;font-size:11px;height:16px;line-height:12px;padding:0 7px;box-sizing:border-box;cursor:pointer;border:2px solid var(--mute);background:#e8ebf2;color:var(--ink)}
-.mock .seg button:first-of-type{border-radius:4px 0 0 4px;margin-left:8px}
-.mock .seg button:last-of-type{border-radius:0 4px 4px 0;border-left:0}
-.mock .seg button[aria-pressed="true"]{background:var(--pinkhi);border-color:#6e2a46;color:var(--white)}
+.mock .qcap{position:absolute;width:248px;height:22px;display:flex;justify-content:flex-start;text-align:center;font-size:11px;color:var(--ink)}
 .mock .qsrow{display:flex;align-items:center;gap:18px;font-size:11px;padding-bottom:10px;border-bottom:2px solid var(--off)}
 .mock .pad{position:absolute}
 .mock .pad .body{fill:#eef0f4;stroke:#454c60;stroke-width:4}
@@ -293,9 +287,6 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .gear{width:30px;height:30px;box-sizing:border-box;border:1px solid #2b2f3a;border-radius:3px;background:linear-gradient(#f6fafb,#d8dfe6);box-shadow:inset 1px 1px 0 #fff,inset -1px -1px 0 #9aa4ad;color:#454c60}
 /* ---- controller panel ---- */
 .mock .stage{background:#b2bac0;border:1px solid #889399;border-radius:0}
-.mock .qcap>span{background:#778593;border:0;border-radius:3px;color:#fff}
-.mock .seg button{border:1px solid #656565;background:#bbbbbb;color:#fff;text-shadow:var(--ol-grey)}
-.mock .seg button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);border-color:#0b0000;text-shadow:var(--ol-rose)}
 .mock .lines g path{stroke:#8a1818;stroke-width:2;filter:drop-shadow(0 0 .7px #ffc8ce) drop-shadow(0 0 .7px #ffc8ce)}
 .mock .lines g circle{fill:#8a1818;stroke:#ffc8ce;stroke-width:1}
 /* slots: empty = dark socket + light rim + white; bound = socket + dark rim + bevel + mauve */
@@ -466,3 +457,96 @@ html,body,#app{background:transparent !important}
 .mock .hdr .gear:hover,.mock .mt .pen:hover,.mock .mpg button:not(.pdot):not(:disabled):hover{background:linear-gradient(#7fcff6 0 1px,#2b95ca 1px 2px,#3a9ad0 2px,#4dabd9 40%,#58b7de 70%,#6bcaf4 calc(100% - 1px),#7ccaee 0);color:#e6feff}
 /* The settings close is the close key itself, drawn 2x: no box of its own. */
 .mock .whd .x{width:24px;height:24px;border:0;border-radius:0;background:none;box-shadow:none}
+
+/* = DualSense light bar (v3.5.0) + the L2/R2 caption plates. Reference plates and fields (maple_con.png), 1:1:
+   plate #778593 with 1px notched corners; field 1px frame, the outer corner pixel cut and the inner corner pixel
+   in the frame colour (::after). Every position is a whole pixel (measured at 1x). = */
+.mock{--notch:polygon(1px 0,calc(100% - 1px) 0,calc(100% - 1px) 1px,100% 1px,100% calc(100% - 1px),calc(100% - 1px) calc(100% - 1px),calc(100% - 1px) 100%,1px 100%,1px calc(100% - 1px),0 calc(100% - 1px),0 1px,1px 1px);
+  --cream:linear-gradient(#f2ece7 0 1px,#fffbf5 1px 2px,#fffbf7 2px 3px,#f9f5f2 3px 4px,#fdf5f1 4px 5px,#fbf1e9 5px 6px,#f7ecdd 6px 7px,#f5ead9 7px 8px,#f6e9d9 8px 11px,#f6e9db 11px 13px,#f4e7d7 13px 14px,#e3d8c8 14px 15px,#d1caba 15px 16px)}
+/* caption plates: 燈條 (x 665, the D-Pad Slots dropdown) and the L2/R2 quick caps, one top edge (y 79) */
+.mock .lbcap,.mock .qcap>.qplate{height:22px;box-sizing:border-box;padding:2px 7px;display:flex;align-items:flex-start;gap:0;background:#778593;clip-path:var(--notch)}
+.mock .lbcap{position:absolute;left:665px;top:79px;z-index:8;padding-left:6px}
+.mock .qcap>.qplate{width:121px;margin-left:63px;line-height:16px;color:#fff}
+.mock .lbname,.mock .qname{display:block;height:18px;box-sizing:border-box;font-size:11px;line-height:18px;color:#fff;white-space:nowrap}
+.mock .lbname{width:24px;margin-right:5px;padding-top:1px}
+.mock .qname{width:12px;margin-right:5px;padding-top:2px}
+/* fields: the dropdown, and the grey/rose cell fields (quick caps, 效果) */
+.mock .lbdd,.mock .qsg{position:relative;display:flex;align-items:flex-start;height:18px;padding:0;box-sizing:border-box;border:1px solid #656565;clip-path:var(--notch)}
+.mock .lbdd{width:61px;border-color:#a1a4a3;cursor:pointer;font:inherit;color:#000;background:var(--cream)}
+.mock .lbdd::after,.mock .qsg::after,.mock .lbdl::after,.mock .lbval::after{content:"";position:absolute;inset:0;pointer-events:none;--c:#a1a4a3;
+  background:linear-gradient(var(--c),var(--c)) 0 0/1px 1px no-repeat,linear-gradient(var(--c),var(--c)) 100% 0/1px 1px no-repeat,linear-gradient(var(--c),var(--c)) 0 100%/1px 1px no-repeat,linear-gradient(var(--c),var(--c)) 100% 100%/1px 1px no-repeat}
+.mock .lbdd::after,.mock .qsg::after{z-index:2}
+.mock .qsg::after{--c:#656565}
+.mock .lbdd .lbtxt{display:block;width:42px;height:16px;box-sizing:border-box;padding:3px 0 0 4px;font-size:11px;line-height:11px;white-space:nowrap;text-align:left;box-shadow:inset 1px 0 0 #eeede2}
+.mock .lbdd .lbsep{display:block;width:1px;height:16px;background:linear-gradient(#f0efe9 0 1px,#fffffb 1px 2px,#cdc9c1 2px 13px,#edeae0 13px 14px,#dedccf 14px 15px,#cfcdbe 15px 16px)}
+.mock .lbdd .lbarr{position:relative;display:block;width:16px;height:16px;box-shadow:inset -1px 0 0 #e9eae4;color:#77585e;
+  background:linear-gradient(#eeece8 0 1px,#fffff9 1px 2px,#fdfbf7 2px 3px,#f7f6f2 3px 4px,#f4f2f0 4px 5px,#f6f4f2 5px 6px,#f5f3ef 6px 7px,#eeeeec 7px 8px,#efefef 8px 11px,#edf0ed 11px 13px,#edebe7 13px 14px,#dedcd6 14px 15px,#d0cdc3 15px 16px)}
+.mock .lbdd .lbarr svg{position:absolute;left:4px;top:6px}
+.mock .lbdd[aria-expanded="true"] .lbarr{background:linear-gradient(#d0cdc3 0 1px,#dedcd6 1px 2px,#edebe7 2px 3px,#edf0ed 3px 5px,#efefef 5px 8px,#eeeeec 8px 9px,#f5f3ef 9px 10px,#f6f4f2 10px 11px,#f4f2f0 11px 12px,#f7f6f2 12px 13px,#fdfbf7 13px 14px,#fffff9 14px 15px,#eeece8 15px 16px)}
+.mock .lbdd[aria-expanded="true"] .lbarr svg{top:7px}
+.mock .qsg button{display:flex;align-items:flex-start;justify-content:center;width:44px;height:16px;margin:0;padding:3px 0 0;box-sizing:border-box;border:0;font:inherit;font-size:11px;line-height:11px;cursor:pointer;
+  background:#bbbbbb;color:#fff;text-shadow:var(--ol-grey)}
+.mock .lbfx button+button{border-left:1px solid #656565}
+.mock .qsg button[aria-pressed="true"]{background:linear-gradient(#e96785,#da6075);text-shadow:var(--ol-rose)}
+/* the pad art's two strips beside the touchpad, over the dimmed pad; the preview runs the Rust periods */
+.mock .lbarsvg{position:absolute;left:340px;top:150px;overflow:visible;z-index:2;pointer-events:none}
+.mock .lbar.breathe{animation:lbBreathe 3s ease-in-out infinite}
+.mock .lbar.rainbow{animation:lbRainbow 3s linear infinite}
+.mock .lbar.rainstep{animation:lbRainbow 18s steps(6) infinite,lbBreathe 3s ease-in-out infinite}
+@keyframes lbBreathe{0%,100%{opacity:1}50%{opacity:.12}}
+@keyframes lbRainbow{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.mock .lbar.breathe,.mock .lbar.rainbow,.mock .lbar.rainstep{animation:none}}
+/* the settings window covers the strips: no hidden animation while it is open (its 搖桿 tab repaints at 30 Hz) */
+.mock:has(.setw) .lbar{animation-play-state:paused}
+/* the mode list hangs from the field (x 700, 61 wide); rows 18 tall, the chosen one CONFIRM blue */
+.mock .lbdl{position:absolute;left:700px;top:99px;width:61px;z-index:11;display:flex;flex-direction:column;padding:1px 0;box-sizing:border-box;background:#fffbf5;border:1px solid #a1a4a3;clip-path:var(--notch);filter:drop-shadow(0 3px 0 rgba(46,56,80,.35))}
+.mock .lbli{display:flex;align-items:flex-start;gap:4px;height:18px;padding:3px 4px 0 2px;box-sizing:border-box;border:0;background:none;font:inherit;font-size:11px;line-height:11px;color:#000;cursor:pointer;text-align:left;white-space:nowrap}
+.mock .lbli:hover{background:#efe2cf}
+.mock .lbli[aria-pressed="true"]{background:linear-gradient(#1a90e6,#54befe);color:#fff;text-shadow:0 1px 0 #00203d}
+.mock .lbsub{display:flex;flex:none;margin-left:auto;margin-top:2px;color:#77585e;--iol:transparent}
+.mock .lbli[aria-pressed="true"] .lbsub{color:#fff}
+.mock .lbbridge{position:absolute;left:760px;width:9px;height:18px;background:linear-gradient(#1a90e6,#54befe);z-index:10}
+/* the 自訂 panel: two states, each a side plate + a 156 wide column of 4 fixed rows (effect / A / B / 亮度) */
+.mock .lbpop{position:absolute;left:767px;top:106px;width:190px;z-index:9;box-sizing:border-box;font-size:11px;line-height:12px;color:#2d3142;filter:drop-shadow(0 3px 0 rgba(46,56,80,.35))}
+.mock .lbside{display:flex;flex-direction:column;gap:6px;padding:6px;background:#e6ecf1;border:1px solid #889399;border-left:2px solid #1a90e6;clip-path:var(--notch)}
+.mock .lbsec{display:flex;gap:6px}
+.mock .lbvt{flex:none;width:14px;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;color:#fff;background:#778593;clip-path:var(--notch)}
+.mock .lbvt span{display:block;width:12px;height:12px;margin-left:1px;font-size:11px;line-height:12px;text-align:left}
+.mock .lbcol{width:156px;display:flex;flex-direction:column;gap:5px}
+.mock .lbfx{width:156px;display:grid;grid-template-columns:39px 38px 39px 38px}
+.mock .lbfx button{width:auto}
+.mock .lba{height:25px;display:flex;align-items:flex-start}
+.mock .lba>.lbopt{margin-top:4px}
+.mock .lbb{height:18px;display:flex;align-items:center}
+.mock .lbabc{height:71px;display:flex;align-items:flex-start;justify-content:center}
+.mock .lbgrey{position:relative;top:1px;margin:29px 0 0;width:100%;text-align:center;color:#7d8696;font-size:11px;line-height:12px}
+.mock .lbopt{width:156px;display:flex;align-items:center;justify-content:space-between}
+.mock .lbopt .lbl,.mock .lbopt2 .lbl{position:relative;top:1px;height:18px;line-height:18px}
+/* colours: key slots on the dark plate, 2px seams; chosen = CONFIRM blue in the same 20x20 box */
+.mock .lbslots{display:grid;grid-template-columns:repeat(7,20px);gap:2px;padding:2px;width:max-content;background:#5b5d6a;border-radius:3px}
+.mock .lbslot{position:relative;display:block;width:20px;height:20px;padding:2px 2px 3px;box-sizing:border-box;cursor:pointer;background:#f6fafb;border:solid #b0b7c3;border-width:1px 1px 2px;border-radius:2px;font:inherit}
+.mock .lbslot[aria-pressed="true"]{background:linear-gradient(#1a90e6,#54befe);border-color:#000b22;box-shadow:inset 1px 1px 0 #bfe8ff}
+.mock .lbslot i{display:block;width:100%;height:100%;box-sizing:border-box;border:1px solid #2b2f3a}
+/* 自訂: an 8x8 pixel cross centred in the 14x14 face */
+.mock .lbadd{display:flex;align-items:flex-start;justify-content:flex-start}
+.mock .lbadd::before{content:"";position:absolute;left:5px;top:4px;width:8px;height:8px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'%3E%3Cpath d='M3 0h2v3h3v2h-3v3h-2v-3h-3v-2h3z' fill='%23575e6b'/%3E%3C/svg%3E") 0 0/8px 8px no-repeat}
+/* 速度 / 亮度: the title bar's blue keys around a cream field */
+.mock .lbstep{display:flex;align-items:center;gap:2px}
+.mock .lbkey{display:flex;align-items:flex-start;justify-content:center;width:18px;height:18px;padding:3px 0 0;box-sizing:border-box;cursor:pointer;border:1px solid #000714;border-radius:2px;color:#c4fcff;--iol:#0b4a74;
+  background:linear-gradient(#69c3f2 0 1px,#1f88bd 1px 2px,#2a8fc6 2px,#3c9fd0 40%,#47acd6 70%,#5ac2f2 calc(100% - 1px),#6bc2eb 0)}
+.mock .lbval{position:relative;display:block;width:52px;height:18px;box-sizing:border-box;padding-top:3px;text-align:center;font-size:11px;line-height:11px;color:#000;border:1px solid #a1a4a3;clip-path:var(--notch);background:var(--cream)}
+/* K2: drops from the 自訂 slot, right edge on the colour row's (951), notch over the slot */
+.mock .lbcpop{position:absolute;left:761px;width:190px;z-index:12;box-sizing:border-box;padding:8px 6px 6px;display:flex;flex-direction:column;gap:8px;font-size:11px;line-height:12px;color:#2d3142;
+  background:#e6ecf1;border:1px solid #889399;filter:drop-shadow(0 4px 0 rgba(46,56,80,.35))}
+.mock .lbcpop::before{content:"";position:absolute;top:-6px;left:174px;width:9px;height:9px;background:#e6ecf1;border-left:1px solid #889399;border-top:1px solid #889399;transform:rotate(45deg)}
+.mock .lbopt2{display:grid;grid-template-columns:24px 146px;justify-content:space-between;align-items:center;height:18px}
+.mock .lbopt2 .lbl{width:24px;white-space:nowrap}
+/* hue / saturation strips, 24 x 6px; the marker wraps the chosen cell, 1px proud of the strip */
+.mock .lbbar{display:grid;grid-template-columns:repeat(24,6px);height:16px;border:1px solid #2b2f3a;touch-action:none}
+.mock .lbhb,.mock .lbsb{position:relative;display:block;height:16px;padding:0;border:0;cursor:pointer}
+.mock .lbhb[aria-pressed="true"],.mock .lbsb[aria-pressed="true"]{z-index:1}
+.mock .lbhb[aria-pressed="true"]::after,.mock .lbsb[aria-pressed="true"]::after{content:"";position:absolute;left:-1px;right:-1px;top:-2px;bottom:-2px;box-sizing:border-box;border:1px solid #2b2f3a;box-shadow:inset 0 0 0 1px #fff;pointer-events:none}
+.mock .lbcrow{display:flex;align-items:center;justify-content:flex-end;gap:6px;height:18px}
+.mock .lbcpop .lbxk{padding-top:4px}
+.mock .lbprev{display:block;width:18px;height:18px;box-sizing:border-box;border:1px solid #2b2f3a;box-shadow:inset 1px 1px 0 rgba(255,255,255,.5)}
+.mock .lbhexin{width:72px;height:18px;box-sizing:border-box;padding:3px 0 0;font:inherit;font-size:11px;line-height:11px;text-align:center;color:#000;border:1px solid #a1a4a3;border-radius:0;outline:0;background:var(--cream)}

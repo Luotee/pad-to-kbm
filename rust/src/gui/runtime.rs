@@ -2,8 +2,9 @@
 //!
 //! `run` is the top-level entry point for the GUI binary path.
 //! It starts the engine, builds the Tauri window, then blocks on the
-//! event loop. When the event loop exits (Quit from tray or process kill),
-//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3).
+//! event loop. When the event loop ends (✕, tray Quit or the `quit` IPC),
+//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3), and
+//! the process exits with the event loop's exit code.
 
 use crate::config::Config;
 use crate::config_io::ConfigDoc;
@@ -22,10 +23,13 @@ pub struct RunOptions {
 
 /// Start the engine and enter the Tauri event loop.
 ///
-/// This function is **blocking** and only returns when the user quits the
-/// application (via tray "Quit" action, once the tray is wired up in Task 8).
-/// On return — whether clean or via error — `engine.shutdown()` is called so
-/// that `KeyboardSink::drop` and `release_all_held` run (Iron rule #3).
+/// This function is **blocking**. It returns only if the app cannot be
+/// built; once the event loop has run, it ends the process itself. The loop
+/// runs through `App::run_return`, not `App::run`: on Windows `App::run`
+/// (tao `EventLoop::run`) calls `std::process::exit` inside and never
+/// returns. After the loop, `engine.shutdown()` runs so that
+/// `KeyboardSink::drop` and `release_all_held` run (Iron rule #3), then the
+/// process exits with the loop's exit code.
 pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let engine = Engine::spawn(cfg, opts.dry_run)?;
     // The `log_events` file sits beside the config.
@@ -45,7 +49,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let handle_for_state = handle.clone();
     let config_path_for_setup = opts.config_path.clone();
 
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // A second instance was launched — focus the existing window instead.
             if let Some(w) = app.get_webview_window("main") {
@@ -151,6 +155,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::open_config_in_editor,
             crate::gui::commands::open_config_folder,
             crate::gui::commands::set_rumble_on_connect,
+            crate::gui::commands::set_lightbar,
             crate::gui::commands::get_config_path,
             crate::gui::commands::save_stick_cal,
             crate::gui::commands::reset_stick_cal,
@@ -168,9 +173,9 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
         .manage(opts.config_path.clone())
         .on_window_event(|window, event| {
             // Clicking ✕ now fully exits the process (Windows convention).
-            // `app.exit(0)` ends the Tauri event loop; `runtime::run`
-            // falls through to `engine.shutdown()` so held keys release
-            // before the process dies (Iron rule #3). Users who want
+            // `app.exit(0)` ends the Tauri event loop; `run_return` hands
+            // back to `runtime::run`, which calls `engine.shutdown()` so held
+            // keys release before the process exits (Iron rule #3). Users who want
             // background mapping while the window is hidden should
             // minimise to the taskbar instead, or use the tray's Open
             // entry to re-show the window after this exits.
@@ -188,14 +193,22 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
                 _ => {}
             }
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(e) => {
+            engine.shutdown();
+            return Err(e).context("building the Tauri app");
+        }
+    };
 
-    // Iron rule #3: shut down the engine regardless of how the event loop
-    // terminated, so held keys are released before the process dies.
+    // `App::run` would never return here (see above): run_return does.
+    let code = app.run_return(|_, _| {});
+
+    // Iron rule #3: shut the engine down before the process exits, so held
+    // keys and mouse buttons are released (and the lightbar exit frame written).
     engine.shutdown();
-
-    result.context("Tauri event loop terminated unexpectedly")?;
-    Ok(())
+    std::process::exit(code);
 }
 
 fn work_area(w: &tauri::Window) -> Option<(u32, u32)> {

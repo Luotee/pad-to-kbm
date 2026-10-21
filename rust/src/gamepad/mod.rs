@@ -13,6 +13,7 @@ pub mod events;
 pub mod ds_protocol;
 pub mod hid_source;
 pub mod hub;
+pub mod lightbar;
 pub mod ns_handshake;
 pub mod ns_protocol;
 pub mod ns2_ble;

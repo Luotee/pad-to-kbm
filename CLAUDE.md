@@ -158,7 +158,7 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `get_stick_positions`; mutators `set_binding`, `swap_bindings`,
 `set_trigger_mode`, `clear_pad`, `reset_pad`, `set_pad_tables`,
 `set_macro`, `rename_macro`, `delete_macro`, `set_settings`,
-`set_mapping_enabled`, `set_rumble_on_connect`, `save_stick_cal`,
+`set_mapping_enabled`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
 `reset_stick_cal`, `set_ui_prefs`; runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); ViGEmBus `get_vigem_status`,
 `install_vigem`; fire-and-forget
@@ -216,7 +216,7 @@ non-zero on any FAIL. Logs: `rust/target/verify/<layer>.log`.
 |---|---|
 | `linux` | `cargo test`, all suites, on the Linux dev host |
 | `windows-tests` | `cargo xwin test --no-run` (MSVC target); every test exe runs natively on Windows via WSL interop |
-| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept); killed by PID, temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
+| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept); closed gracefully (WM_CLOSE), which must log the engine shutdown, then cleaned up by PID (a launch whose exe PID is lost is killed by temp-dir path and FAILs); temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
 | `web` | the click-through recipe above, automated: `scripts/verify/web-smoke.mjs` (Playwright + cached Chromium, mocked `__TAURI__`); screenshots in `rust/target/verify/` |
 
 Flags: `--quick` (linux + windows-tests), `--skip-gui`, `--skip-web`,
@@ -353,8 +353,8 @@ regresses real, observed bugs the codebase already fixed once:
     more "must press a button to confirm" UX hack — the radio
     link presence is observed directly via report stream
     presence/absence. The worker that owns the session may also write
-    rumble output reports to its pad (on connect); these writes never
-    affect connection state.
+    rumble and lightbar output reports to its pad (on connect and while
+    streaming); these writes never affect connection state.
 
 ## Anti-cheat self-discipline
 

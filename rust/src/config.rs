@@ -52,6 +52,9 @@ pub struct Config {
     /// file, padtokbm.ui.json (`gui::ui_prefs::absorb`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pad: Option<String>,
+    /// DualSense lightbar (v3.5.0); a missing key = the defaults.
+    #[serde(default)]
+    pub lightbar: crate::gamepad::lightbar::LightbarConfig,
 }
 
 fn default_rumble_on_connect() -> bool { true }
@@ -259,6 +262,7 @@ impl Config {
                 self.version
             );
         }
+        self.lightbar.validate()?;
         if self.min_press_ms[0] >= self.min_press_ms[1] {
             bail!("min_press_ms range must have min < max, got {:?}", self.min_press_ms);
         }
@@ -695,6 +699,7 @@ mod tests {
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            lightbar: Default::default(),
         }
     }
 
@@ -704,6 +709,22 @@ mod tests {
         v.as_object_mut().unwrap().remove("rumble_on_connect");
         let c: Config = serde_json::from_value(v).unwrap();
         assert!(c.rumble_on_connect);
+    }
+
+    #[test]
+    fn lightbar_defaults_when_missing() {
+        let mut v = serde_json::to_value(sample_full_config()).unwrap();
+        v.as_object_mut().unwrap().remove("lightbar");
+        let c: Config = serde_json::from_value(v).unwrap();
+        assert_eq!(c.lightbar, crate::gamepad::lightbar::LightbarConfig::default());
+    }
+
+    #[test]
+    fn validate_rejects_bad_lightbar_brightness() {
+        let mut cfg = sample_full_config();
+        cfg.lightbar.other.brightness = 85;
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("lightbar.other.brightness"), "got: {err}");
     }
 
     #[test]
@@ -813,6 +834,7 @@ mod tests {
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            lightbar: Default::default(),
         }
     }
 

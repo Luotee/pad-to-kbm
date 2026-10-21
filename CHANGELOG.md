@@ -3,6 +3,52 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-10-21
+
+### Added
+
+- **DualSense light bar.** The DualSense board has a 燈條 dropdown with three
+  modes. 關閉 keeps the light dark in both states. 原廠燈 leaves the light to
+  the pad: PadToKBM writes nothing. 自訂 opens a panel with two settings,
+  鍵鼠時 (the pad is on keyboard and mouse) and 非鍵鼠時 (it is on 手把 or 關,
+  or the app is paused).
+- Both settings offer 關燈 / 固定 / 呼吸 / 彩虹. 固定 and 呼吸 take a colour:
+  one of six presets, or a custom hue / saturation / hex pick (the hue and
+  saturation strips can be dragged). 固定, 呼吸 and
+  彩虹 take a brightness from 10 to 100 in steps of 10. 關燈 has neither.
+- 呼吸 and 彩虹 have four speeds: 慢 / 中 / 快 / 極快. 彩虹 also has 呼吸換色:
+  開 changes the colour once per breath, 關 changes it continuously. The
+  speed is labelled 呼吸速度 for 呼吸 and for 彩虹 with 呼吸換色 開, and
+  換色速度 for 彩虹 with it 關.
+- The pad art shows the two light strips beside the touchpad, previewing the
+  light.
+- The dropdown closes with a second click on its field or a click outside.
+  Esc does not close it: the board has no keyboard shortcuts.
+- A new `lightbar` block in `padtokbm.json` holds all of this.
+
+### Changed
+
+- The L2 / R2 quick page and single-key caps use the new reference style.
+
+### Fixed
+
+- Closing the window (✕ or the tray's Quit) now releases held keys and mouse
+  buttons before the app exits. Before, the app ended without running its
+  shutdown.
+
+### Migration
+
+- A config without `lightbar` gets 自訂, 彩虹 on 鍵鼠時 and 關燈 on 非鍵鼠時.
+  Choose 原廠燈 to keep the light the way it was.
+- Switching to 原廠燈 in the middle of a session leaves the light on its last
+  colour until the pad reconnects.
+- On 手把, PadToKBM keeps writing the light and overrides the colour of a
+  game or Steam Input. Choose 原廠燈 to hand the light back.
+- While a Switch Pro is the active pad, the DualSense is not opened and keeps
+  its light.
+- Closing the app leaves the light on the 非鍵鼠時 setting.
+- The macOS Phase 2 plan is unaffected: the light goes through hidapi.
+
 ## [3.4.1] - 2026-10-19
 
 ### Fixed
