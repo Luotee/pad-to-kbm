@@ -19,6 +19,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
@@ -183,6 +184,7 @@ function tauriMock({ config, version }) {
         setTimeout(() => emit('controller-status', { connected: true, ...clone(state.status), connected_pads: state.status.connected }), 0);
         return clone(state.status.off_pads);
       }
+      case 'set_lightbar': c.lightbar = clone(a.lightbar); changed(); return null;
       case 'set_rumble_on_connect': c.rumble_on_connect = a.enabled; changed(); return null;
       case 'save_stick_cal': c.stick_cal = c.stick_cal || {}; c.stick_cal[a.pad] = clone(a.cal); changed(); return null;
       case 'reset_stick_cal': if (c.stick_cal) delete c.stick_cal[a.pad]; changed(); return null;
@@ -507,6 +509,129 @@ try {
   check('header fits 980 px (no overflow)', await page.evaluate(() => { const h = document.querySelector('#board .hdr'); return h.scrollWidth <= h.clientWidth; }));
   await page.click('#board [data-pad="dualsense"]');
   await settle(page);
+
+  // ── v3.5.0: DualSense light bar (燈條 dropdown, 自訂 panel, K2 picker) ──────
+  {
+    const { hueCells, pickerIndex } = await import(pathToFileURL(path.join(webDir, 'board', 'lightcolor.js')).href);
+    const canon = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v);
+    const exp = JSON.parse(JSON.stringify(exampleConfig.lightbar));
+    const sentLb = async () => (await lastCall(page, 'set_lightbar'))?.args?.lightbar;
+    // Click `sel`, apply `edit` to the expected object, then the FULL object sent must equal it.
+    async function act(name, how, edit) {
+      const n = await countCalls(page, 'set_lightbar');
+      if (typeof how === 'string') await page.click(how); else await how();
+      await settle(page);
+      edit(exp);
+      const got = await sentLb();
+      check(name, (await countCalls(page, 'set_lightbar')) === n + 1 && canon(got) === canon(exp), `${(await countCalls(page, 'set_lightbar')) - n} call(s) ${canon(got)}`);
+    }
+    const sec = (w, k, v) => `#board .lbpop [data-which="${w}"][data-k="${k}"][data-v="${v}"]`;
+    const stepBtn = (w, k, d) => `#board .lbpop [data-act="lbstep"][data-which="${w}"][data-k="${k}"][data-d="${d}"]`;
+    const dd = () => page.locator('#board .lbdd');
+    check('DualSense board has the 燈條 field, list and panel closed', (await dd().count()) === 1 && (await page.locator('#board .lbdl, #board .lbpop').count()) === 0);
+    await dd().click();
+    await settle(page);
+    check('click 燈條 → list and 自訂 panel appear', (await page.locator('#board .lbdl').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+    await page.screenshot({ path: path.join(outDir, 'web-lightbar.png') });
+    await act('關閉 → mode off', '#board .lbdl [data-v="off"]', e => { e.mode = 'off'; });
+    check('mode 關閉: list only, no panel', (await page.locator('#board .lbdl').count()) === 1 && (await page.locator('#board .lbpop').count()) === 0);
+    await act('原廠燈 → mode native', '#board .lbdl [data-v="native"]', e => { e.mode = 'native'; });
+    check('mode 原廠燈: list only, no panel', (await page.locator('#board .lbpop').count()) === 0);
+    await act('自訂 → mode custom', '#board .lbdl [data-v="custom"]', e => { e.mode = 'custom'; });
+    check('mode 自訂: panel appears', (await page.locator('#board .lbpop').count()) === 1);
+
+    await act('鍵鼠時 固定 → kbm.effect fixed', sec('kbm', 'effect', 'fixed'), e => { e.kbm.effect = 'fixed'; });
+    await act('鍵鼠時 紅色格 → kbm.color #FF2A2A', `#board .lbpop .lbslot[data-which="kbm"][data-v="#FF2A2A"]`, e => { e.kbm.color = '#FF2A2A'; });
+    await act('非鍵鼠時 呼吸 → other.effect breathe', sec('other', 'effect', 'breathe'), e => { e.other.effect = 'breathe'; });
+    check('呼吸 row is labelled 呼吸速度', /呼吸速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+    await act('呼吸速度 右鍵 → other.speed fast (from medium)', stepBtn('other', 'speed', 1), e => { e.other.speed = 'fast'; });
+    await act('亮度 左鍵 → other.brightness 70', stepBtn('other', 'brightness', -1), e => { e.other.brightness = 70; });
+    await act('非鍵鼠時 彩虹 → other.effect rainbow', sec('other', 'effect', 'rainbow'), e => { e.other.effect = 'rainbow'; });
+    check('彩虹 (no 呼吸換色) row is labelled 換色速度', /換色速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+    await act('呼吸換色 右鍵 → other.rainbow_breath true', stepBtn('other', 'rainbow_breath', 1), e => { e.other.rainbow_breath = true; });
+    check('彩虹 with 呼吸換色 on: row relabelled 呼吸速度', /呼吸速度/.test((await page.locator('#board .lbpop .lbsec').nth(1).textContent()) || ''));
+
+    // K2: opens from the 自訂 slot of a 固定 / 呼吸 state only.
+    check('K2 closed before the 自訂 slot is clicked', (await page.locator('#board .lbcpop').count()) === 0);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2', (await page.locator('#board .lbcpop').count()) === 1);
+    const hue0 = hueCells(pickerIndex(exp.kbm.color).si)[0];
+    await act('K2 色相第 0 格 → colour hueCells(si)[0]', '#board .lbcpop .lbhb >> nth=0', e => { e.kbm.color = hue0; });
+    check('K2 stays open after picking', (await page.locator('#board .lbcpop').count()) === 1);
+    const hex = () => page.locator('#board .lbcpop .lbhexin');
+    await act('色碼 2ea8ff + Enter (change) → #2EA8FF', async () => { await hex().fill('2ea8ff'); await hex().press('Enter'); }, e => { e.kbm.color = '#2EA8FF'; });
+    check('色碼 field shows the stored colour', (await hex().inputValue()) === '#2EA8FF');
+    {
+      const n = await countCalls(page, 'set_lightbar');
+      await hex().fill('xyz');
+      await hex().press('Enter');
+      await settle(page);
+      check('色碼 xyz → no set_lightbar, field back to #2EA8FF', (await countCalls(page, 'set_lightbar')) === n && (await hex().inputValue()) === '#2EA8FF');
+    }
+    await act('鍵鼠時 彩虹 → kbm.effect rainbow', sec('kbm', 'effect', 'rainbow'), e => { e.kbm.effect = 'rainbow'; });
+    check('K2 gone when the state is 彩虹', (await page.locator('#board .lbcpop').count()) === 0);
+    await act('鍵鼠時 呼吸 → kbm.effect breathe', sec('kbm', 'effect', 'breathe'), e => { e.kbm.effect = 'breathe'; });
+    check('K2 (picker still selected) is back for 呼吸', (await page.locator('#board .lbcpop').count()) === 1);
+    await page.screenshot({ path: path.join(outDir, 'web-lightbar-k2.png') });
+
+    // Closing: only a click on the field again or outside; Esc does nothing.
+    const panelOpen = async () => (await page.locator('#board .lbpop').count()) === 1 || (await page.locator('#board .lbdl').count()) === 1;
+    await page.keyboard.press('Escape');
+    await settle(page);
+    check('Esc does not close the dropdown', await panelOpen() && (await page.locator('#board .lbcpop').count()) === 1);
+    await page.click('#board .hdr', { position: { x: 4, y: 4 } });
+    await settle(page);
+    check('click outside closes list, panel and K2', !(await panelOpen()) && (await page.locator('#board .lbcpop').count()) === 0);
+    await dd().click();
+    await settle(page);
+    check('click the field opens it again', await panelOpen());
+    await dd().click();
+    await settle(page);
+    check('click the field again closes it', !(await panelOpen()));
+    await dd().click();
+    await settle(page);
+    await page.keyboard.press('Escape');
+    await settle(page);
+    check('Esc leaves a reopened dropdown open', await panelOpen());
+
+    // The cap is not drawn over the macro editor, and comes back after it.
+    // A scratch macro seeded in the mock only (removed again below), so the later macro checks see none.
+    await page.evaluate(() => { window.__mock.config.macros['燈條測試'] = { loop: false, steps: [] }; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    await page.locator('#board [data-medit="燈條測試"]').click();
+    await settle(page);
+    check('macro editor open: no 燈條 cap, list, panel', (await page.locator('#board .med').count()) === 1 &&
+      (await page.locator('#board .lbcap, #board .lbdl, #board .lbpop, #board .lbcpop').count()) === 0);
+    await page.click('#board .med [data-act="mdone"]');
+    await settle(page);
+    check('macro editor closed: 燈條 cap is back, dropdown stayed closed', (await dd().count()) === 1 && !(await panelOpen()));
+    await page.evaluate(() => { delete window.__mock.config.macros['燈條測試']; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+
+    // Locked board (手把): the dropdown still opens and still saves.
+    await page.click('#board .omode [data-mode="pad"]');
+    await settle(page);
+    check('手把 locks the board', await locked());
+    await dd().click();
+    await settle(page);
+    check('locked board: dropdown still opens', await panelOpen());
+    await act('locked board: 非鍵鼠時 固定 → other.effect fixed', sec('other', 'effect', 'fixed'), e => { e.other.effect = 'fixed'; });
+    await act('locked board: 天藍 → other.color #2EA8FF', `#board .lbpop .lbslot[data-which="other"][data-v="#2EA8FF"]`, e => { e.other.color = '#2EA8FF'; });
+    await dd().click();
+    await settle(page);
+    check('locked board: field closes it', !(await panelOpen()));
+    await page.click('#board .omode [data-mode="kbm"]');
+    await settle(page);
+
+    // Not a DualSense: no cap.
+    await page.click('#board [data-pad="ns_pro"]');
+    await settle(page);
+    check('Switch Pro board has no 燈條 cap', (await page.locator('#board .lbcap').count()) === 0 && (await page.locator('#board .lbdd').count()) === 0);
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+    check('back on DualSense the cap returns', (await dd().count()) === 1);
+  }
 
   // ── The drawn window (v3.3.0): title bar, minimise / close, touchpad switch in the header ──
   check('title bar reads PAD TO KBM', ((await page.locator('#wtbar .wt').textContent()) || '') === 'PAD TO KBM');
