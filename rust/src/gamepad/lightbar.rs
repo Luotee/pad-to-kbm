@@ -37,6 +37,9 @@
 //! `lightbar_setup` = `r[44]`, 0x02 = LIGHT_OUT; RGB = `r[47..50]`.
 
 use anyhow::{bail, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -259,6 +262,127 @@ pub fn ds_lightbar_setup_report() -> [u8; 78] {
     r
 }
 
+/// Lightbar settings shared between the GUI / config side and the HID worker.
+/// Clones share the same state.
+#[derive(Clone, Default)]
+pub struct LightbarLive {
+    cfg: Arc<Mutex<LightbarConfig>>,
+    kbm: Arc<AtomicBool>,
+}
+
+impl LightbarLive {
+    pub fn set_config(&self, c: LightbarConfig) {
+        *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = c;
+    }
+
+    pub fn set_kbm(&self, on: bool) {
+        self.kbm.store(on, Ordering::Relaxed);
+    }
+
+    pub fn kbm(&self) -> bool {
+        self.kbm.load(Ordering::Relaxed)
+    }
+
+    pub fn snapshot(&self) -> (LightbarConfig, bool) {
+        (*self.cfg.lock().unwrap_or_else(|e| e.into_inner()), self.kbm())
+    }
+}
+
+/// One lightbar write the worker should make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightWrite {
+    Setup,
+    Color(Rgb),
+}
+
+/// Animation write interval.
+const ANIM_EVERY: Duration = Duration::from_millis(50);
+/// Re-send interval for still frames (the pad / other software may overwrite).
+const STILL_EVERY: Duration = Duration::from_secs(2);
+/// LCM of every animation period (incl. 6 rainbow-breath steps), seconds.
+const WRAP_S: u64 = 72;
+
+/// Seconds since `start`, wrapped at `WRAP_S` from the integer `Duration`
+/// (never accumulated in f32) so long sessions keep full precision.
+fn wrapped_secs(start: Instant, now: Instant) -> f32 {
+    let d = now.saturating_duration_since(start);
+    ((d.as_secs() % WRAP_S) as f64 + f64::from(d.subsec_nanos()) / 1e9) as f32
+}
+
+const BLACK: Rgb = Rgb([0, 0, 0]);
+
+#[derive(Clone, Copy)]
+struct Memory {
+    setup_done: bool,
+    last: Option<(Rgb, Instant)>,
+}
+
+/// Decides when the HID worker writes the lightbar.
+pub struct LightbarPlayer {
+    start: Instant,
+    mem: Memory,
+    /// State before the most recent output, restored by `on_write_failed`.
+    undo: Memory,
+}
+
+impl LightbarPlayer {
+    pub fn new(start: Instant) -> Self {
+        let mem = Memory { setup_done: false, last: None };
+        LightbarPlayer { start, mem, undo: mem }
+    }
+
+    pub fn take_due(&mut self, now: Instant, cfg: &LightbarConfig, kbm: bool) -> Option<LightWrite> {
+        if cfg.mode == LightMode::Native {
+            return None;
+        }
+        if !self.mem.setup_done {
+            self.undo = self.mem;
+            self.mem.setup_done = true;
+            return Some(LightWrite::Setup);
+        }
+        let (color, animated) = if cfg.mode == LightMode::Off {
+            (BLACK, false)
+        } else {
+            let s = if kbm { &cfg.kbm } else { &cfg.other };
+            let t = wrapped_secs(self.start, now);
+            (frame_at(s, t), matches!(s.effect, Effect::Breathe | Effect::Rainbow))
+        };
+        let due = match self.mem.last {
+            None => true,
+            Some((c, at)) => {
+                let age = now.saturating_duration_since(at);
+                if animated { age >= ANIM_EVERY } else { c != color || age >= STILL_EVERY }
+            }
+        };
+        if !due {
+            return None;
+        }
+        self.undo = self.mem;
+        self.mem.last = Some((color, now));
+        Some(LightWrite::Color(color))
+    }
+
+    /// The last output was not written: forget it so it is offered again.
+    pub fn on_write_failed(&mut self) {
+        self.mem = self.undo;
+    }
+
+    /// The still frame to leave on the bar when the app exits.
+    pub fn exit_frame(&self, now: Instant, cfg: &LightbarConfig) -> Option<Rgb> {
+        match cfg.mode {
+            LightMode::Native => None,
+            LightMode::Off => Some(BLACK),
+            LightMode::Custom => Some(match cfg.other.effect {
+                Effect::Rainbow => frame_at(&cfg.other, wrapped_secs(self.start, now)),
+                Effect::Off => BLACK,
+                Effect::Fixed | Effect::Breathe => {
+                    frame_at(&StateLight { effect: Effect::Fixed, ..cfg.other }, 0.0)
+                }
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,5 +555,172 @@ mod frame_tests {
     fn reports_carry_valid_crc() {
         assert!(crc_ok(&ds_lightbar_report(Rgb([200, 100, 50]))));
         assert!(crc_ok(&ds_lightbar_setup_report()));
+    }
+}
+
+#[cfg(test)]
+mod player_tests {
+    use super::*;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    fn fixed(c: [u8; 3]) -> StateLight {
+        StateLight { effect: Effect::Fixed, color: Rgb(c), brightness: 100, ..StateLight::default() }
+    }
+
+    fn cfg(kbm: StateLight, other: StateLight) -> LightbarConfig {
+        LightbarConfig { mode: LightMode::Custom, kbm, other }
+    }
+
+    fn colors(
+        p: &mut LightbarPlayer,
+        t0: Instant,
+        c: &LightbarConfig,
+        kbm: bool,
+        range: std::ops::Range<u64>,
+    ) -> Vec<(u64, Rgb)> {
+        range
+            .filter_map(|n| match p.take_due(t0 + ms(n), c, kbm) {
+                Some(LightWrite::Color(x)) => Some((n, x)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_never_writes() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let mut c = LightbarConfig::default();
+        c.mode = LightMode::Native;
+        for n in 0..1000 {
+            assert_eq!(p.take_due(t0 + ms(n * 10), &c, n % 2 == 0), None);
+        }
+        assert_eq!(p.exit_frame(t0 + ms(5), &c), None);
+    }
+
+    #[test]
+    fn setup_comes_first_once() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = LightbarConfig::default();
+        assert_eq!(p.take_due(t0, &c, true), Some(LightWrite::Setup));
+        for n in 1..500 {
+            assert_ne!(p.take_due(t0 + ms(n), &c, true), Some(LightWrite::Setup));
+        }
+    }
+
+    #[test]
+    fn animated_writes_every_50ms() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = LightbarConfig::default(); // kbm = rainbow
+        let w = colors(&mut p, t0, &c, true, 0..1000);
+        assert!((19..=21).contains(&w.len()), "{}", w.len());
+    }
+
+    #[test]
+    fn static_writes_on_change_and_every_2s() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let mut c = cfg(fixed([255, 255, 255]), StateLight::default());
+        let w = colors(&mut p, t0, &c, true, 0..5000);
+        assert_eq!(w.len(), 3, "{w:?}");
+        assert!(w.iter().all(|(_, x)| *x == Rgb([255, 255, 255])));
+        c.kbm.color = Rgb([255, 0, 0]);
+        assert_eq!(
+            p.take_due(t0 + ms(5000), &c, true),
+            Some(LightWrite::Color(Rgb([255, 0, 0])))
+        );
+        assert_eq!(p.take_due(t0 + ms(5001), &c, true), None);
+    }
+
+    #[test]
+    fn kbm_flag_picks_state() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = cfg(fixed([255, 0, 0]), fixed([0, 0, 255]));
+        assert_eq!(p.take_due(t0, &c, true), Some(LightWrite::Setup));
+        assert_eq!(p.take_due(t0 + ms(1), &c, true), Some(LightWrite::Color(Rgb([255, 0, 0]))));
+        assert_eq!(p.take_due(t0 + ms(2), &c, false), Some(LightWrite::Color(Rgb([0, 0, 255]))));
+    }
+
+    #[test]
+    fn mode_off_is_black_for_both() {
+        let t0 = Instant::now();
+        let mut c = LightbarConfig::default();
+        c.mode = LightMode::Off;
+        for kbm in [true, false] {
+            let mut p = LightbarPlayer::new(t0);
+            assert_eq!(p.take_due(t0, &c, kbm), Some(LightWrite::Setup));
+            assert_eq!(p.take_due(t0 + ms(1), &c, kbm), Some(LightWrite::Color(Rgb([0, 0, 0]))));
+        }
+    }
+
+    #[test]
+    fn failed_setup_is_retried() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = LightbarConfig::default();
+        assert_eq!(p.take_due(t0, &c, true), Some(LightWrite::Setup));
+        p.on_write_failed();
+        assert_eq!(p.take_due(t0 + ms(4), &c, true), Some(LightWrite::Setup));
+    }
+
+    #[test]
+    fn failed_color_is_retried() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = cfg(fixed([1, 2, 3]), StateLight::default());
+        p.take_due(t0, &c, true);
+        assert!(p.take_due(t0 + ms(1), &c, true).is_some());
+        p.on_write_failed();
+        assert_eq!(p.take_due(t0 + ms(5), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+    }
+
+    #[test]
+    fn exit_frame_uses_other_state() {
+        let t0 = Instant::now();
+        let p = LightbarPlayer::new(t0);
+        let breathe = StateLight {
+            effect: Effect::Breathe,
+            color: Rgb([255, 0, 0]),
+            brightness: 50,
+            ..StateLight::default()
+        };
+        let mut c = cfg(StateLight::default(), breathe);
+        assert_eq!(p.exit_frame(t0 + ms(50), &c), Some(Rgb([128, 0, 0])));
+        c.other = StateLight::default(); // effect off
+        assert_eq!(p.exit_frame(t0 + ms(50), &c), Some(Rgb([0, 0, 0])));
+        let mut c = LightbarConfig::default();
+        c.mode = LightMode::Off;
+        assert_eq!(p.exit_frame(t0 + ms(50), &c), Some(Rgb([0, 0, 0])));
+    }
+
+    #[test]
+    fn time_wraps_at_72s_without_seam() {
+        let t0 = Instant::now();
+        let p = LightbarPlayer::new(t0);
+        let other = StateLight { effect: Effect::Rainbow, brightness: 100, ..StateLight::default() };
+        let c = cfg(StateLight::default(), other);
+        let a = p.exit_frame(t0 + Duration::from_secs(1), &c);
+        let b = p.exit_frame(t0 + Duration::from_secs(73), &c);
+        assert_eq!(a, b);
+        assert_eq!(a, Some(frame_at(&other, 1.0)));
+    }
+
+    #[test]
+    fn live_snapshot_reflects_setters() {
+        let live = LightbarLive::default();
+        assert_eq!(live.snapshot(), (LightbarConfig::default(), false));
+        let other = live.clone();
+        let mut c = LightbarConfig::default();
+        c.mode = LightMode::Off;
+        other.set_config(c);
+        other.set_kbm(true);
+        assert_eq!(live.snapshot(), (c, true));
+        assert!(live.kbm());
     }
 }
