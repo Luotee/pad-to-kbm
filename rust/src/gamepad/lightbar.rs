@@ -299,6 +299,12 @@ pub enum LightWrite {
 const ANIM_EVERY: Duration = Duration::from_millis(50);
 /// Re-send interval for still frames (the pad / other software may overwrite).
 const STILL_EVERY: Duration = Duration::from_secs(2);
+/// After a failed write, no retry before this long ...
+const RETRY_AFTER: Duration = Duration::from_millis(50);
+/// ... and after `SLOW_AFTER_FAILS` failures in a row, one try per this long.
+/// hidapi's Windows write can block for up to a second, on the read thread.
+const SLOW_RETRY_AFTER: Duration = Duration::from_secs(2);
+const SLOW_AFTER_FAILS: u32 = 3;
 /// LCM of every animation period (incl. 6 rainbow-breath steps), seconds.
 const WRAP_S: u64 = 72;
 
@@ -323,21 +329,36 @@ pub struct LightbarPlayer {
     mem: Memory,
     /// State before the most recent output, restored by `on_write_failed`.
     undo: Memory,
+    /// When the most recent output was handed out, while it may still fail.
+    pending: Option<Instant>,
+    /// Failed writes in a row.
+    fails: u32,
+    /// No output before this (backoff after a failed write).
+    hold_until: Option<Instant>,
 }
 
 impl LightbarPlayer {
     pub fn new(start: Instant) -> Self {
         let mem = Memory { setup_done: false, last: None };
-        LightbarPlayer { start, mem, undo: mem }
+        LightbarPlayer { start, mem, undo: mem, pending: None, fails: 0, hold_until: None }
     }
 
     pub fn take_due(&mut self, now: Instant, cfg: &LightbarConfig, kbm: bool) -> Option<LightWrite> {
+        // The previous output was not reported failed: it was written.
+        if self.pending.take().is_some() {
+            self.fails = 0;
+            self.hold_until = None;
+        }
         if cfg.mode == LightMode::Native {
+            return None;
+        }
+        if self.hold_until.is_some_and(|h| now < h) {
             return None;
         }
         if !self.mem.setup_done {
             self.undo = self.mem;
             self.mem.setup_done = true;
+            self.pending = Some(now);
             return Some(LightWrite::Setup);
         }
         let (color, animated) = if cfg.mode == LightMode::Off {
@@ -359,12 +380,19 @@ impl LightbarPlayer {
         }
         self.undo = self.mem;
         self.mem.last = Some((color, now));
+        self.pending = Some(now);
         Some(LightWrite::Color(color))
     }
 
-    /// The last output was not written: forget it so it is offered again.
+    /// The last output was not written: forget it so it is offered again,
+    /// after `RETRY_AFTER`, or `SLOW_RETRY_AFTER` once `SLOW_AFTER_FAILS`
+    /// writes in a row have failed.
     pub fn on_write_failed(&mut self) {
+        let Some(at) = self.pending.take() else { return };
         self.mem = self.undo;
+        self.fails += 1;
+        let wait = if self.fails >= SLOW_AFTER_FAILS { SLOW_RETRY_AFTER } else { RETRY_AFTER };
+        self.hold_until = Some(at + wait);
     }
 
     /// The still frame to leave on the bar when the app exits.
@@ -666,7 +694,7 @@ mod player_tests {
         let c = LightbarConfig::default();
         assert_eq!(p.take_due(t0, &c, true), Some(LightWrite::Setup));
         p.on_write_failed();
-        assert_eq!(p.take_due(t0 + ms(4), &c, true), Some(LightWrite::Setup));
+        assert_eq!(p.take_due(t0 + ms(50), &c, true), Some(LightWrite::Setup));
     }
 
     #[test]
@@ -677,7 +705,68 @@ mod player_tests {
         p.take_due(t0, &c, true);
         assert!(p.take_due(t0 + ms(1), &c, true).is_some());
         p.on_write_failed();
-        assert_eq!(p.take_due(t0 + ms(5), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+        assert_eq!(p.take_due(t0 + ms(51), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+    }
+
+    #[test]
+    fn failed_write_waits_50ms_before_retry() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = cfg(fixed([1, 2, 3]), StateLight::default());
+        assert_eq!(p.take_due(t0, &c, true), Some(LightWrite::Setup));
+        p.on_write_failed();
+        for n in 1..50 {
+            assert_eq!(p.take_due(t0 + ms(n), &c, true), None, "setup retried at {n} ms");
+        }
+        assert_eq!(p.take_due(t0 + ms(50), &c, true), Some(LightWrite::Setup));
+        assert_eq!(p.take_due(t0 + ms(51), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+        p.on_write_failed();
+        for n in 52..101 {
+            assert_eq!(p.take_due(t0 + ms(n), &c, true), None, "colour retried at {n} ms");
+        }
+        assert_eq!(p.take_due(t0 + ms(101), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+    }
+
+    /// Every write fails for 10 s, polled every 1 ms: 50 ms gaps for the first
+    /// failures, then one try per 2 s.
+    #[test]
+    fn three_failures_slow_retries_to_2s() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = LightbarConfig::default(); // kbm = rainbow, animated
+        let mut tries = Vec::new();
+        for n in 0..10_000 {
+            if p.take_due(t0 + ms(n), &c, true).is_some() {
+                tries.push(n);
+                p.on_write_failed();
+            }
+        }
+        assert!(tries.len() <= 3 + 10 / 2, "{tries:?}");
+        assert!(tries.len() >= 6, "{tries:?}");
+        for (i, w) in tries.windows(2).enumerate() {
+            let min = if i < 2 { 50 } else { 2000 };
+            assert!(w[1] - w[0] >= min, "gap {} after try {} in {tries:?}", w[1] - w[0], i + 1);
+        }
+    }
+
+    #[test]
+    fn success_resets_backoff() {
+        let t0 = Instant::now();
+        let mut p = LightbarPlayer::new(t0);
+        let c = cfg(fixed([1, 2, 3]), StateLight::default());
+        // Three failed setups: the next try waits 2 s.
+        for n in [0, 50, 100] {
+            assert_eq!(p.take_due(t0 + ms(n), &c, true), Some(LightWrite::Setup), "{n}");
+            p.on_write_failed();
+        }
+        assert_eq!(p.take_due(t0 + ms(2099), &c, true), None);
+        // This setup goes through (no on_write_failed before the next take_due).
+        assert_eq!(p.take_due(t0 + ms(2100), &c, true), Some(LightWrite::Setup));
+        assert_eq!(p.take_due(t0 + ms(2101), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
+        p.on_write_failed();
+        // One failure after a success: back to the 50 ms wait, not 2 s.
+        assert_eq!(p.take_due(t0 + ms(2150), &c, true), None);
+        assert_eq!(p.take_due(t0 + ms(2151), &c, true), Some(LightWrite::Color(Rgb([1, 2, 3]))));
     }
 
     #[test]

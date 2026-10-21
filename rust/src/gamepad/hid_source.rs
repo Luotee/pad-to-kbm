@@ -604,8 +604,8 @@ fn play_rumble(d: &dyn HidIo, session: &mut Session, plan: &mut Option<RumblePla
 
 /// Write at most one due lightbar report (DualSense sessions only). An
 /// iteration that wrote a rumble step belongs to the rumble. A failed write
-/// is offered again next iteration and never ends the session (iron rule
-/// 11); it is logged once per session.
+/// is offered again after a backoff (`LightbarPlayer::on_write_failed`) and
+/// never ends the session (iron rule 11); it is logged once per session.
 fn play_lightbar(d: &dyn HidIo, session: &mut Session, wrote_rumble: bool) {
     if wrote_rumble {
         return;
