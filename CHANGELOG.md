@@ -8,21 +8,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **DualSense light bar.** The DualSense board has a 燈條 dropdown with three
-  choices: 關閉, 原廠燈 and 自訂. 自訂 opens a panel with two settings, 鍵鼠時
-  (the pad is on keyboard and mouse) and 非鍵鼠時 (it is on 手把 or 關).
-- 鍵鼠時 offers 關燈 / 固定 / 呼吸 / 彩虹, 非鍵鼠時 offers 關燈 / 固定. Each effect
-  has a colour from six presets or a custom hue / saturation / hex pick, and
-  a brightness in steps of 10. 呼吸 and 彩虹 have four speeds (慢 / 中 / 快 /
-  極快). 彩虹 has 呼吸換色: the colour changes step by step instead of
-  gliding.
-- The pad art on the board shows a strip that previews the light.
+  modes. 關閉 keeps the light dark in both states. 原廠燈 leaves the light to
+  the pad: PadToKBM writes nothing. 自訂 opens a panel with two settings,
+  鍵鼠時 (the pad is on keyboard and mouse) and 非鍵鼠時 (it is on 手把 or 關).
+- Both settings offer 關燈 / 固定 / 呼吸 / 彩虹. 固定 and 呼吸 take a colour:
+  one of six presets, or a custom hue / saturation / hex pick. 固定, 呼吸 and
+  彩虹 take a brightness from 10 to 100 in steps of 10. 關燈 has neither.
+- 呼吸 and 彩虹 have four speeds: 慢 / 中 / 快 / 極快. 彩虹 also has 呼吸換色:
+  開 changes the colour once per breath, 關 changes it continuously. The
+  speed is labelled 呼吸速度 for 呼吸 and for 彩虹 with 呼吸換色 開, and
+  換色速度 for 彩虹 with it 關.
+- The pad art shows the two light strips beside the touchpad, previewing the
+  light.
+- The dropdown closes with a second click on its field or a click outside.
+  Esc does not close it: the board has no keyboard shortcuts.
 - A new `lightbar` block in `padtokbm.json` holds all of this.
 
 ### Changed
 
 - The L2 / R2 quick page and single-key caps use the new reference style.
-- The dropdown closes with a second click on its field or a click outside.
-  Esc does not close it: the board has no keyboard shortcuts.
 
 ### Migration
 
