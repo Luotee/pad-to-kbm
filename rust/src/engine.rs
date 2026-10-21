@@ -395,6 +395,9 @@ impl Engine {
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let (cal, probe) = (StickCalTable::default(), StickProbe::default());
         let lightbar = LightbarLive::default();
+        // Before the HID worker starts: it must never play the default
+        // (自訂) settings to a 原廠燈 / 關閉 user.
+        lightbar.set_config(cfg.lightbar);
         let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
         // Dry run synthesizes no OS input: that includes the virtual pad.
         let pad: Box<dyn VirtualPad> =

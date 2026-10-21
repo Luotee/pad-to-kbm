@@ -401,6 +401,13 @@ impl LightbarPlayer {
             LightMode::Native => None,
             LightMode::Off => Some(BLACK),
             LightMode::Custom => Some(match cfg.other.effect {
+                // 呼吸換色: the current breath's hue at its peak, not the
+                // frame of the moment (dark near a trough).
+                Effect::Rainbow if cfg.other.rainbow_breath => {
+                    let p = BREATH_S[cfg.other.speed.index()];
+                    let t = wrapped_secs(self.start, now);
+                    frame_at(&cfg.other, ((t / p).floor() + 0.5) * p)
+                }
                 Effect::Rainbow => frame_at(&cfg.other, wrapped_secs(self.start, now)),
                 Effect::Off => BLACK,
                 Effect::Fixed | Effect::Breathe => {
@@ -786,6 +793,22 @@ mod player_tests {
         let mut c = LightbarConfig::default();
         c.mode = LightMode::Off;
         assert_eq!(p.exit_frame(t0 + ms(50), &c), Some(Rgb([0, 0, 0])));
+    }
+
+    /// Rainbow with 呼吸換色: the bar keeps the current breath's hue at full
+    /// brightness, not the frame of the moment (dark near a trough).
+    #[test]
+    fn exit_frame_rainbow_breath_is_full_hue() {
+        let t0 = Instant::now();
+        let p = LightbarPlayer::new(t0);
+        let mut other =
+            StateLight { effect: Effect::Rainbow, rainbow_breath: true, brightness: 100, ..StateLight::default() };
+        let c = cfg(StateLight::default(), other); // medium: 3 s per breath
+        assert_eq!(p.exit_frame(t0 + ms(100), &c), Some(Rgb([255, 0, 0])));
+        assert_eq!(p.exit_frame(t0 + ms(3100), &c), Some(Rgb([255, 255, 0])));
+        other.brightness = 50;
+        let c = cfg(StateLight::default(), other);
+        assert_eq!(p.exit_frame(t0 + ms(2900), &c), Some(Rgb([128, 0, 0])));
     }
 
     #[test]
