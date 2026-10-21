@@ -49,9 +49,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, engine: Handle) -> Result<TrayIcon<
             }
             "quit" => {
                 // Spec §10: shutdown path identical to Ctrl-C.
-                // `app.exit(0)` ends the Tauri event loop; `runtime::run`
-                // then falls through and calls `engine.shutdown()` so all
-                // held keys are released (Iron rule #3).
+                // `app.exit(0)` ends the Tauri event loop; `run_return`
+                // returns in `runtime::run`, which calls `engine.shutdown()`
+                // so all held keys are released (Iron rule #3), then exits.
                 app.exit(0);
             }
             _ => {}

@@ -906,10 +906,10 @@ fn open_path(path: &std::path::Path) -> anyhow::Result<()> {
 
 /// Tauri command: exit the process cleanly via Tauri's event loop.
 ///
-/// `app.exit(0)` causes `.run(...)` in `runtime::run` to return, after which
-/// `engine.shutdown()` fires and `KeyboardSink::drop` releases held keys
-/// (Iron rule #3). This IPC wrapper exists for frontend use (e.g. Settings
-/// tab About → Quit button).
+/// `app.exit(0)` ends the event loop: `App::run_return` in `runtime::run`
+/// returns, `engine.shutdown()` fires and `KeyboardSink::drop` releases held
+/// keys (Iron rule #3), then the process exits. This IPC wrapper exists for
+/// frontend use (e.g. Settings tab About → Quit button).
 #[cfg(feature = "gui")]
 #[tauri::command]
 pub fn quit(app: tauri::AppHandle) -> Result<(), String> {

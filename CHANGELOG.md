@@ -28,6 +28,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The L2 / R2 quick page and single-key caps use the new reference style.
 
+### Fixed
+
+- Closing the window (✕ or the tray's Quit) now releases held keys and mouse
+  buttons before the app exits. Before, the app ended without running its
+  shutdown.
+
 ### Migration
 
 - A config without `lightbar` gets 自訂, 彩虹 on 鍵鼠時 and 關燈 on 非鍵鼠時.

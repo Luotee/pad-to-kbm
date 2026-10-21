@@ -7,7 +7,8 @@
 #                  every test exe runs natively on Windows via WSL interop
 #   gui-smoke      GUI exe build, launched alone from a fresh %LOCALAPPDATA%\Temp
 #                  dir: window up, first-run config written, config hot-edit
-#                  (valid + invalid) does not kill the process
+#                  (valid + invalid) does not kill the process, a graceful
+#                  window close exits through the engine shutdown
 #   web            headless Chromium click-through of rust/web/ with a mocked
 #                  window.__TAURI__ (scripts/verify/web-smoke.mjs)
 #
@@ -46,6 +47,7 @@ CONFIG_NAME="padtokbm.json"
 LEGACY_CONFIG_NAME="dualsense-mapper.json"
 GUI_STARTUP_TIMEOUT_S=8
 GUI_HOTEDIT_WAIT_S=3
+GUI_CLOSE_TIMEOUT_S=10
 PLAYWRIGHT_CORE_VER="1.63.0"
 
 ALL_LAYERS=(linux windows-tests gui-smoke web)
@@ -338,6 +340,31 @@ PY
     LEGACY_MSG="old $LEGACY_CONFIG_NAME adopted"
 }
 
+# Launch the exe with --dry-run, stdout + stderr into <dir>\stdout.log; echo
+# its PID. The exe attaches to its parent's console at start (main.rs), which
+# replaces redirected handles, so the parent is a cmd.exe with no console
+# (DETACHED_PROCESS, created through WMI so it inherits none of this
+# PowerShell's handles: a Start-Process -Redirect* child holds the WSL pipe
+# open and the $(...) below would wait for the exe to exit).
+gui_launch_logged() {
+    local win_exe="$1" win_dir="$2" out cmd_pid pid="" deadline
+    out="$(win_ps "\$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{CreateFlags=[uint32]8; ShowWindow=[uint16]0};
+\$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd.exe /d /c \"\"$win_exe\" --dry-run > \"$win_dir\\stdout.log\" 2>&1\"'; CurrentDirectory='$win_dir'; ProcessStartupInformation=\$si};
+if (\$r.ReturnValue -eq 0) { \$r.ProcessId }")"
+    cmd_pid="$(echo "$out" | tail -n 1)"
+    if ! [[ "$cmd_pid" =~ ^[0-9]+$ ]]; then
+        echo "$out"
+        return 1
+    fi
+    deadline=$((SECONDS + GUI_STARTUP_TIMEOUT_S))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        pid="$(win_ps "(Get-CimInstance Win32_Process -Filter \"Name='$GUI_EXE_NAME' AND ParentProcessId=$cmd_pid\").ProcessId")"
+        [[ "$pid" =~ ^[0-9]+$ ]] && break
+        sleep 0.5
+    done
+    echo "$pid"
+}
+
 layer_gui_smoke() {
     local log hint rc exe running localappdata stamp win_dir win_exe cfg
     local title="" deadline msg
@@ -391,9 +418,10 @@ layer_gui_smoke() {
 
     # --dry-run: the window, config and watcher paths are identical, but a
     # paired controller on this desktop cannot type into the user's apps.
-    GUI_PID="$(win_ps "(Start-Process -FilePath '$win_exe' -ArgumentList '--dry-run' -WorkingDirectory '$win_dir' -PassThru).Id")"
+    # stdout carries the tracing log; the graceful-close step reads it.
+    GUI_PID="$(gui_launch_logged "$win_exe" "$win_dir")"
     if ! [[ "$GUI_PID" =~ ^[0-9]+$ ]]; then
-        echo "Start-Process output: $GUI_PID" >>"$log"
+        echo "launch output: $GUI_PID" >>"$log"
         GUI_PID=""
         gui_cleanup
         record gui-smoke FAIL "could not launch the exe (see log)"
@@ -457,6 +485,28 @@ layer_gui_smoke() {
         return
     fi
 
+    # ✕ / tray Quit end the Tauri event loop; the engine must still shut down
+    # (iron rule 3: held keys released, lightbar exit frame) before the exit.
+    echo "=== graceful close (CloseMainWindow)" >>"$log"
+    win_ps "(Get-Process -Id $GUI_PID).CloseMainWindow()" >>"$log" 2>&1
+    deadline=$((SECONDS + GUI_CLOSE_TIMEOUT_S))
+    while [ "$SECONDS" -lt "$deadline" ] && gui_alive "$GUI_PID"; do
+        sleep 0.5
+    done
+    if gui_alive "$GUI_PID"; then
+        gui_cleanup
+        record gui-smoke FAIL "still running ${GUI_CLOSE_TIMEOUT_S}s after a graceful window close"
+        return
+    fi
+    GUI_PID=""
+    echo "--- stdout.log" >>"$log"
+    tr -d '\r' <"$GUI_TMP_LINUX/stdout.log" | sed 's/\x1b\[[0-9;]*m//g' >>"$log" 2>&1
+    if ! grep -q "engine shut down" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
+        gui_cleanup
+        record gui-smoke FAIL "graceful close exited without the engine shutdown (no 'engine shut down' in stdout.log)"
+        return
+    fi
+
     gui_cleanup
 
     # Upgrade from a pre-v3.1.0 folder: the old config must be adopted as is.
@@ -468,7 +518,7 @@ layer_gui_smoke() {
         record gui-smoke FAIL "legacy config: $LEGACY_MSG"
         return
     fi
-    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; $LEGACY_MSG"
+    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; graceful close ran the engine shutdown; $LEGACY_MSG"
 }
 
 # ─── Layer: web ──────────────────────────────────────────────────────────────

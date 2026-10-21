@@ -492,12 +492,15 @@ impl Engine {
         self.handle.clone()
     }
 
-    /// Signal shutdown and block until the engine thread exits.
+    /// Signal shutdown and block until the engine thread exits. The closing
+    /// log line is what `scripts/verify.sh` (gui-smoke) looks for after a
+    /// graceful window close.
     pub fn shutdown(mut self) {
         self.handle.inner.shutdown.store(true, Ordering::SeqCst);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        tracing::info!("engine shut down");
     }
 }
 
