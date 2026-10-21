@@ -68,6 +68,14 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
     <td><sub><b>巨集。</b>點鍵盤的鍵加步驟，拖曳排順序，拖出去刪除。</sub></td>
     <td><sub><b>設定</b>（齒輪）：設定檔與最近的事件（每筆標出是哪顆按鈕或哪個巨集送的）、搖桿校正、觸控板、按鍵時間，按「儲存」才套用。</sub></td>
   </tr>
+  <tr>
+    <td><img src="docs/images/readme/lightbar.png" alt="燈條下拉選了自訂：鍵鼠時是彩虹，非鍵鼠時是天藍色呼吸"></td>
+    <td><img src="docs/images/readme/lightbar-picker.png" alt="自訂顏色小窗：色相和飽和兩條色帶、預覽色塊和色碼"></td>
+  </tr>
+  <tr>
+    <td><sub><b>燈條</b>（DualSense）。選「自訂」後，鍵鼠時和非鍵鼠時各設一種效果：關燈、固定、呼吸或彩虹。切到手把或關，燈跟著換。</sub></td>
+    <td><sub><b>自訂顏色。</b>點「＋」，拖色相和飽和兩條色帶，或直接打色碼。</sub></td>
+  </tr>
 </table>
 
 <sub>截圖用的是示範設定，可用 <code>scripts/readme-shots.mjs</code> 重新產生。</sub>
