@@ -9,6 +9,7 @@ import { startMacros } from './board/macros.js';
 import { startSettings } from './board/settings.js';
 import { startCalibration } from './board/calibration.js';
 import { startVigem, maybeProbe } from './board/vigem.js';
+import { startLightbar } from './board/lightbar.js';
 import { fitKeyLabels } from './board/palette.js';
 import { chromeHTML, fitWindow } from './chrome.js';
 import { appWindow } from './ipc.js';
@@ -61,6 +62,7 @@ startMacros(board);
 await startSettings(board);
 startCalibration();
 startVigem();
+startLightbar(board);
 paint();
 // Tag ink boxes are measured with the pixel font; re-measure once it loaded.
 if (document.fonts) document.fonts.ready.then(() => { resetInk(); paint(); });

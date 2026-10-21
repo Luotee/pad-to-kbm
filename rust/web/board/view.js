@@ -11,6 +11,7 @@ import { ICON } from './icons.js';
 import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
 import { bangHTML, popHTML, vigemBlocksBanner } from './vigem.js';
+import { capHTML, popHTML as lbPopHTML, lbarHTML } from './lightbar.js';
 
 export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）';
 
@@ -66,10 +67,11 @@ function slotBtn(st, key, tag, x, y, b) {
     '<span class="val">' + esc(disp(k)) + '</span></button>';
 }
 
+// L2 / R2 (ZL / ZR): a caption plate holding the name and one framed two-cell field, like the 燈條 dropdown.
 function qcapHTML(pad, side, mode) {
   const on = mode === 'page', name = pad === 'dualsense' ? side + '2' : 'Z' + side;
-  return '<span class="seg">' + name + '<button type="button" data-qs="' + side + '" data-mode="quick" aria-pressed="' + on + '">快捷頁</button>' +
-    '<button type="button" data-qs="' + side + '" data-mode="single" aria-pressed="' + !on + '">單鍵</button></span>';
+  return '<span class="qplate"><span class="qname">' + name + '</span><span class="qsg"><button type="button" data-qs="' + side + '" data-mode="quick" aria-pressed="' + on + '">快捷頁</button>' +
+    '<button type="button" data-qs="' + side + '" data-mode="single" aria-pressed="' + !on + '">單鍵</button></span></span>';
 }
 
 
@@ -88,7 +90,7 @@ export function render(st) {
   h += '</div><div class="sp"></div>' + (pad === 'dualsense' ? switchHTML('tp', '觸控板游標', cfg.touchpad_cursor_enabled !== false) : '') +
     switchHTML('rumble', '連線震動', cfg.rumble_on_connect !== false) + omodeHTML(st, pad) + bangHTML() +
     '<button type="button" class="gear" data-act="setopen" aria-label="設定" title="設定">' + ICON.gear + '</button></header>';
-  h += '<div class="stage"></div>' + padSvg(pad);
+  h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
   else if (om === 'pad' && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(pad) + '</span></div>';
@@ -111,6 +113,7 @@ export function render(st) {
   // The capture hint is for screen readers only (the board shows the blue slot).
   h += '<section class="pal">' + (waiting ? '<div class="capbar" role="status">' + CAPTURE_TEXT + '</div>' : '') + keyboardHTML(st, used) +
     '<div class="m3s' + lock + '">' + mouseHTML(st, used) + '</div>' + macroBoxHTML(st, lock, used) + '</section>';
+  h += capHTML(st) + lbPopHTML(st);
   h += popHTML();
   if (st.medit) h += editorHTML(st);
   if (st.setOpen) h += settingsHTML(st);
