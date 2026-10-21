@@ -48,6 +48,8 @@ for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
   p.quick_r = { '0': { label: 'Cross', type: 'key', value: '1' }, '1': { label: 'Circle', type: 'key', value: '2' }, '2': { label: 'Square', type: 'key', value: '3' }, '3': { label: 'Triangle', type: 'key', value: '4' } };
 }
 config.mapping_enabled = { ...config.mapping_enabled, ns2_pro: true };
+// The light bar shots: 鍵鼠時 彩虹 (the default), 非鍵鼠時 呼吸 in 天藍 so both sections show their rows.
+config.lightbar = { ...config.lightbar, other: { ...config.lightbar.other, effect: 'breathe', color: '#2EA8FF' } };
 config.macros = {
   連發: { loop: true, steps: [{ key: 'j', action: 'down', delay_ms: [30, 50] }, { key: 'j', action: 'up', delay_ms: [15, 25] }] },
   跳躍攻擊: {
@@ -121,12 +123,14 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(() => document.querySelectorAll('#board .slot').length > 20);
   await page.evaluate(() => document.fonts.ready);
-  const shot = async name => {
+  const shot = async (name, clip) => {
     await page.waitForTimeout(300);
-    await page.screenshot({ path: path.join(outDir, name) });
+    await page.screenshot({ path: path.join(outDir, name), ...(clip ? { clip } : {}) });
     console.log(`wrote docs/images/readme/${name}`);
   };
   const emit = (name, payload) => page.evaluate(([n, p]) => window.__emit(n, p), [name, payload]);
+  // The pad-art light strips animate (彩虹 by default): hold them at their first frame so reruns give the same pictures.
+  await page.addStyleTag({ content: '#board .lbar{animation-play-state:paused!important;animation-delay:0s!important}' });
 
   // 1. The board, DualSense shown, Cross held: slot, line and tile light up.
   await emit('button-down', { id: 0 });
@@ -135,7 +139,17 @@ try {
   await emit('button-up', { id: 0 });
   await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'LAlt', action: 'up' });
 
-  // 2. Quick-slot page: ZL held on the Switch 2 Pro lights its page slot.
+  // 2. Light bar (DualSense): the 燈條 dropdown with its 自訂 panel, then the colour picker on 非鍵鼠時.
+  //    Cropped to the pad and the panel.
+  const lbClip = { x: 430, y: 84, width: 545, height: 330 };
+  await page.click('#board .lbdd');
+  await shot('lightbar.png', lbClip);
+  await page.click('#board .lbpop .lbadd[data-which="other"]');
+  await shot('lightbar-picker.png', lbClip);
+  await page.click('#board .lbcpop .lbxk');
+  await page.click('#board .lbdd');
+
+  // 3. Quick-slot page: ZL held on the Switch 2 Pro lights its page slot.
   await page.click('#board [data-pad="ns2_pro"]');
   await emit('button-down', { id: 23 });
   await emit('button-down', { id: 13 });
@@ -145,12 +159,12 @@ try {
   await emit('button-up', { id: 23 });
   await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F3', action: 'up' });
 
-  // 3. Key capture: a slot waits for a key.
+  // 4. Key capture: a slot waits for a key.
   await page.click('#board .slot[data-slot="4"]');
   await shot('capture.png');
   await page.keyboard.press('Escape');
 
-  // 4. Settings → 一般, with recent events.
+  // 5. Settings → 一般, with recent events.
   await page.click('#board [data-pad="dualsense"]');
   await page.click('#board [data-act="setopen"]');
   // Each row names what sent it (v3.2.0): Cross → LAlt, Triangle → its macro.
@@ -163,10 +177,11 @@ try {
   await shot('settings.png');
   await page.click('#board [data-act="setclose"]');
 
-  // 5. Macro editor.
+  // 6. Macro editor.
   await page.click('#board [data-medit="跳躍攻擊"]');
   await shot('macro-editor.png');
   await page.click('#board .med [data-act="mdone"]');
+
 
 } finally {
   await browser.close();
