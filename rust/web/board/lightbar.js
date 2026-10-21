@@ -8,15 +8,22 @@ import { state, rerender } from './store.js';
 import { hook } from './events.js';
 import { outputMode } from './view.js';
 import { pixelSvg, withRing } from './pixel.js';
-import { SPEEDS, SPEED_TXT, PRESETS, hueCells, satCells, pickerIndex, normHex } from './lightcolor.js';
+import { SPEEDS, SPEED_TXT, PRESETS, hueCells, satCells, pickerIndex, normHex, hsvHex } from './lightcolor.js';
 
 // open: the dropdown (list, and the panel when the mode is 自訂); pick: the state whose K2 picker is open.
-export const LB = { open: false, pick: null };
+// drag: a press on a hue / saturation strip in progress ({ w, strip, hi, si, color, rect, id }); nothing is sent until release.
+export const LB = { open: false, pick: null, drag: null, suppress: false };
 
 const STATE_DEF = { effect: 'off', color: '#FFFFFF', speed: 'medium', rainbow_breath: false, brightness: 80 };
 export function lightOf(cfg) {
   const l = (cfg && cfg.lightbar) || {};
   return { mode: l.mode || 'custom', kbm: { ...STATE_DEF, effect: 'rainbow', ...l.kbm }, other: { ...STATE_DEF, ...l.other } };
+}
+// What is drawn: the saved light, with the colour of an in-progress strip drag laid over it.
+function lightView(cfg) {
+  const l = lightOf(cfg), d = LB.drag;
+  if (d) l[d.w] = { ...l[d.w], color: d.color };
+  return l;
 }
 const same = (a, b) => String(a).toUpperCase() === String(b).toUpperCase();
 const speedIx = s => Math.max(0, SPEEDS.indexOf(s.speed));
@@ -34,7 +41,7 @@ function shown(lb, om) {
 
 export function lbarHTML(st) {
   if (st.pad !== 'dualsense') return '';
-  const s = shown(lightOf(st.config), outputMode(st, 'dualsense'));
+  const s = shown(lightView(st.config), outputMode(st, 'dualsense'));
   let fill = '#c9ceda', cls = 'lbar', style = '', dim = '';
   if (s.kind === 'off') fill = '#454c60';
   else if (s.kind !== 'none') {
@@ -100,18 +107,18 @@ function section(lb, w, title) {
 
 // K2: hue and saturation strips (24 cells each) dropped from the 自訂 slot, then the preview and the 色碼 field.
 function pickerHTML(lb, w) {
-  const s = lb[w], { hi, si } = pickerIndex(s.color), shade = hueCells(23), val = hueCells(si), sat = satCells(hi);
+  const s = lb[w], d = LB.drag, { hi, si } = d ? d : pickerIndex(s.color), shade = hueCells(23), val = hueCells(si), sat = satCells(hi);
   const cell = (cls, v, bg, label, on) => '<button type="button" class="' + cls + '" data-act="lbset" data-which="' + w + '" data-k="color" data-v="' + v + '" aria-label="' + label + '" aria-pressed="' + on + '" style="background:' + bg + '"></button>';
   const hb = val.map((v, k) => cell('lbhb', v, shade[k], '色相 ' + k * 15, k === hi)).join('');
   const sb = sat.map((v, k) => cell('lbsb', v, v, '飽和度 ' + (k + 1), k === si)).join('');
   return '<section class="lbcpop" style="top:' + (w === 'kbm' ? 165 : 265) + 'px" role="dialog" aria-label="自訂顏色">' +
-    '<div class="lbopt2"><span class="lbl">色相</span><div class="lbbar">' + hb + '</div></div><div class="lbopt2"><span class="lbl">飽和</span><div class="lbbar">' + sb + '</div></div>' +
+    '<div class="lbopt2"><span class="lbl">色相</span><div class="lbbar" data-strip="hue" data-which="' + w + '">' + hb + '</div></div><div class="lbopt2"><span class="lbl">飽和</span><div class="lbbar" data-strip="sat" data-which="' + w + '">' + sb + '</div></div>' +
     '<div class="lbcrow"><i class="lbprev" style="background:' + s.color + '"></i><input class="lbhexin" data-lbhex="' + w + '" value="' + s.color + '" maxlength="7" aria-label="色碼"></div></section>';
 }
 
 export function popHTML(st) {
   if (st.pad !== 'dualsense' || st.medit || !LB.open) return '';
-  const lb = lightOf(st.config), i = Math.max(0, MODES.findIndex(m => m[0] === lb.mode));
+  const lb = lightView(st.config), i = Math.max(0, MODES.findIndex(m => m[0] === lb.mode));
   const list = '<div class="lbdl" role="listbox" aria-label="燈條模式">' + MODES.map(([id, n]) => '<button type="button" class="lbli" role="option" data-act="lbmode" data-v="' + id +
     '" aria-pressed="' + (lb.mode === id) + '" aria-selected="' + (lb.mode === id) + '">' + n + (id === 'custom' ? '<span class="lbsub">' + ICON_R + '</span>' : '') + '</button>').join('') + '</div>';
   if (lb.mode !== 'custom') return list;
@@ -131,6 +138,8 @@ const close = () => { LB.open = false; LB.pick = null; rerender(); };
 export function startLightbar(board) {
   // Click outside closes. Capture phase, so it also runs on a locked board, whose gate (events.js) stops the click.
   board.addEventListener('click', ev => {
+    // The click that ends a strip drag lands on whatever the re-render left under the pointer: not a click outside, not a pick.
+    if (LB.suppress) { LB.suppress = false; ev.stopPropagation(); return; }
     if (LB.open && !ev.target.closest('.lbpop, .lbdl, .lbcpop, [data-act="lbopen"]')) close();
   }, true);
   hook('click', ev => {
@@ -150,6 +159,34 @@ export function startLightbar(board) {
     }
     return true;
   });
+  // Hue / saturation strips: press picks the cell under the pointer, moving while held keeps picking, and release
+  // sends the one set_lightbar. The pointer is captured on the board, which survives the re-renders the drag causes.
+  const pickAt = ev => {
+    const d = LB.drag, k = clamp(Math.floor((ev.clientX - d.rect.left) / d.rect.width * 24), 0, 23);
+    if (d.strip === 'hue') d.hi = k; else d.si = k;
+    const color = hsvHex(d.hi * 15, (d.si + 1) / 24, 1);
+    if (color !== d.color) { d.color = color; rerender(); }
+  };
+  board.addEventListener('pointerdown', ev => {
+    const bar = ev.button === 0 && !LB.drag && LB.open && ev.target.closest && ev.target.closest('.lbcpop .lbbar[data-strip]');
+    if (!bar) return;
+    const w = bar.dataset.which, { hi, si } = pickerIndex(lightOf(state.config)[w].color), r = bar.getBoundingClientRect();
+    LB.drag = { w, strip: bar.dataset.strip, hi, si, color: '', rect: { left: r.left, width: r.width }, id: ev.pointerId };
+    ev.preventDefault();
+    try { board.setPointerCapture(ev.pointerId); } catch (e) { /* no capture: the move still tracks while over the board */ }
+    pickAt(ev);
+  });
+  board.addEventListener('pointermove', ev => { if (LB.drag && ev.pointerId === LB.drag.id) pickAt(ev); });
+  const release = ev => {
+    const d = LB.drag;
+    if (!d || ev.pointerId !== d.id) return;
+    LB.drag = null;
+    LB.suppress = true;
+    setTimeout(() => { LB.suppress = false; }, 100);
+    const lb = lightOf(state.config);
+    if (!same(d.color, lb[d.w].color)) save({ ...lb, [d.w]: { ...lb[d.w], color: d.color } }); else rerender();
+  };
+  for (const kind of ['pointerup', 'pointercancel', 'lostpointercapture']) board.addEventListener(kind, release);
   // 色碼: six hex digits are sent; anything else puts the field back to the current colour.
   board.addEventListener('change', ev => {
     const w = ev.target.dataset && ev.target.dataset.lbhex;

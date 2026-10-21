@@ -556,9 +556,82 @@ try {
     await page.click('#board .lbpop .lbadd[data-which="kbm"]');
     await settle(page);
     check('自訂 slot opens K2', (await page.locator('#board .lbcpop').count()) === 1);
-    const hue0 = hueCells(pickerIndex(exp.kbm.color).si)[0];
-    await act('K2 色相第 0 格 → colour hueCells(si)[0]', '#board .lbcpop .lbhb >> nth=0', e => { e.kbm.color = hue0; });
+    const hue3 = hueCells(pickerIndex(exp.kbm.color).si)[3];
+    await act('K2 色相第 3 格 → colour hueCells(si)[3]', '#board .lbcpop .lbhb >> nth=3', e => { e.kbm.color = hue3; });
     check('K2 stays open after picking', (await page.locator('#board .lbcpop').count()) === 1);
+    // Drag along the strips: nothing is sent until release, then exactly one full set_lightbar.
+    {
+      const { hsvHex } = await import(pathToFileURL(path.join(webDir, 'board', 'lightcolor.js')).href);
+      const cellBox = async (strip, k) => page.locator(`#board .lbcpop [data-strip="${strip}"] button >> nth=${k}`).boundingBox();
+      const mid = async (strip, k) => { const b = await cellBox(strip, k); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+      const marked = async strip => page.evaluate(s => [...document.querySelectorAll(`#board .lbcpop [data-strip="${s}"] button`)].findIndex(b => b.getAttribute('aria-pressed') === 'true'), strip);
+      const hexv = () => page.locator('#board .lbcpop .lbhexin').inputValue();
+      const nCalls = () => countCalls(page, 'set_lightbar');
+      for (const [strip, from, to] of [['hue', 2, 10], ['sat', 20, 5]]) {
+        const { hi, si } = pickerIndex(exp.kbm.color);
+        const want = k => strip === 'hue' ? hsvHex(k * 15, (si + 1) / 24, 1) : hsvHex(hi * 15, (k + 1) / 24, 1);
+        const n = await nCalls();
+        const p0 = await mid(strip, from), p1 = await mid(strip, to);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move((p0.x + p1.x) / 2, p0.y, { steps: 6 });
+        await page.mouse.move(p1.x, p1.y, { steps: 6 });
+        await settle(page);
+        const mark = await marked(strip), field = await hexv();
+        check(`${strip} drag ${from} → ${to}: no set_lightbar before release`, (await nCalls()) === n);
+        check(`${strip} drag mid-drag: marker on cell ${to}, 色碼 shows the live colour`, mark === to && field === want(to), `marker ${mark}, field ${field}, want ${want(to)}`);
+        check(`${strip} drag mid-drag: preview swatch and 自訂 slot follow`,
+          (await page.locator('#board .lbcpop .lbprev').evaluate(e => e.style.backgroundColor)) !== '' &&
+          (await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbpop .lbadd[data-which="kbm"] i')).backgroundColor)) === (await page.evaluate(c => { const d = document.createElement('i'); d.style.background = c; document.body.append(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; }, want(to))));
+        await page.mouse.up();
+        await settle(page);
+        exp.kbm.color = want(to);
+        check(`${strip} drag release: exactly 1 full set_lightbar`, (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s) ${canon(await sentLb())}`);
+        check(`${strip} drag release: K2 and dropdown stay open`, (await page.locator('#board .lbcpop').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+      }
+      {
+        // Past the right end clamps to cell 23; y is ignored.
+        const n = await nCalls(), p0 = await mid('hue', 3), end = await cellBox('hue', 23);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(end.x + end.width + 8, p0.y + 3, { steps: 8 });
+        await page.mouse.up();
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(23 * 15, (si + 1) / 24, 1);
+        check('drag past the right end → cell 23', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), canon(await sentLb()));
+      }
+      {
+        // Started on a strip, released outside the popover: nothing closes.
+        const n = await nCalls(), p0 = await mid('sat', 4);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.move(8, 8, { steps: 8 });
+        await page.mouse.up();
+        await settle(page);
+        const { hi } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(hi * 15, 1 / 24 * 1, 1);
+        check('drag released outside: dropdown and K2 stay open', (await page.locator('#board .lbcpop').count()) === 1 && (await page.locator('#board .lbpop').count()) === 1);
+        check('drag released outside: 1 call, clamped to cell 0', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), canon(await sentLb()));
+      }
+      {
+        // Press and release on one cell without moving: one call, no duplicate from the click.
+        const n = await nCalls(), p0 = await mid('hue', 7);
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        const { si } = pickerIndex(exp.kbm.color);
+        exp.kbm.color = hsvHex(7 * 15, (si + 1) / 24, 1);
+        check('press + release on one cell → exactly 1 call', (await nCalls()) === n + 1 && canon(await sentLb()) === canon(exp), `${(await nCalls()) - n} call(s)`);
+        // Same cell again: colour unchanged, nothing sent.
+        await page.mouse.move(p0.x, p0.y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await settle(page);
+        check('press + release on the already chosen cell → no call', (await nCalls()) === n + 1);
+      }
+    }
     const hex = () => page.locator('#board .lbcpop .lbhexin');
     await act('色碼 2ea8ff + Enter (change) → #2EA8FF', async () => { await hex().fill('2ea8ff'); await hex().press('Enter'); }, e => { e.kbm.color = '#2EA8FF'; });
     check('色碼 field shows the stored colour', (await hex().inputValue()) === '#2EA8FF');

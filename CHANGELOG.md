@@ -13,7 +13,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   鍵鼠時 (the pad is on keyboard and mouse) and 非鍵鼠時 (it is on 手把 or 關,
   or the app is paused).
 - Both settings offer 關燈 / 固定 / 呼吸 / 彩虹. 固定 and 呼吸 take a colour:
-  one of six presets, or a custom hue / saturation / hex pick. 固定, 呼吸 and
+  one of six presets, or a custom hue / saturation / hex pick (the hue and
+  saturation strips can be dragged). 固定, 呼吸 and
   彩虹 take a brightness from 10 to 100 in steps of 10. 關燈 has neither.
 - 呼吸 and 彩虹 have four speeds: 慢 / 中 / 快 / 極快. 彩虹 also has 呼吸換色:
   開 changes the colour once per breath, 關 changes it continuously. The
