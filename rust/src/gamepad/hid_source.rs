@@ -618,7 +618,8 @@ fn play_lightbar(d: &dyn HidIo, session: &mut Session, wrote_rumble: bool) {
         LightWrite::Color(c) => ds_lightbar_report(c),
     };
     if let Err(e) = d.write(&report) {
-        player.on_write_failed();
+        // After the write returned: a failing write can block for a second.
+        player.on_write_failed(Instant::now());
         if !session.lightbar_warned {
             session.lightbar_warned = true;
             tracing::warn!(error = %e, "lightbar write failed; retrying (logged once per session)");
