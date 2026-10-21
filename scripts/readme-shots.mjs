@@ -48,6 +48,9 @@ for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
   p.quick_r = { '0': { label: 'Cross', type: 'key', value: '1' }, '1': { label: 'Circle', type: 'key', value: '2' }, '2': { label: 'Square', type: 'key', value: '3' }, '3': { label: 'Triangle', type: 'key', value: '4' } };
 }
 config.mapping_enabled = { ...config.mapping_enabled, ns2_pro: true };
+// DualSense: L2 stays a quick page, R2 is a plain key, so the board shows both trigger modes.
+config.pads.dualsense.trigger_mode = { l: 'page', r: 'key' };
+{ const b = config.pads.dualsense.buttons; b['24'] = { label: b['24'].label, type: 'key', value: 'LCtrl' }; }
 // The light bar shots: 鍵鼠時 彩虹 (the default), 非鍵鼠時 呼吸 in 天藍 so both sections show their rows.
 config.lightbar = { ...config.lightbar, other: { ...config.lightbar.other, effect: 'breathe', color: '#2EA8FF' } };
 config.macros = {
