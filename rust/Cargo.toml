@@ -1,6 +1,6 @@
 [package]
 name = "dualsense-mapper"
-version = "3.4.1"
+version = "3.5.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Map gamepad buttons and analog inputs to keyboard and mouse."

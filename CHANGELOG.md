@@ -3,6 +3,40 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-10-21
+
+### Added
+
+- **DualSense light bar.** The DualSense board has a 燈條 dropdown with three
+  choices: 關閉, 原廠燈 and 自訂. 自訂 opens a panel with two settings, 鍵鼠時
+  (the pad is on keyboard and mouse) and 非鍵鼠時 (it is on 手把 or 關).
+- 鍵鼠時 offers 關燈 / 固定 / 呼吸 / 彩虹, 非鍵鼠時 offers 關燈 / 固定. Each effect
+  has a colour from six presets or a custom hue / saturation / hex pick, and
+  a brightness in steps of 10. 呼吸 and 彩虹 have four speeds (慢 / 中 / 快 /
+  極快). 彩虹 has 呼吸換色: the colour changes step by step instead of
+  gliding.
+- The pad art on the board shows a strip that previews the light.
+- A new `lightbar` block in `padtokbm.json` holds all of this.
+
+### Changed
+
+- The L2 / R2 quick page and single-key caps use the new reference style.
+- The dropdown closes with a second click on its field or a click outside.
+  Esc does not close it: the board has no keyboard shortcuts.
+
+### Migration
+
+- A config without `lightbar` gets 自訂, 彩虹 on 鍵鼠時 and 關燈 on 非鍵鼠時.
+  Choose 原廠燈 to keep the light the way it was.
+- Switching to 原廠燈 in the middle of a session leaves the light on its last
+  colour until the pad reconnects.
+- On 手把, PadToKBM keeps writing the light and overrides the colour of a
+  game or Steam Input. Choose 原廠燈 to hand the light back.
+- While a Switch Pro is the active pad, the DualSense is not opened and keeps
+  its light.
+- Closing the app leaves the light on the 非鍵鼠時 setting.
+- The macOS Phase 2 plan is unaffected: the light goes through hidapi.
+
 ## [3.4.1] - 2026-10-19
 
 ### Fixed
