@@ -16,6 +16,7 @@
 use crate::config::{Binding, ButtonEntry, Config, MacroDef, ADDED_IDS};
 use crate::config_io::{write_atomic, ConfigDoc};
 use crate::engine::Handle;
+use crate::gamepad::lightbar::LightbarConfig;
 use crate::gamepad::ControllerKind;
 use crate::pad_bindings::{
     default_pad_bindings, PadBindings, Page, Side, TriggerMode, LABELS, QUICK_IDS,
@@ -759,6 +760,30 @@ pub fn set_rumble_on_connect(
 pub fn set_rumble_on_connect_impl(engine: &Handle, config_path: &Path, enabled: bool) -> anyhow::Result<()> {
     mutate_config(engine, config_path, |doc| {
         doc.set_rumble_on_connect(enabled);
+        Ok(())
+    })
+}
+
+// ─── set_lightbar ────────────────────────────────────────────────────────────
+
+/// Tauri command: the whole 燈條 setting (`lightbar`, global).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn set_lightbar(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+    lightbar: LightbarConfig,
+) -> Result<(), String> {
+    set_lightbar_impl(&*engine, &config_path, lightbar).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    Ok(())
+}
+
+/// Pure implementation of `set_lightbar`.
+pub fn set_lightbar_impl(engine: &Handle, config_path: &Path, lightbar: LightbarConfig) -> anyhow::Result<()> {
+    mutate_config(engine, config_path, |doc| {
+        doc.set_lightbar(lightbar);
         Ok(())
     })
 }

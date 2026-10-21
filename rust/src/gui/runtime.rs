@@ -151,6 +151,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::open_config_in_editor,
             crate::gui::commands::open_config_folder,
             crate::gui::commands::set_rumble_on_connect,
+            crate::gui::commands::set_lightbar,
             crate::gui::commands::get_config_path,
             crate::gui::commands::save_stick_cal,
             crate::gui::commands::reset_stick_cal,

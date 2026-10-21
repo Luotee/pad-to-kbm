@@ -158,7 +158,7 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `get_stick_positions`; mutators `set_binding`, `swap_bindings`,
 `set_trigger_mode`, `clear_pad`, `reset_pad`, `set_pad_tables`,
 `set_macro`, `rename_macro`, `delete_macro`, `set_settings`,
-`set_mapping_enabled`, `set_rumble_on_connect`, `save_stick_cal`,
+`set_mapping_enabled`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
 `reset_stick_cal`, `set_ui_prefs`; runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); ViGEmBus `get_vigem_status`,
 `install_vigem`; fire-and-forget
@@ -353,8 +353,8 @@ regresses real, observed bugs the codebase already fixed once:
     more "must press a button to confirm" UX hack — the radio
     link presence is observed directly via report stream
     presence/absence. The worker that owns the session may also write
-    rumble output reports to its pad (on connect); these writes never
-    affect connection state.
+    rumble and lightbar output reports to its pad (on connect and while
+    streaming); these writes never affect connection state.
 
 ## Anti-cheat self-discipline
 

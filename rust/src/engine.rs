@@ -188,6 +188,13 @@ impl Handle {
         self.inner.lightbar.kbm()
     }
 
+    /// The lightbar config the engine-owned live state currently holds.
+    /// Test hook.
+    #[doc(hidden)]
+    pub fn lightbar_config(&self) -> crate::gamepad::lightbar::LightbarConfig {
+        self.inner.lightbar.snapshot().0
+    }
+
     /// The session owner's latest stick positions, raw and corrected
     /// (`None`: no controller connected, or no stick report yet), with the
     /// raw extents seen since the previous call.
