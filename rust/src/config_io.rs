@@ -140,6 +140,11 @@ impl ConfigDoc {
         self.raw["rumble_on_connect"] = Value::from(v);
     }
 
+    pub fn set_lightbar(&mut self, v: crate::gamepad::lightbar::LightbarConfig) {
+        self.typed.lightbar = v;
+        self.raw["lightbar"] = serde_json::to_value(v).expect("lightbar serializes");
+    }
+
     pub fn set_last_pad(&mut self, pad: &str) {
         self.typed.last_pad = Some(pad.to_string());
         self.raw["last_pad"] = Value::from(pad);

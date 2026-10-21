@@ -114,6 +114,29 @@ fn set_mapping_enabled_preserves_help() {
     assert_eq!(raw["_help"], orig["_help"]);
 }
 
+#[test]
+fn set_lightbar_writes_raw_and_typed_and_keeps_help() {
+    use dualsense_mapper::gamepad::lightbar::{Effect, LightbarConfig};
+    let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.json");
+    let orig: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&example).unwrap()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.json");
+    std::fs::copy(&example, &path).unwrap();
+    let mut doc = ConfigDoc::load(&path).unwrap();
+    let mut lb = LightbarConfig::default();
+    lb.kbm.effect = Effect::Breathe;
+    lb.other.brightness = 30;
+    doc.set_lightbar(lb);
+    assert_eq!(doc.typed().lightbar, lb);
+    write_atomic(&path, &doc).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["lightbar"]["kbm"]["effect"], "breathe");
+    assert_eq!(raw["lightbar"]["other"]["brightness"], 30);
+    assert_eq!(raw["_help"], orig["_help"]);
+}
+
 // ─── Per-pad / per-page writes (config version 2) ────────────────────────────
 
 use dualsense_mapper::config::{Binding, ButtonEntry, Config};

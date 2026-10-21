@@ -46,6 +46,13 @@ fn shipped_example_config_has_rumble_on_connect() {
 }
 
 #[test]
+fn shipped_example_config_has_default_lightbar() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.example.json");
+    let cfg = Config::load_from_path(&path).expect("load+validate");
+    assert_eq!(cfg.lightbar, dualsense_mapper::gamepad::lightbar::LightbarConfig::default());
+}
+
+#[test]
 fn shipped_maple_profile_validates() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/maple_artale.json");
     Config::load_from_path(&path).expect("maple profile load+validate");

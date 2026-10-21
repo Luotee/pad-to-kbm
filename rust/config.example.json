@@ -15,6 +15,7 @@
     "'touchpad_midpoint_x' / 'touchpad_midpoint_y' set the quadrant boundary in raw pad coords (default 960/540 = centre of a 1920x1080 pad). If the wrong quadrant fires on click, watch the debug dot in the GUI to see the captured raw position, then tune these values.",
     "mapping_enabled: per-controller switch. true = buttons go through this mapping; false = for DualSense / Switch Pro the app sends nothing and the game reads the controller directly; the Switch 2 Pro instead becomes a virtual Xbox pad (needs ViGEmBus).",
     "rumble_on_connect: true = the controller gives a short buzz when it becomes the active one; false = no buzz.",
+    "lightbar (DualSense only): mode off = always dark, native = leave the light to the controller / games, custom = kbm (mapping on) and other (手把 / 關 / paused) each pick effect off|fixed|breathe|rainbow, color #RRGGBB, speed slow|medium|fast|hyper, rainbow_breath (one colour per breath), brightness 10..100 in steps of 10.",
     "The window version applies a saved edit automatically while it runs; with --cli, restart the program after editing.",
     "Fields starting with '_' are documentation only and ignored by the program."
   ],
@@ -168,6 +169,11 @@
   "touchpad_click_freeze_enabled": true,
   "mapping_enabled": {"dualsense": true, "ns_pro": true, "ns2_pro": true},
   "rumble_on_connect": true,
+  "lightbar": {
+    "mode": "custom",
+    "kbm": {"effect": "rainbow", "color": "#FFFFFF", "speed": "medium", "rainbow_breath": false, "brightness": 80},
+    "other": {"effect": "off", "color": "#FFFFFF", "speed": "medium", "rainbow_breath": false, "brightness": 80}
+  },
   "touchpad_accel_slow_threshold": 5,
   "touchpad_accel_fast_threshold": 20,
   "touchpad_accel_gain_slow": 0.5,
