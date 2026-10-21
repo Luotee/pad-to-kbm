@@ -35,18 +35,20 @@ function shown(lb, om) {
 export function lbarHTML(st) {
   if (st.pad !== 'dualsense') return '';
   const s = shown(lightOf(st.config), outputMode(st, 'dualsense'));
-  let fill = '#c9ceda', cls = 'lbar', style = '';
+  let fill = '#c9ceda', cls = 'lbar', style = '', dim = '';
   if (s.kind === 'off') fill = '#454c60';
   else if (s.kind !== 'none') {
     fill = s.kind === 'rainbow' || s.kind === 'rainstep' ? '#FF2A2A' : s.color;
     cls += ' lit' + (s.kind === 'fixed' ? '' : ' ' + s.kind);
     // The board re-renders on every press: keep the animation's phase on one clock.
     const now = performance.now() / 1000, P = s.kind === 'rainstep' ? s.p * 6 : s.p;
-    style = 'color:' + fill + ';opacity:' + (0.2 + 0.8 * s.b / 100).toFixed(2) + ';animation-duration:' + (s.kind === 'rainstep' ? P + 's,' + s.p + 's' : s.p + 's') +
+    // 亮度 on an outer group, so the breathing opacity on the inner one does not override it.
+    dim = ' style="opacity:' + (0.2 + 0.8 * s.b / 100).toFixed(2) + '"';
+    style = 'color:' + fill + ';animation-duration:' + (s.kind === 'rainstep' ? P + 's,' + s.p + 's' : s.p + 's') +
       ';animation-delay:-' + (now % P).toFixed(3) + 's' + (s.kind === 'rainstep' ? ',-' + (now % s.p).toFixed(3) + 's' : '');
   }
   const strip = x => '<rect x="' + x + '" y="45" width="5" height="48" rx="2.5" fill="' + fill + '" stroke="#2d4359" stroke-width="1.5"/>';
-  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g class="' + cls + '" style="' + style + '">' + strip(102) + strip(193) + '</g></svg>';
+  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g' + dim + '><g class="' + cls + '" style="' + style + '">' + strip(102) + strip(193) + '</g></g></svg>';
 }
 
 // ─── The dropdown in the caption row ─────────────────────────────────────────
@@ -58,7 +60,9 @@ const MODES = [['off', '關閉'], ['native', '原廠燈'], ['custom', '自訂']]
 const FX = [['off', '關燈'], ['fixed', '固定'], ['breathe', '呼吸'], ['rainbow', '彩虹']];
 
 export function capHTML(st) {
-  if (st.pad !== 'dualsense') return '';
+  // An open macro editor covers the caption row: no 燈條 control over it, and the dropdown is closed.
+  if (st.medit) { LB.open = false; LB.pick = null; }
+  if (st.pad !== 'dualsense' || st.medit) return '';
   const lb = lightOf(st.config), text = (MODES.find(m => m[0] === lb.mode) || MODES[2])[1];
   return '<div class="lbcap"><span class="lbname">燈條</span><button type="button" class="lbdd" data-act="lbopen" aria-haspopup="dialog" aria-expanded="' + LB.open +
     '" aria-label="燈條：' + text + '"><span class="lbtxt">' + text + '</span><i class="lbsep"></i><span class="lbarr">' + ARROW + '</span></button></div>';
@@ -67,9 +71,9 @@ export function capHTML(st) {
 // ─── The list, the 自訂 panel and the K2 picker ──────────────────────────────
 function colors(w, s) {
   let h = '<div class="lbslots">';
-  for (const [nm, hex] of PRESETS) h += '<button type="button" class="lbslot" data-act="lbset" data-which="' + w + '" data-k="color" data-v="' + hex + '" aria-label="' + nm + '" aria-pressed="' + same(hex, s.color) + '"><i style="background:' + hex + '"></i></button>';
+  for (const [nm, hex] of PRESETS) h += '<button type="button" class="lbslot" data-act="lbset" data-which="' + w + '" data-k="color" data-v="' + hex + '" aria-label="' + nm + '" title="' + nm + '" aria-pressed="' + same(hex, s.color) + '"><i style="background:' + hex + '"></i></button>';
   const own = !PRESETS.some(p => same(p[1], s.color));
-  return h + '<button type="button" class="lbslot lbadd" data-act="lbpickopen" data-which="' + w + '" aria-label="自訂顏色" aria-expanded="' + (LB.pick === w) + '" aria-pressed="' + (own || LB.pick === w) + '">' +
+  return h + '<button type="button" class="lbslot lbadd" data-act="lbpickopen" data-which="' + w + '" title="自訂" aria-label="自訂顏色" aria-expanded="' + (LB.pick === w) + '" aria-pressed="' + (own || LB.pick === w) + '">' +
     (own ? '<i style="background:' + s.color + '"></i>' : '') + '</button></div>';
 }
 const step = (w, k, text, label) => '<span class="lbstep" role="group" aria-label="' + label + '"><button type="button" class="lbkey" data-act="lbstep" data-which="' + w + '" data-k="' + k + '" data-d="-1" aria-label="' + label + '減少">' + ICON_L + '</button>' +
@@ -94,14 +98,14 @@ function pickerHTML(lb, w) {
   const s = lb[w], { hi, si } = pickerIndex(s.color), shade = hueCells(23), val = hueCells(si), sat = satCells(hi);
   const cell = (cls, v, bg, label, on) => '<button type="button" class="' + cls + '" data-act="lbset" data-which="' + w + '" data-k="color" data-v="' + v + '" aria-label="' + label + '" aria-pressed="' + on + '" style="background:' + bg + '"></button>';
   const hb = val.map((v, k) => cell('lbhb', v, shade[k], '色相 ' + k * 15, k === hi)).join('');
-  const sb = sat.map((v, k) => cell('lbsb', v, v, '飽和 ' + (k + 1), k === si)).join('');
+  const sb = sat.map((v, k) => cell('lbsb', v, v, '飽和度 ' + (k + 1), k === si)).join('');
   return '<section class="lbcpop" style="top:' + (w === 'kbm' ? 165 : 265) + 'px" role="dialog" aria-label="自訂顏色">' +
     '<div class="lbopt2"><span class="lbl">色相</span><div class="lbbar">' + hb + '</div></div><div class="lbopt2"><span class="lbl">飽和</span><div class="lbbar">' + sb + '</div></div>' +
     '<div class="lbcrow"><i class="lbprev" style="background:' + s.color + '"></i><input class="lbhexin" data-lbhex="' + w + '" value="' + s.color + '" maxlength="7" aria-label="色碼"></div></section>';
 }
 
 export function popHTML(st) {
-  if (st.pad !== 'dualsense' || !LB.open) return '';
+  if (st.pad !== 'dualsense' || st.medit || !LB.open) return '';
   const lb = lightOf(st.config), i = Math.max(0, MODES.findIndex(m => m[0] === lb.mode));
   const list = '<div class="lbdl" role="listbox" aria-label="燈條模式">' + MODES.map(([id, n]) => '<button type="button" class="lbli" role="option" data-act="lbmode" data-v="' + id +
     '" aria-pressed="' + (lb.mode === id) + '" aria-selected="' + (lb.mode === id) + '">' + n + (id === 'custom' ? '<span class="lbsub">' + ICON_R + '</span>' : '') + '</button>').join('') + '</div>';
