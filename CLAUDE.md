@@ -216,7 +216,7 @@ non-zero on any FAIL. Logs: `rust/target/verify/<layer>.log`.
 |---|---|
 | `linux` | `cargo test`, all suites, on the Linux dev host |
 | `windows-tests` | `cargo xwin test --no-run` (MSVC target); every test exe runs natively on Windows via WSL interop |
-| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept); killed by PID, temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
+| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept); closed gracefully (WM_CLOSE), which must log the engine shutdown, then cleaned up by PID (a launch whose exe PID is lost is killed by temp-dir path and FAILs); temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
 | `web` | the click-through recipe above, automated: `scripts/verify/web-smoke.mjs` (Playwright + cached Chromium, mocked `__TAURI__`); screenshots in `rust/target/verify/` |
 
 Flags: `--quick` (linux + windows-tests), `--skip-gui`, `--skip-web`,

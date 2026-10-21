@@ -340,29 +340,54 @@ PY
     LEGACY_MSG="old $LEGACY_CONFIG_NAME adopted"
 }
 
-# Launch the exe with --dry-run, stdout + stderr into <dir>\stdout.log; echo
-# its PID. The exe attaches to its parent's console at start (main.rs), which
+# PowerShell with its stderr appended to a log file (win_ps drops it).
+win_ps_logged() {
+    (cd /mnt/c && powershell.exe -NoProfile -NonInteractive -Command "$1" 2>>"$2") | tr -d '\r'
+}
+
+# Kill every exe of ours whose image lives under <win_dir> (this run's temp
+# dir), whatever its PID: a launch that lost track of the exe must not leave
+# it running. Prints what it killed.
+gui_kill_by_path() {
+    win_ps "Get-CimInstance Win32_Process -Filter \"Name='$GUI_EXE_NAME'\" | Where-Object { \$_.ExecutablePath -like '$1\\*' } | ForEach-Object { taskkill.exe /F /T /PID \$_.ProcessId }"
+}
+
+# Launch the exe with --dry-run, stdout + stderr into <dir>\stdout.log, and
+# set GUI_PID to the exe's PID. Call it in THIS shell, never inside $(...):
+# the exit trap / gui_cleanup must see GUI_PID (a subshell's assignment is
+# lost). The exe attaches to its parent's console at start (main.rs), which
 # replaces redirected handles, so the parent is a cmd.exe with no console
 # (DETACHED_PROCESS, created through WMI so it inherits none of this
 # PowerShell's handles: a Start-Process -Redirect* child holds the WSL pipe
-# open and the $(...) below would wait for the exe to exit).
+# open and a $(...) around it would wait for the exe to exit).
+# Returns 1 with the reason appended to $3 (the layer log); the exe is then
+# not left running.
 gui_launch_logged() {
-    local win_exe="$1" win_dir="$2" out cmd_pid pid="" deadline
-    out="$(win_ps "\$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{CreateFlags=[uint32]8; ShowWindow=[uint16]0};
+    local win_exe="$1" win_dir="$2" log="$3" out cmd_pid pid="" deadline
+    GUI_PID=""
+    out="$(win_ps_logged "\$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{CreateFlags=[uint32]8; ShowWindow=[uint16]0};
 \$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd.exe /d /c \"\"$win_exe\" --dry-run > \"$win_dir\\stdout.log\" 2>&1\"'; CurrentDirectory='$win_dir'; ProcessStartupInformation=\$si};
-if (\$r.ReturnValue -eq 0) { \$r.ProcessId }")"
+if (\$r.ReturnValue -eq 0) { \$r.ProcessId } else { Write-Error \"Win32_Process.Create returned \$(\$r.ReturnValue)\" }" "$log")"
     cmd_pid="$(echo "$out" | tail -n 1)"
     if ! [[ "$cmd_pid" =~ ^[0-9]+$ ]]; then
-        echo "$out"
+        echo "WMI launch gave no PID; output: $out" >>"$log"
         return 1
     fi
+    # Until the exe is found, the cmd.exe is what cleanup kills (taskkill /T
+    # takes its children with it).
+    GUI_PID="$cmd_pid"
     deadline=$((SECONDS + GUI_STARTUP_TIMEOUT_S))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        pid="$(win_ps "(Get-CimInstance Win32_Process -Filter \"Name='$GUI_EXE_NAME' AND ParentProcessId=$cmd_pid\").ProcessId")"
+        pid="$(win_ps_logged "(Get-CimInstance Win32_Process -Filter \"Name='$GUI_EXE_NAME' AND ParentProcessId=$cmd_pid\").ProcessId" "$log")"
         [[ "$pid" =~ ^[0-9]+$ ]] && break
         sleep 0.5
     done
-    echo "$pid"
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        echo "cmd.exe $cmd_pid started but no $GUI_EXE_NAME child within ${GUI_STARTUP_TIMEOUT_S}s; killing by path:" >>"$log"
+        gui_kill_by_path "$win_dir" >>"$log" 2>&1
+        return 1
+    fi
+    GUI_PID="$pid"
 }
 
 layer_gui_smoke() {
@@ -419,12 +444,9 @@ layer_gui_smoke() {
     # --dry-run: the window, config and watcher paths are identical, but a
     # paired controller on this desktop cannot type into the user's apps.
     # stdout carries the tracing log; the graceful-close step reads it.
-    GUI_PID="$(gui_launch_logged "$win_exe" "$win_dir")"
-    if ! [[ "$GUI_PID" =~ ^[0-9]+$ ]]; then
-        echo "launch output: $GUI_PID" >>"$log"
-        GUI_PID=""
+    if ! gui_launch_logged "$win_exe" "$win_dir" "$log"; then
         gui_cleanup
-        record gui-smoke FAIL "could not launch the exe (see log)"
+        record gui-smoke FAIL "could not launch the exe, or its process was not found (see log)"
         return
     fi
     echo "pid $GUI_PID" >>"$log"
