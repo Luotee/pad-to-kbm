@@ -135,7 +135,7 @@ export function startLightbar(board) {
     const lb = lightOf(state.config), w = el && el.dataset.which;
     if (a === 'lbmode') save({ ...lb, mode: el.dataset.v });
     else if (a === 'lbpickopen') { LB.pick = LB.pick === w ? null : w; rerender(); }
-    else if (a === 'lbset') save({ ...lb, [w]: { ...lb[w], [el.dataset.k]: el.dataset.v } });
+    else if (a === 'lbset') { if (el.dataset.k === 'effect' && LB.pick === w) LB.pick = null; save({ ...lb, [w]: { ...lb[w], [el.dataset.k]: el.dataset.v } }); }
     else if (a === 'lbstep') {
       const cur = { ...lb[w] }, k = el.dataset.k, d = +el.dataset.d;
       if (k === 'speed') cur.speed = SPEEDS[clamp(speedIx(cur) + d, 0, 3)];

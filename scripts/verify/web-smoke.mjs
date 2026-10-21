@@ -572,7 +572,10 @@ try {
     await act('鍵鼠時 彩虹 → kbm.effect rainbow', sec('kbm', 'effect', 'rainbow'), e => { e.kbm.effect = 'rainbow'; });
     check('K2 gone when the state is 彩虹', (await page.locator('#board .lbcpop').count()) === 0);
     await act('鍵鼠時 呼吸 → kbm.effect breathe', sec('kbm', 'effect', 'breathe'), e => { e.kbm.effect = 'breathe'; });
-    check('K2 (picker still selected) is back for 呼吸', (await page.locator('#board .lbcpop').count()) === 1);
+    check('K2 stays closed after an effect change (opens only from the 自訂 slot)', (await page.locator('#board .lbcpop').count()) === 0);
+    await page.click('#board .lbpop .lbadd[data-which="kbm"]');
+    await settle(page);
+    check('自訂 slot opens K2 again for 呼吸', (await page.locator('#board .lbcpop').count()) === 1);
     await page.screenshot({ path: path.join(outDir, 'web-lightbar-k2.png') });
 
     // Closing: only a click on the field again or outside; Esc does nothing.
