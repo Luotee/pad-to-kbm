@@ -390,6 +390,13 @@ const SUPPORTED_HID: &[(u16, u16, ControllerKind)] = &[
     (0x057e, 0x2009, ControllerKind::NsPro),
 ];
 
+/// The kind of a supported HID pad by (vendor id, product id), any bus.
+/// Shared with `hidhide::kind_for`, so the pads hidden from games are the
+/// pads this worker drives.
+pub(crate) fn kind_for_vid_pid(vid: u16, pid: u16) -> Option<ControllerKind> {
+    SUPPORTED_HID.iter().find(|(v, p, _)| vid == *v && pid == *p).map(|(_, _, kind)| *kind)
+}
+
 /// Whether a HID device is one this worker can drive, and as which kind.
 /// The DualSense matches on any bus (unchanged from v2.4.0). The Switch
 /// Pro matches only on Bluetooth: over USB it needs a separate 0x80
@@ -397,10 +404,7 @@ const SUPPORTED_HID: &[(u16, u16, ControllerKind)] = &[
 /// and would hold the worker forever. `BusType::Unknown` (hidapi could not
 /// classify the parent devnode) counts as not Bluetooth.
 fn is_candidate(vid: u16, pid: u16, bus: hidapi::BusType) -> Option<ControllerKind> {
-    let kind = SUPPORTED_HID
-        .iter()
-        .find(|(v, p, _)| vid == *v && pid == *p)
-        .map(|(_, _, kind)| *kind)?;
+    let kind = kind_for_vid_pid(vid, pid)?;
     match kind {
         ControllerKind::NsPro if !matches!(bus, hidapi::BusType::Bluetooth) => None,
         _ => Some(kind),

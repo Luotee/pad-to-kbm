@@ -651,9 +651,10 @@ pub fn set_pad_off_impl(engine: &Handle, kind: &str, off: bool) -> anyhow::Resul
     Ok(engine.off_pads().into_iter().map(|k| k.slug().to_string()).collect())
 }
 
-// ─── ViGEmBus (Switch 2 Pro Xbox output) ─────────────────────────────────────
+// ─── Xbox output: ViGEmBus + HidHide ─────────────────────────────────────────
 
-/// Tauri command: `"installed" | "missing" | "unsupported"`.
+/// Tauri command: `"installed" | "missing" | "unsupported"`. Kept for older
+/// callers; `get_xbox_status` reports both drivers.
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
 pub async fn get_vigem_status() -> Result<String, String> {
@@ -676,6 +677,65 @@ pub async fn install_vigem(engine: State<'_, Handle>) -> Result<String, String> 
         .map_err(|e| e.to_string())?;
     if status == "installed" {
         engine.retry_virtual_pad();
+    }
+    Ok(status.to_string())
+}
+
+/// What one pad's Xbox output needs and whether its real pad is hidden.
+/// `vigem` / `hidhide`: `"installed" | "missing" | "unsupported"`.
+/// `hidden`: `null` when not applicable (pad not in Xbox mode, Switch 2 Pro,
+/// HidHide missing or not used), `false` while it needs one reconnect or
+/// hiding is not applied yet, `true` when hidden.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct XboxStatus {
+    pub vigem: String,
+    pub hidhide: String,
+    pub hidden: Option<bool>,
+}
+
+/// Tauri command: [`XboxStatus`] for pad `kind` (slug). Probes both drivers
+/// off the UI thread.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub async fn get_xbox_status(engine: State<'_, Handle>, kind: String) -> Result<XboxStatus, String> {
+    let vigem = tauri::async_runtime::spawn_blocking(crate::vigem_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    let hidhide = tauri::async_runtime::spawn_blocking(crate::hidhide_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    xbox_status_impl(&engine, &kind, vigem, hidhide).map_err(|e| format!("{e:#}"))
+}
+
+/// Pure part of `get_xbox_status`, given the two probe results. Without a
+/// HidHide worker (dry run, not Windows) HidHide is `"unsupported"`: the app
+/// does not touch it then.
+pub fn xbox_status_impl(engine: &Handle, kind: &str, vigem: &str, hidhide: &str) -> anyhow::Result<XboxStatus> {
+    let k = ControllerKind::from_slug(kind).ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
+    let link = engine.hider();
+    let hidhide = if link.is_some() { hidhide } else { "unsupported" };
+    let hidden = match link {
+        Some(link) if hidhide == "installed" => link.hidden(k),
+        _ => None,
+    };
+    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden })
+}
+
+/// Tauri command: download the pinned official HidHide installer, verify it
+/// and run it (iron rule 7); returns the status after the installer exits.
+/// When installed, the hider runs a round now (and keeps retrying while the
+/// driver is not loaded yet).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub async fn install_hidhide(engine: State<'_, Handle>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(crate::hidhide_setup::install)
+        .await
+        .map_err(|e| e.to_string())??;
+    let status = tauri::async_runtime::spawn_blocking(crate::hidhide_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    if status == "installed" {
+        engine.retry_hiding();
     }
     Ok(status.to_string())
 }

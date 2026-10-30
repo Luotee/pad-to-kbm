@@ -21,7 +21,7 @@
 //! build and are tested on every platform; the driver, the device
 //! enumeration and the NT image path are Windows only and return
 //! [`Error::Unsupported`] (or nothing) elsewhere. The hider worker that
-//! drives all this lives in the engine (T2b), not here.
+//! drives all this is `hider.rs`.
 
 use crate::file_names::HIDHIDE_STATE_FILE;
 use crate::gamepad::controller::ControllerKind;
@@ -126,19 +126,12 @@ fn hex_after_tag<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
     None
 }
 
-/// The pads the HID source drives, by (vendor id, product id). Mirrors the
-/// private `SUPPORTED_HID` in `gamepad/hid_source.rs`; keep the two in step.
-/// Only pads Windows has a native driver for are listed: the Switch 2 Pro
-/// (0x057E / 0x2069) is never hidden, and the DualSense Edge (0x0DF2) is not
-/// driven by the app.
-const HIDEABLE: &[(u16, u16, ControllerKind)] = &[
-    (0x054c, 0x0ce6, ControllerKind::DualSense),
-    (0x057e, 0x2009, ControllerKind::NsPro),
-];
-
-/// The kind of pad a HID device is, if it is one the app would hide.
+/// The kind of pad a HID device is, if it is one the app would hide: a pad
+/// the HID source drives (its own table, `hid_source::kind_for_vid_pid`)
+/// that Windows has a native driver for. The Switch 2 Pro (0x057E / 0x2069)
+/// is never hidden, and the DualSense Edge (0x0DF2) is not driven by the app.
 pub fn kind_for(vid: u16, pid: u16) -> Option<ControllerKind> {
-    HIDEABLE.iter().find(|(v, p, _)| *v == vid && *p == pid).map(|(_, _, k)| *k)
+    crate::gamepad::hid_source::kind_for_vid_pid(vid, pid).filter(|k| k.has_native_driver())
 }
 
 // ─── List merging ────────────────────────────────────────────────────────────
@@ -178,12 +171,18 @@ pub struct HideState {
     /// We turned Active on (and turn it off again once our entries are gone).
     #[serde(default)]
     pub activated_by_us: bool,
+    /// The NT image path we added to the whitelist (`None`: we added none,
+    /// it was there already, or the whitelist is inverted). Removed again
+    /// when Xbox output ends. Missing in state files written before v3.6.0
+    /// was finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whitelisted: Option<String>,
 }
 
 impl HideState {
     /// Nothing to undo.
     pub fn is_empty(&self) -> bool {
-        self.ids.is_empty() && !self.activated_by_us
+        self.ids.is_empty() && !self.activated_by_us && self.whitelisted.is_none()
     }
 
     /// The state file beside `config_path`.
@@ -788,7 +787,7 @@ mod tests {
     fn state_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("padtokbm.hidhide.json");
-        let st = HideState { ids: s(&[r"HID\VID_054C&PID_0CE6\7&A"]), activated_by_us: true };
+        let st = HideState { ids: s(&[r"HID\VID_054C&PID_0CE6\7&A"]), activated_by_us: true, whitelisted: None };
         st.save(&path).unwrap();
         assert_eq!(HideState::load(&path), st);
         assert!(!dir.path().join("padtokbm.hidhide.json.tmp").exists(), "no tmp left");
@@ -810,14 +809,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("padtokbm.hidhide.json");
         std::fs::write(&path, b"{\"ids\": [\"A\"]}").unwrap();
-        assert_eq!(HideState::load(&path), HideState { ids: s(&["A"]), activated_by_us: false });
+        assert_eq!(HideState::load(&path), HideState { ids: s(&["A"]), activated_by_us: false, whitelisted: None });
     }
 
     #[test]
     fn saving_an_empty_state_deletes_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("padtokbm.hidhide.json");
-        HideState { ids: s(&["A"]), activated_by_us: false }.save(&path).unwrap();
+        HideState { ids: s(&["A"]), activated_by_us: false, whitelisted: None }.save(&path).unwrap();
         assert!(path.exists());
         HideState::default().save(&path).unwrap();
         assert!(!path.exists());
@@ -826,9 +825,36 @@ mod tests {
     }
 
     #[test]
+    fn state_round_trips_the_whitelisted_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("padtokbm.hidhide.json");
+        let st = HideState {
+            ids: vec![],
+            activated_by_us: false,
+            whitelisted: Some(r"\Device\HarddiskVolume3\Games\PadToKBM.exe".into()),
+        };
+        st.save(&path).unwrap();
+        assert!(path.exists(), "a whitelist entry alone must still be undone later");
+        assert_eq!(HideState::load(&path), st);
+    }
+
+    #[test]
+    fn state_from_t2a_without_whitelisted_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("padtokbm.hidhide.json");
+        std::fs::write(&path, b"{\"ids\": [\"A\"], \"activated_by_us\": true}").unwrap();
+        assert_eq!(HideState::load(&path), HideState { ids: s(&["A"]), activated_by_us: true, whitelisted: None });
+    }
+
+    #[test]
+    fn state_with_only_a_whitelisted_path_is_not_empty() {
+        assert!(!HideState { whitelisted: Some("X".into()), ..Default::default() }.is_empty());
+    }
+
+    #[test]
     fn state_with_only_activated_by_us_is_not_empty() {
         // We turned Active on and must still turn it off later.
-        assert!(!HideState { ids: vec![], activated_by_us: true }.is_empty());
+        assert!(!HideState { ids: vec![], activated_by_us: true, whitelisted: None }.is_empty());
         assert!(HideState::default().is_empty());
     }
 

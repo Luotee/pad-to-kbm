@@ -3,8 +3,9 @@
 //! `run` is the top-level entry point for the GUI binary path.
 //! It starts the engine, builds the Tauri window, then blocks on the
 //! event loop. When the event loop ends (✕, tray Quit or the `quit` IPC),
-//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3), and
-//! the process exits with the event loop's exit code.
+//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3), then
+//! the HidHide worker undoes its hiding, and the process exits with the
+//! event loop's exit code.
 
 use crate::config::Config;
 use crate::config_io::ConfigDoc;
@@ -41,6 +42,9 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     safety::register_global(engine.handle().key_state());
     // Same for the virtual Xbox pad: the hook unplugs it.
     crate::xinput_sink::register_global(engine.handle().virtual_pad());
+    // HidHide (Xbox output): hides the real pad from games while it outputs
+    // Xbox; state file beside the config. Not on a dry run, not off Windows.
+    let hider = crate::hider::start_for(&engine.handle(), &opts.config_path, opts.dry_run);
     let handle = engine.handle();
 
     // Clone handle before the `move` setup closure so `.manage(handle_for_state)`
@@ -151,6 +155,8 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::set_pad_off,
             crate::gui::commands::get_vigem_status,
             crate::gui::commands::install_vigem,
+            crate::gui::commands::get_xbox_status,
+            crate::gui::commands::install_hidhide,
             crate::gui::commands::pause_mapper,
             crate::gui::commands::open_config_in_editor,
             crate::gui::commands::open_config_folder,
@@ -198,6 +204,9 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
         Ok(app) => app,
         Err(e) => {
             engine.shutdown();
+            if let Some(h) = hider {
+                h.stop();
+            }
             return Err(e).context("building the Tauri app");
         }
     };
@@ -208,6 +217,12 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     // Iron rule #3: shut the engine down before the process exits, so held
     // keys and mouse buttons are released (and the lightbar exit frame written).
     engine.shutdown();
+    // Then the real pad comes back: the virtual one is already gone, so a
+    // game never sees both. Waits at most ~2 s; a crash is undone at the
+    // next start from the state file.
+    if let Some(h) = hider {
+        h.stop();
+    }
     std::process::exit(code);
 }
 

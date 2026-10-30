@@ -7,6 +7,7 @@ pub mod gamepad;
 pub mod gui;
 pub mod hidhide;
 pub mod hidhide_setup;
+pub mod hider;
 pub mod installer;
 pub mod keyboard;
 pub mod mouse;

@@ -13,6 +13,7 @@ use crate::event_log::{self, EventLog};
 use crate::gamepad::lightbar::LightbarLive;
 use crate::gamepad::stick_cal::{StickCalTable, StickPositions, StickProbe};
 use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
+use crate::hider::HiderLink;
 use crate::keyboard::KeyboardSink;
 use crate::macro_engine::MacroEngine;
 use crate::mapper::{KeyAction, Mapper, Source};
@@ -166,6 +167,10 @@ struct HandleInner {
     pending_log_dir: Mutex<Option<PathBuf>>,
     /// One more virtual-pad plug attempt requested (`retry_virtual_pad`).
     retry_pad: AtomicBool,
+    /// The HidHide worker (`hider.rs`), when one runs (Windows, not dry run).
+    hider: RwLock<Option<HiderLink>>,
+    /// A worker was just attached: the engine sends it the current inputs.
+    hider_fresh: AtomicBool,
 }
 
 // ─── Handle (GUI-side) ───────────────────────────────────────────────────────
@@ -233,6 +238,38 @@ impl Handle {
     /// paused / off); clears `vigem_missing` until a plug fails again.
     pub fn retry_virtual_pad(&self) {
         self.inner.retry_pad.store(true, Ordering::SeqCst);
+    }
+
+    /// Feed the HidHide worker from now on: the engine sends it the kinds
+    /// wanted hidden and the connected kinds whenever either changes.
+    pub fn attach_hider(&self, link: HiderLink) {
+        *self.inner.hider.write().unwrap_or_else(|p| p.into_inner()) = Some(link);
+        self.inner.hider_fresh.store(true, Ordering::SeqCst);
+    }
+
+    /// The HidHide worker's link (`None`: no worker, e.g. dry run or not
+    /// Windows).
+    pub fn hider(&self) -> Option<HiderLink> {
+        self.inner.hider.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// One more HidHide round now (after HidHide was installed).
+    pub fn retry_hiding(&self) {
+        if let Some(link) = self.hider() {
+            link.retry();
+        }
+    }
+
+    /// A callback that re-sends the current controller status unchanged
+    /// (the frontend then re-probes `get_xbox_status`). Holds the engine
+    /// weakly; a no-op once it is gone or while no controller is connected.
+    pub fn status_notifier(&self) -> impl Fn() + Send + Sync + 'static {
+        let weak = Arc::downgrade(&self.inner);
+        move || {
+            if let Some(h) = weak.upgrade() {
+                republish_status(&h, |_| {});
+            }
+        }
     }
 
     pub fn set_paused(&self, v: bool) {
@@ -484,6 +521,8 @@ impl Engine {
             virtual_pad: Arc::downgrade(&pad),
             pending_log_dir: Mutex::new(None),
             retry_pad: AtomicBool::new(false),
+            hider: RwLock::new(None),
+            hider_fresh: AtomicBool::new(false),
         });
 
         let handle = Handle { inner: inner.clone() };
@@ -553,6 +592,10 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     let mut last_connected: Vec<ControllerKind> = Vec::new();
     // The `log_events` file (no folder until `Handle::set_log_dir`).
     let mut elog = EventLog::new(None);
+    // HidHide inputs: the kinds wanted hidden (from the live config) and the
+    // connected kinds last sent to the worker (`None`: not sent yet).
+    let mut hide_wanted = hide_wanted_kinds(&h.config.read().unwrap());
+    let mut hider_sent: Option<(Vec<ControllerKind>, Vec<ControllerKind>)> = None;
 
     while !h.shutdown.load(Ordering::SeqCst) {
         if let Some(dir) = h.pending_log_dir.lock().unwrap_or_else(|p| p.into_inner()).take() {
@@ -593,6 +636,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             h.stick_cal.replace_from(&cfg);
             h.lightbar.set_config(cfg.lightbar);
             mapper.replace_config(cfg.clone());
+            hide_wanted = hide_wanted_kinds(&cfg);
             last_config_gen = current_gen;
         }
 
@@ -775,6 +819,18 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             republish_status(&h, |s| s.connected = last_connected.clone());
         }
 
+        // ── HidHide worker: send its inputs when they change ────────────────
+        // Unbounded channel: never blocks the tick.
+        if h.hider_fresh.swap(false, Ordering::SeqCst) {
+            hider_sent = None;
+        }
+        if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
+            if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                link.update(hide_wanted.clone(), last_connected.clone());
+                hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
+            }
+        }
+
         // One pad report per tick at most.
         pad.flush();
 
@@ -800,6 +856,16 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
 /// known controller → Kbm.
 fn output_mode(h: &HandleInner, kind: Option<ControllerKind>) -> OutputMode {
     kind.map_or(OutputMode::Kbm, |k| h.config.read().unwrap().output_mode_for(k))
+}
+
+/// The kinds HidHide should hide: in Xbox output mode (whether connected or
+/// not, so a reconnect arrives hidden) and driven natively by Windows (the
+/// Switch 2 Pro is not, so a game cannot see it anyway).
+fn hide_wanted_kinds(cfg: &Config) -> Vec<ControllerKind> {
+    ControllerKind::ALL
+        .into_iter()
+        .filter(|k| k.has_native_driver() && cfg.output_mode_for(*k) == OutputMode::Xbox)
+        .collect()
 }
 
 /// Whether the session owner `kind` is switched off.
@@ -1163,6 +1229,20 @@ fn execute_action(
 mod tests {
     use super::*;
     use crate::config::OutputMode;
+
+    #[test]
+    fn hide_wanted_kinds_are_xbox_pads_with_a_native_driver() {
+        let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        cfg.output_mode.clear();
+        cfg.mapping_enabled.clear();
+        assert!(hide_wanted_kinds(&cfg).is_empty(), "default is kbm");
+        for k in ControllerKind::ALL {
+            cfg.output_mode.insert(k.slug().into(), OutputMode::Xbox);
+        }
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro]);
+        cfg.output_mode.insert("dualsense".into(), OutputMode::Pad);
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::NsPro]);
+    }
 
     #[test]
     fn wants_pad_truth_table() {

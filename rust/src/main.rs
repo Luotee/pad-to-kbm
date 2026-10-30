@@ -202,6 +202,7 @@ fn real_main(cli: &Cli) -> Result<()> {
         return app::run(cfg, app::RunOptions {
             dry_run: cli.dry_run,
             log_dir: cfg_path.parent().map(|d| d.to_path_buf()),
+            config_path: Some(cfg_path.clone()),
             shutdown,
         });
     }
