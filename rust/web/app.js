@@ -61,7 +61,7 @@ await startLive();
 startMacros(board);
 await startSettings(board);
 startCalibration();
-startVigem();
+await startVigem();
 startLightbar(board);
 paint();
 // Tag ink boxes are measured with the pixel font; re-measure once it loaded.

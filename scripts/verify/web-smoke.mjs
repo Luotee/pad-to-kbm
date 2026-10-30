@@ -96,8 +96,10 @@ function tauriMock({ config, version }) {
     config: clone(config),
     status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [] },
     sticks: null,
-    vigem: 'installed',          // get_vigem_status reply
-    vigemAfterInstall: 'installed',
+    // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
+    // installer leaves behind (install_vigem / install_hidhide reply).
+    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true },
+    after: { vigem: 'installed', hidhide: 'installed' },
   };
   window.__mock = state;
   window.__mockCalls = [];
@@ -173,9 +175,18 @@ function tauriMock({ config, version }) {
         c.macros[a.new] = c.macros[a.old]; delete c.macros[a.old]; renameRefs(a.old, a.new); changed(); return null;
       case 'delete_macro': delete c.macros[a.name]; renameRefs(a.name, null); changed(); return null;
       case 'set_settings': Object.assign(c, clone(a.settings)); changed(); return null;
-      case 'set_mapping_enabled': c.mapping_enabled[a.kind] = a.enabled; changed(); return null;
-      case 'get_vigem_status': return state.vigem;
-      case 'install_vigem': await new Promise(r => setTimeout(r, 150)); state.vigem = state.vigemAfterInstall; return state.vigem;
+      case 'set_output_mode':   // as ConfigDoc::set_output_mode: the slug's legacy mapping_enabled goes
+        c.output_mode = { ...(c.output_mode || {}), [a.kind]: a.mode };
+        if (c.mapping_enabled) { delete c.mapping_enabled[a.kind]; if (!Object.keys(c.mapping_enabled).length) delete c.mapping_enabled; }
+        changed(); return null;
+      case 'get_xbox_status': if (state.slowXbox) await new Promise(r => setTimeout(r, 200)); return clone(state.xbox);
+      case 'get_vigem_status': return state.xbox.vigem;
+      case 'install_vigem': case 'install_hidhide': {
+        const id = cmd === 'install_vigem' ? 'vigem' : 'hidhide';
+        await new Promise(r => setTimeout(r, 150));
+        state.xbox[id] = state.after[id];
+        return state.xbox[id];
+      }
       case 'set_pad_off': {
         // Runtime only (no config-changed); the engine re-sends the status.
         const off = new Set(state.status.off_pads || []);
@@ -261,10 +272,12 @@ try {
   check('Switch 2 Pro shows 30/31/32 and no touchpad slots', ['30', '31', '32'].every(k => ns2Slots.includes(k)) && !ns2Slots.includes('25'));
   check('pad choice saved as last_pad', (await lastCall(page, 'set_ui_prefs'))?.args?.prefs?.last_pad === 'ns2_pro');
   check('Switch 2 Pro maps to keys in the example config (v3.2.0 default)', !(await page.locator('#board').getAttribute('class')).split(' ').includes('off'));
-  await page.evaluate(() => { delete window.__mock.config.mapping_enabled.ns2_pro; });
+  check('example config carries output_mode, no mapping_enabled', !!exampleConfig.output_mode && exampleConfig.mapping_enabled === undefined);
+  await page.evaluate(() => { delete window.__mock.config.output_mode.ns2_pro; });
   await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
   await settle(page);
-  check('missing mapping_enabled.ns2_pro → keys (not off)', !(await page.locator('#board').getAttribute('class')).split(' ').includes('off'));
+  check('missing output_mode.ns2_pro → keys (not off)', !(await page.locator('#board').getAttribute('class')).split(' ').includes('off'));
+  await page.evaluate(() => { window.__mock.config.output_mode.ns2_pro = 'kbm'; });
 
   await tile(page, 'Q').dragTo(slot(page, '0'));
   await settle(page);
@@ -365,7 +378,7 @@ try {
   await page.click('#board [data-act="rumble"]');
   await settle(page);
   check('連線震動 → set_rumble_on_connect false', (await lastCall(page, 'set_rumble_on_connect'))?.args?.enabled === false);
-  // Output capsule 關｜鍵鼠｜手把 (v3.2.0).
+  // Output capsule 關｜鍵鼠｜手把 (v3.2.0); Xbox for every pad (v3.6.0).
   const modeOf = async () => page.locator('#board .omode [aria-pressed="true"]').getAttribute('data-mode');
   const banner = async () => ((await page.locator('#board .obanner').textContent().catch(() => '')) || '').trim();
   const dimmed = () => page.evaluate(() => document.getElementById('board').classList.contains('off'));
@@ -397,9 +410,25 @@ try {
     check(`${what}: no edit reached the backend`, after === before, `${before} → ${after}`);
     check(`${what}: header still works (capsule clickable)`, await page.locator('#board .omode [data-mode="kbm"]').isEnabled());
   }
-  check('capsule shows 鍵鼠 for a fresh config', (await modeOf()) === 'kbm' && (await page.locator('#board .omode button').count()) === 3);
+  check('capsule shows 鍵鼠 for a fresh config', (await modeOf()) === 'kbm' && (await page.locator('#board .omode button').count()) === 4);
   check('no 鍵鼠對應 switch any more', (await page.locator('#board [data-act="map"]').count()) === 0);
-  check('DualSense third segment reads 手把', ((await page.locator('#board .omode [data-mode="pad"]').textContent()) || '').trim() === '手把');
+  // v3.6.0: 關｜鍵鼠｜Xbox｜手把, left to right, on every pad.
+  const segs = () => page.evaluate(() => [...document.querySelectorAll('#board .omode button')].map(b => {
+    const r = b.getBoundingClientRect();
+    return { mode: b.dataset.mode, text: b.textContent.trim(), dis: b.getAttribute('aria-disabled'), title: b.title, l: r.left, r: r.right };
+  }));
+  {
+    const sg = await segs();
+    check('capsule segments 關 / 鍵鼠 / Xbox / 手把 in order', JSON.stringify(sg.map(x => x.mode + ':' + x.text)) === '["off:關","kbm:鍵鼠","xbox:Xbox","pad:手把"]' &&
+      sg.every((x, i) => i === 0 || x.l >= sg[i - 1].r - 0.5), JSON.stringify(sg.map(x => [x.mode, x.l, x.r])));
+    check('DualSense: no segment disabled; Xbox title names both drivers', sg.every(x => x.dis === null) && sg[2].title === '遊戲看到一支 Xbox 手把（需要 ViGEmBus、HidHide）', JSON.stringify(sg));
+    const fits = await page.evaluate(() => {
+      const o = document.querySelector('#board .omode').getBoundingClientRect(), h = document.querySelector('#board .hdr').getBoundingClientRect();
+      const kids = [...document.querySelectorAll('#board .omode button')].map(b => b.getBoundingClientRect());
+      return o.left >= h.left && o.right <= h.right && kids.every(k => k.left >= o.left - 0.5 && k.right <= o.right + 0.5);
+    });
+    check('capsule fits inside the header, segments inside the capsule', fits);
+  }
   await page.click('#board .omode [data-mode="off"]');
   await settle(page);
   const po = await lastCall(page, 'set_pad_off');
@@ -407,23 +436,24 @@ try {
   check('關 shows the gold banner', (await banner()) === '這支手把已關閉' && (await page.locator('#board .obanner.gold').count()) === 1 && (await modeOf()) === 'off', await banner());
   check('關 dims the board', await dimmed());
   await page.screenshot({ path: path.join(outDir, 'web-mode-off.png') });
-  check('關 does not write the config', (await countCalls(page, 'set_mapping_enabled')) === 0);
+  check('關 does not write the config', (await countCalls(page, 'set_output_mode')) === 0);
   // Not 鍵鼠 → the board is locked (v3.2.1): nothing below the header edits.
   check('關 banner sits at the stage centre (490, 228 on the board)', await bannerCentred(), JSON.stringify(await bannerBox()));
   await expectLocked('關');
   await page.click('#board .omode [data-mode="pad"]');
   await settle(page);
-  const offBack = await lastCall(page, 'set_pad_off'), me = await lastCall(page, 'set_mapping_enabled');
+  const offBack = await lastCall(page, 'set_pad_off'), me = await lastCall(page, 'set_output_mode');
   check('手把 clears 關 (set_pad_off false)', offBack?.args?.kind === 'dualsense' && offBack.args.off === false, JSON.stringify(offBack?.args));
-  check('手把 sends set_mapping_enabled(pad,false)', me?.args?.kind === 'dualsense' && me.args.enabled === false, JSON.stringify(me?.args));
+  check('手把 sends set_output_mode(dualsense, pad)', me?.args?.kind === 'dualsense' && me.args.mode === 'pad', JSON.stringify(me?.args));
   check('手把 shows the white banner', (await banner()) === '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用' && (await page.locator('#board .obanner.white').count()) === 1, await banner());
   check('手把 dims the board', (await dimmed()) && (await modeOf()) === 'pad');
   check('手把 banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
+  check('手把 asks nothing about Xbox drivers', (await countCalls(page, 'get_xbox_status')) === 0);
   await expectLocked('手把');
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
-  const mk = await lastCall(page, 'set_mapping_enabled');
-  check('鍵鼠 sends set_mapping_enabled(pad,true)', mk?.args?.kind === 'dualsense' && mk.args.enabled === true, JSON.stringify(mk?.args));
+  const mk = await lastCall(page, 'set_output_mode');
+  check('鍵鼠 sends set_output_mode(dualsense, kbm)', mk?.args?.kind === 'dualsense' && mk.args.mode === 'kbm', JSON.stringify(mk?.args));
   check('鍵鼠: no banner, not dimmed', (await page.locator('#board .obanner').count()) === 0 && !(await dimmed()));
   check('鍵鼠 unlocks the board', !(await locked()) && !(await page.locator('#board [data-act="clear"]').isDisabled()));
   {
@@ -441,66 +471,220 @@ try {
     (await page.locator('#board .capbar').count()) === 0 && (await lastCall(page, 'set_capture_active'))?.args?.active === false);
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
+  // Pre-3.6.0 configs: a pad missing from output_mode falls back to mapping_enabled (false = 手把).
+  await page.evaluate(() => { const c = window.__mock.config; delete c.output_mode.dualsense; c.mapping_enabled = { dualsense: false }; window.__mockEmit('config-changed', { source: 'external' }); });
+  await settle(page);
+  check('legacy mapping_enabled.dualsense=false shows 手把', (await modeOf()) === 'pad');
+  await page.evaluate(() => { const c = window.__mock.config; delete c.mapping_enabled; c.output_mode.dualsense = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
+  await settle(page);
+  // Switch 2 Pro: Windows has no driver for it, so 手把 stays in place but greyed and inert.
   await page.click('#board [data-pad="ns2_pro"]');
   await settle(page);
-  check('NS2 third segment reads Xbox', ((await page.locator('#board .omode [data-mode="pad"]').textContent()) || '').trim() === 'Xbox');
-  await page.evaluate(() => { window.__mock.config.mapping_enabled.ns2_pro = false; window.__mockEmit('config-changed', { source: 'external' }); });
+  {
+    const sg = await segs();
+    check('NS2: same four segments, 手把 aria-disabled with the reason as its title',
+      JSON.stringify(sg.map(x => x.mode + ':' + x.text + ':' + x.dis)) === '["off:關:null","kbm:鍵鼠:null","xbox:Xbox:null","pad:手把:true"]' &&
+      sg[3].title === 'Windows 認不得 Switch 2 Pro，遊戲讀不到它；要用手把玩請選 Xbox' && sg[2].title === '遊戲看到一支 Xbox 手把（需要 ViGEmBus）', JSON.stringify(sg));
+    check('NS2 手把 is drawn grey', await page.evaluate(() => getComputedStyle(document.querySelector('#board .omode [data-mode="pad"]')).color === 'rgb(169, 180, 192)'));
+    const n0 = (await calls(page)).length;
+    await page.click('#board .omode [data-mode="pad"]', { force: true });
+    await settle(page);
+    check('NS2 手把 click sends no IPC and keeps 鍵鼠', (await calls(page)).length === n0 && (await modeOf()) === 'kbm');
+  }
+  await page.evaluate(() => { const c = window.__mock.config; delete c.output_mode.ns2_pro; c.mapping_enabled = { ns2_pro: false }; window.__mockEmit('config-changed', { source: 'external' }); });
+  await settle(page);
+  check('legacy mapping_enabled.ns2_pro=false shows Xbox', (await modeOf()) === 'xbox');
+  await page.evaluate(() => { const c = window.__mock.config; delete c.mapping_enabled; c.output_mode.ns2_pro = 'xbox'; window.__mockEmit('config-changed', { source: 'external' }); });
   await settle(page);
   await page.screenshot({ path: path.join(outDir, 'web-mode-xbox.png') });
   check('NS2 in Xbox mode shows the Xbox banner', (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
   check('Xbox banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
+  check('a pad in Xbox mode asks get_xbox_status for itself', (await lastCall(page, 'get_xbox_status'))?.args?.kind === 'ns2_pro');
   await expectLocked('Xbox');
-  await page.evaluate(() => { window.__mock.config.mapping_enabled.ns2_pro = true; window.__mockEmit('config-changed', { source: 'external' }); });
+  await page.evaluate(() => { window.__mock.config.output_mode.ns2_pro = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
   await settle(page);
   await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: ['ns2_pro'] }); });
   await settle(page);
   check('off_pads from controller-status selects 關', (await modeOf()) === 'off');
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
-  // ViGEmBus prompt (Switch 2 Pro, Xbox).
+
+  // ── v3.6.0: Xbox output prompt (ViGEmBus for every pad, HidHide for DualSense / Switch Pro) ──
   const pop = () => page.locator('#board .vgpop');
-  await page.evaluate(() => { window.__mock.vigem = 'missing'; });
-  await page.click('#board .omode [data-mode="pad"]');
+  const popBtns = () => page.locator('#board .vgpop button').allTextContents();
+  const popRows = () => page.locator('#board .vgpop .vgl li').evaluateAll(els => els.map(e => e.querySelector('.vgn').textContent + ':' + e.querySelector('.vgs').textContent));
+  const bang = () => page.locator('#board .hdr .vgbang');
+  const setXbox = (x, after) => page.evaluate(([x, after]) => { Object.assign(window.__mock.xbox, x); if (after) Object.assign(window.__mock.after, after); }, [x, after || null]);
+  const installs = async () => (await calls(page)).filter(c => /^install_/.test(c.cmd)).map(c => c.cmd);
+  // The pointer's centre (the rotated square's centre) against the Xbox segment's centre, in board px.
+  const pointer = () => page.evaluate(() => {
+    const p = document.querySelector('#board .vgpop'), x = document.querySelector('#board .omode [data-mode="xbox"]');
+    const pr = p.getBoundingClientRect(), xr = x.getBoundingClientRect(), b = document.getElementById('board').getBoundingClientRect();
+    const cs = getComputedStyle(p), bs = getComputedStyle(p, '::before');
+    const w = parseFloat(bs.width) + parseFloat(bs.borderLeftWidth) + parseFloat(bs.borderRightWidth);
+    const apex = pr.right - parseFloat(cs.borderRightWidth) - parseFloat(bs.right) - w / 2;
+    return { apex: apex - b.left, seg: (xr.left + xr.right) / 2 - b.left, popL: pr.left - b.left, popR: pr.right - b.left };
+  });
+  await page.click('#board [data-pad="dualsense"]');
   await settle(page);
-  check('Xbox with ViGEmBus missing opens the popover', (await pop().count()) === 1 && /這台還沒有 ViGEmBus/.test(await pop().textContent()) && (await countCalls(page, 'get_vigem_status')) >= 1);
-  await page.screenshot({ path: path.join(outDir, 'web-vigem.png') });
-  check('popover has 稍後 / 改回鍵鼠 / 安裝 ViGEmBus',
-    JSON.stringify(await page.locator('#board .vgpop button').allTextContents()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 ViGEmBus']));
+  await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null }, { vigem: 'installed', hidhide: 'installed' });
+  await page.click('#board .omode [data-mode="xbox"]');
+  await settle(page);
+  {
+    const xm = await lastCall(page, 'set_output_mode');
+    check('Xbox on DualSense sends set_output_mode(dualsense, xbox)', xm?.args?.kind === 'dualsense' && xm.args.mode === 'xbox', JSON.stringify(xm?.args));
+    check('Xbox with both drivers missing opens the popover', (await pop().count()) === 1 && (await lastCall(page, 'get_xbox_status'))?.args?.kind === 'dualsense');
+    const t = ((await pop().textContent()) || '');
+    check('DualSense popover: one row per driver, both 未安裝', JSON.stringify(await popRows()) === '["ViGEmBus:未安裝","HidHide:未安裝"]' &&
+      t.includes('要讓遊戲把 DualSense 當成 Xbox 手把，需要這兩個：') && t.includes('把原本的 DualSense 對遊戲藏起來') && t.includes('都是官方安裝程式，各約 1 分鐘'), t);
+    check('popover has 稍後 / 改回鍵鼠 / 安裝這兩個', JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝這兩個']), JSON.stringify(await popBtns()));
+    const pt = await pointer();
+    // The segment is 61 px wide (centre on a half pixel), the pointer's box 12 px: the apex is 0.5 px right of it.
+    check('popover pointer sits on the Xbox segment (centre 826.5 on the board = 833.5 in the window)', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.seg === 826.5, JSON.stringify(pt));
+    check('popover lies inside the board', pt.popL >= 0 && pt.popR <= 980, JSON.stringify(pt));
+    check('no banner under the popover while drivers are missing', (await page.locator('#board .obanner').count()) === 0);
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-both.png') });
+  }
   await page.click('#board [data-act="vglater"]');
   await settle(page);
-  await page.screenshot({ path: path.join(outDir, 'web-vigem-bang.png') });
-  check('稍後 closes it and leaves the !', (await pop().count()) === 0 && (await page.locator('#board .hdr .vgbang').count()) === 1);
-  await page.click('#board .hdr .vgbang');
+  check('稍後 closes it and leaves the !', (await pop().count()) === 0 && (await bang().count()) === 1);
+  {
+    // A config-changed / controller-status refresh keeps a popover the user closed closed.
+    const n = await countCalls(page, 'get_xbox_status');
+    await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
+    await settle(page);
+    check('a refresh after 稍後 re-probes once and does not reopen', (await countCalls(page, 'get_xbox_status')) === n + 1 && (await pop().count()) === 0 && (await bang().count()) === 1,
+      `${n} → ${await countCalls(page, 'get_xbox_status')}`);
+  }
+  await bang().click();
   await settle(page);
   check('the ! reopens it', (await pop().count()) === 1);
-  await page.evaluate(() => { window.__mock.vigemAfterInstall = 'missing'; });
-  await page.click('#board [data-act="vginstall"]');
-  await page.waitForTimeout(40);
-  check('安裝 shows 安裝中…', ((await page.locator('#board [data-act="vginstall"]').textContent()) || '').trim() === '安裝中…');
-  await page.waitForTimeout(300);
-  check('a failed install keeps the popover with an error line', (await pop().count()) === 1 && (await page.locator('#board .vgpop .vgerr').count()) === 1);
-  await page.evaluate(() => { window.__mock.vigemAfterInstall = 'installed'; });
-  await page.click('#board [data-act="vginstall"]');
-  await page.waitForTimeout(350);
-  check('安裝 calls install_vigem and closes on installed', (await countCalls(page, 'install_vigem')) === 2 && (await pop().count()) === 0 && (await page.locator('#board .hdr .vgbang').count()) === 0);
-  check('installed → Xbox banner shows', (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
-  // 改回鍵鼠 from the popover.
+  // A clean run: ViGEmBus, then HidHide, then one status probe; the popover closes.
+  {
+    const n0 = (await calls(page)).length;
+    await page.click('#board [data-act="vginstall"]');
+    await page.waitForTimeout(40);
+    check('安裝 shows 安裝中… with every button disabled', ((await page.locator('#board [data-act="vginstall"]').textContent()) || '').trim() === '安裝中…' &&
+      (await page.locator('#board .vgpop button:disabled').count()) === 3);
+    await page.waitForTimeout(450);
+    const seq = (await calls(page)).slice(n0).map(c => c.cmd).filter(c => /^install_|^get_xbox_status$/.test(c));
+    check('安裝這兩個 runs install_vigem, install_hidhide, then get_xbox_status', JSON.stringify(seq.slice(0, 3)) === '["install_vigem","install_hidhide","get_xbox_status"]', JSON.stringify(seq));
+    check('installed → popover and ! gone, Xbox banner shows', (await pop().count()) === 0 && (await bang().count()) === 0 &&
+      (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
+  }
+  // The pad was present before it was hidden: the reconnect hint, until a reconnect.
+  await setXbox({ hidden: false });
+  await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+  await settle(page);
+  {
+    const t = await banner();
+    check('hidden:false shows the reconnect banner (with the ⏻)', t === '再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的  斷開，再按 PS 鍵連回來' &&
+      (await page.locator('#board .obanner.rc svg').count()) === 1, t);
+    check('reconnect banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
+    const fits = await page.evaluate(() => { const b = document.querySelector('#board .obanner.rc').getBoundingClientRect(), s = document.getElementById('board').getBoundingClientRect(); return b.left >= s.left && b.right <= s.right; });
+    check('reconnect banner fits the board', fits);
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect.png') });
+  }
+  {
+    await setXbox({ hidden: true });
+    const n = await countCalls(page, 'get_xbox_status');
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await settle(page);
+    check('hidden:true after a reconnect: one re-probe, the reconnect banner clears', (await countCalls(page, 'get_xbox_status')) === n + 1 &&
+      (await page.locator('#board .obanner.rc').count()) === 0 && (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', `${n} → ${await countCalls(page, 'get_xbox_status')} ${await banner()}`);
+  }
+  {
+    // Events while a probe is in flight: no second probe at once, one follow-up after it.
+    await page.evaluate(() => { const s = window.__mock; s.slowXbox = true; });
+    const n = await countCalls(page, 'get_xbox_status');
+    await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); });
+    await page.waitForTimeout(500);
+    const m = await countCalls(page, 'get_xbox_status');
+    check('five events during a slow probe → at most two probes', m - n >= 1 && m - n <= 2, `${n} → ${m}`);
+    await page.evaluate(() => { window.__mock.slowXbox = false; });
+  }
+  // Failures keep the popover open with the reason.
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
-  await page.evaluate(() => { window.__mock.vigem = 'missing'; });
-  await page.click('#board .omode [data-mode="pad"]');
+  await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null }, { vigem: 'missing', hidhide: 'installed' });
+  await page.click('#board .omode [data-mode="xbox"]');
   await settle(page);
+  {
+    const i0 = (await installs()).length;
+    await page.click('#board [data-act="vginstall"]');
+    await page.waitForTimeout(350);
+    const err = ((await page.locator('#board .vgpop .vgerr').textContent().catch(() => '')) || '').trim();
+    check('ViGEmBus still missing after its installer: error line, HidHide not tried', (await pop().count()) === 1 &&
+      err === 'ViGEmBus 還沒裝好，可以再試一次（狀態：missing）' && JSON.stringify((await installs()).slice(i0)) === '["install_vigem"]', err);
+  }
+  await setXbox({}, { vigem: 'installed' });
+  await page.evaluate(() => { window.__mockFail.install_hidhide = '下載失敗（0x80072EE7）'; });
+  {
+    const i0 = (await installs()).length;
+    await page.click('#board [data-act="vginstall"]');
+    await page.waitForTimeout(350);
+    const err = ((await page.locator('#board .vgpop .vgerr').textContent().catch(() => '')) || '').trim();
+    check('a rejected install_hidhide shows its message, popover stays', (await pop().count()) === 1 && err === '安裝失敗：下載失敗（0x80072EE7）' &&
+      JSON.stringify((await installs()).slice(i0)) === '["install_vigem","install_hidhide"]', err);
+    check('after ViGEmBus went in: its row 已安裝, the button 安裝 HidHide', JSON.stringify(await popRows()) === '["ViGEmBus:已安裝","HidHide:未安裝"]' &&
+      JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 HidHide']), JSON.stringify(await popBtns()));
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-error.png') });
+  }
+  {
+    const i0 = (await installs()).length;
+    await page.click('#board [data-act="vginstall"]');
+    await page.waitForTimeout(350);
+    check('安裝 HidHide runs only install_hidhide and closes on installed', JSON.stringify((await installs()).slice(i0)) === '["install_hidhide"]' && (await pop().count()) === 0);
+  }
+  // 改回鍵鼠 from the popover; only HidHide missing (Switch Pro).
+  await page.click('#board .omode [data-mode="kbm"]');
+  await settle(page);
+  await page.click('#board [data-pad="ns_pro"]');
+  await settle(page);
+  await setXbox({ vigem: 'installed', hidhide: 'missing', hidden: null });
+  await page.click('#board .omode [data-mode="xbox"]');
+  await settle(page);
+  {
+    const t = ((await pop().textContent()) || '');
+    check('only HidHide missing: ViGEmBus 已安裝, button 安裝 HidHide', (await pop().count()) === 1 && JSON.stringify(await popRows()) === '["ViGEmBus:已安裝","HidHide:未安裝"]' &&
+      JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 HidHide']) && t.includes('把原本的 Switch Pro 對遊戲藏起來') && t.includes('官方安裝程式，約 1 分鐘') && !t.includes('各約'), t);
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-hidhide.png') });
+  }
   await page.click('#board [data-act="vgkbm"]');
   await settle(page);
-  const back = await lastCall(page, 'set_mapping_enabled');
-  check('改回鍵鼠 sends set_mapping_enabled(ns2_pro,true)', back?.args?.kind === 'ns2_pro' && back.args.enabled === true && (await pop().count()) === 0, JSON.stringify(back?.args));
-  await page.evaluate(() => { window.__mock.vigem = 'installed'; });
-  await page.click('#board .omode [data-mode="pad"]');
+  const back = await lastCall(page, 'set_output_mode');
+  check('改回鍵鼠 sends set_output_mode(ns_pro, kbm)', back?.args?.kind === 'ns_pro' && back.args.mode === 'kbm' && (await pop().count()) === 0 && (await modeOf()) === 'kbm', JSON.stringify(back?.args));
+  // Switch 2 Pro: ViGEmBus only, and never the reconnect hint.
+  await page.click('#board [data-pad="ns2_pro"]');
   await settle(page);
-  check('installed → no popover', (await pop().count()) === 0 && (await page.locator('#board .hdr .vgbang').count()) === 0);
+  await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null }, { vigem: 'installed', hidhide: 'missing' });
+  await page.click('#board .omode [data-mode="xbox"]');
+  await settle(page);
+  {
+    const t = ((await pop().textContent()) || '');
+    check('NS2 popover: only the ViGEmBus row, button 安裝 ViGEmBus', (await pop().count()) === 1 && JSON.stringify(await popRows()) === '["ViGEmBus:未安裝"]' &&
+      JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 ViGEmBus']) && t.includes('要讓遊戲把 Switch 2 Pro 當成 Xbox 手把，需要：') && !t.includes('HidHide'), t);
+    const pt = await pointer();
+    check('NS2 popover pointer on the Xbox segment too', Math.abs(pt.apex - pt.seg) <= 0.5, JSON.stringify(pt));
+    await page.screenshot({ path: path.join(outDir, 'web-vigem.png') });
+    const i0 = (await installs()).length;
+    await page.click('#board [data-act="vginstall"]');
+    await page.waitForTimeout(350);
+    check('NS2 安裝 ViGEmBus runs install_vigem only and closes', JSON.stringify((await installs()).slice(i0)) === '["install_vigem"]' && (await pop().count()) === 0 && (await bang().count()) === 0);
+  }
+  await setXbox({ hidden: false });
+  await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+  await settle(page);
+  check('NS2 never shows the reconnect banner', (await page.locator('#board .obanner.rc').count()) === 0 && (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
+  await page.click('#board .omode [data-mode="kbm"]');
+  await settle(page);
+  await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
+  await page.click('#board .omode [data-mode="xbox"]');
+  await settle(page);
+  check('installed → no popover', (await pop().count()) === 0 && (await bang().count()) === 0);
   await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'ns2_pro', connected_pads: ['dualsense', 'ns2_pro'], warnings: ['vigem_missing'], off_pads: [] }); });
   await settle(page);
-  check('live vigem_missing warning shows the !', (await page.locator('#board .hdr .vgbang').count()) === 1);
+  check('live vigem_missing warning shows the !', (await bang().count()) === 1);
   await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); });
   await page.click('#board [data-pad="ns2_pro"]');
   await page.click('#board .omode [data-mode="kbm"]');

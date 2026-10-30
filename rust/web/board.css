@@ -234,10 +234,11 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .obanner.gold{height:34px;padding:0 16px;background:var(--gold);border:2px solid #7a5c00;color:#3a2a00;font-size:14px}
 .mock .obanner.white{height:30px;padding:0 14px;background:var(--white);border:2px solid var(--navy2);color:var(--ink);font-size:12px}
 
-/* ViGEmBus prompt (mockup output-mode card B). */
+/* Xbox output prompt (mockup output-mode card B). The pointer sits on the Xbox segment, whose centre
+   is 88+6 px in from the popover's right edge. */
 .mock .vgbang{display:flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border-radius:50%;background:var(--gold);border:2px solid #7a5c00;color:#3a2a00;font:inherit;font-size:11px;line-height:1;cursor:pointer;flex:none;margin-left:-6px}
-.mock .vgpop{position:absolute;right:58px;top:50px;width:300px;z-index:9;background:var(--white);border:3px solid var(--navy2);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;font-size:11px;line-height:1.55;color:var(--ink)}
-.mock .vgpop::before{content:'';position:absolute;top:-9px;right:40px;width:12px;height:12px;background:var(--white);border-left:3px solid var(--navy2);border-top:3px solid var(--navy2);transform:rotate(45deg)}
+.mock .vgpop{position:absolute;right:58px;top:50px;width:372px;z-index:9;background:var(--white);border:3px solid var(--navy2);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;font-size:11px;line-height:1.55;color:var(--ink)}
+.mock .vgpop::before{content:'';position:absolute;top:-9px;right:88px;width:12px;height:12px;background:var(--white);border-left:3px solid var(--navy2);border-top:3px solid var(--navy2);transform:rotate(45deg)}
 .mock .vgpop b{font-weight:400;color:var(--pinkhi)}
 .mock .vgpop .vgerr{margin-top:4px;color:var(--red)}
 .mock .vgpop .vgbtns{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
@@ -363,8 +364,11 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 /* Q9 A steel (user): mode notices drawn like the reference KEY BINDINGS title bar; every pressed mode button is rose. */
 .mock .obanner.gold,.mock .obanner.white{height:auto;padding:4px 12px;gap:6px;border:1px solid #677888;border-radius:4px;background:#fcffff;color:#000;font-size:12px;box-shadow:0 0 0 2px #9cb1c8,0 0 0 3px #677888}
 .mock .omode .o-off[aria-pressed="true"],.mock .omode .o-pad[aria-pressed="true"],.mock .omode .o-xbox[aria-pressed="true"]{background:linear-gradient(#e96785,#e86780 80%,#da6075);box-shadow:inset 0 0 0 1px #0b0000,inset 1px 1px 0 1px #ffedfa;text-shadow:var(--ol-rose);color:#fff}
-/* 手把 and Xbox share one slot, so the controls left of it keep their place between pad tabs. */
+/* Xbox and 手把 are fixed-width, so the capsule is the same on every pad tab. */
 .mock .omode .o-pad,.mock .omode .o-xbox{width:61px;justify-content:center}
+/* No native driver (Switch 2 Pro): 手把 stays in place, greyed; its title says why. */
+.mock .omode button[aria-disabled="true"]{color:#a9b4c0;cursor:default}
+.mock .omode button[aria-disabled="true"] svg{opacity:.7}
 
 /* Q10 fade 1 (user): keys already bound on this pad turn pale but stay draggable (the harness adds .used). */
 .mock .pal .tile.used:not(.mac){background:#dcc9d0;border-color:#8a6f7c;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f6eef1,inset -1px -1px 0 #c0a9b2;color:#fff;text-shadow:0 1px 0 #8a6f7c,1px 1px 0 #8a6f7cbf,1px 0 0 #8a6f7c80}
@@ -550,3 +554,13 @@ html,body,#app{background:transparent !important}
 .mock .lbcpop .lbxk{padding-top:4px}
 .mock .lbprev{display:block;width:18px;height:18px;box-sizing:border-box;border:1px solid #2b2f3a;box-shadow:inset 1px 1px 0 rgba(255,255,255,.5)}
 .mock .lbhexin{width:72px;height:18px;box-sizing:border-box;padding:3px 0 0;font:inherit;font-size:11px;line-height:11px;text-align:center;color:#000;border:1px solid #a1a4a3;border-radius:0;outline:0;background:var(--cream)}
+/* Xbox prompt: one row per driver (v3.6.0). */
+.mock .vgpop .vgl{list-style:none;margin:6px 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.mock .vgpop .vgl li{display:grid;grid-template-columns:64px 1fr auto;column-gap:8px;align-items:center;padding:3px 6px;background:#fcffff;border:1px solid #9cb1c8}
+.mock .vgpop .vgn{color:#000}
+.mock .vgpop .vgw{color:#3b4350}
+.mock .vgpop .vgl li.no .vgs{color:#b40704}
+.mock .vgpop .vgl li.ok .vgs{color:#2c6e28}
+.mock .vgpop .vgnote{color:#3b4350}
+/* The reconnect hint carries the tab's power icon inline. */
+.mock .obanner.rc span{display:flex;align-items:center;gap:3px}

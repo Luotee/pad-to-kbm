@@ -50,7 +50,7 @@ export function wire(board) {
     }
     const a = el.dataset.act, c = state.config;
     if (a === 'rumble') act.setRumble(c.rumble_on_connect === false);
-    else if (a === 'mode') act.setMode(el.dataset.mode);
+    else if (a === 'mode') { if (el.getAttribute('aria-disabled') !== 'true') act.setMode(el.dataset.mode); }
     else if (a === 'tp') act.setTouchpadCursor(c.touchpad_cursor_enabled === false);
     else if (a === 'reset') act.resetPad();
     else if (a === 'clear') act.clearPad();

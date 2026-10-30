@@ -10,7 +10,7 @@ import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
 import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
-import { bangHTML, popHTML, vigemBlocksBanner } from './vigem.js';
+import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner } from './vigem.js';
 import { capHTML, popHTML as lbPopHTML, lbarHTML } from './lightbar.js';
 
 export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）';
@@ -24,12 +24,18 @@ export function mappingOn(config, pad) {
   return v === undefined ? true : v;
 }
 
-// The selected pad's output mode: 'off' (關, this session), 'kbm' (鍵鼠) or
-// 'pad' (手把 / Xbox), from `mapping_enabled`.
+// The selected pad's output mode: 'off' (關, this session), 'kbm' (鍵鼠), 'xbox'
+// or 'pad' (手把), from `output_mode`; a pad missing there falls back to the
+// pre-3.6.0 `mapping_enabled` (false = 手把, Xbox on the Switch 2 Pro) as Rust
+// reads it.
 export function outputMode(st, pad) {
   if (st.offPads && st.offPads.has(pad)) return 'off';
-  return mappingOn(st.config, pad) ? 'kbm' : 'pad';
+  const m = st.config?.output_mode?.[pad];
+  if (m === 'kbm' || m === 'xbox' || m === 'pad') return m;
+  return mappingOn(st.config, pad) ? 'kbm' : (pad === 'ns2_pro' ? 'xbox' : 'pad');
 }
+// Windows has no driver for the Switch 2 Pro, so a game cannot read it as itself.
+export const hasNative = pad => pad !== 'ns2_pro';
 
 // Any mode but 鍵鼠 locks everything below the header: the bindings do
 // nothing then, so editing them only confuses (v3.2.1). An open macro editor
@@ -39,18 +45,19 @@ export function boardLocked(st) {
 }
 
 export const OFF_BANNER = '這支手把已關閉';
-export function padBanner(pad) {
-  return pad === 'ns2_pro' ? '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用' : '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用';
+export function padBanner(mode) {
+  return mode === 'xbox' ? '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用' : '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用';
 }
 
 function omodeHTML(st, pad) {
-  const m = outputMode(st, pad), xbox = pad === 'ns2_pro';
-  const seg = (mode, cls, icon, label, title) => '<button type="button" class="' + cls + '" data-act="mode" data-mode="' + mode + '" aria-pressed="' + (m === mode) +
-    '" title="' + title + '">' + icon + '<span>' + label + '</span></button>';
+  const m = outputMode(st, pad), nat = hasNative(pad);
+  const seg = (mode, cls, icon, label, title, off) => '<button type="button" class="' + cls + '" data-act="mode" data-mode="' + mode + '" aria-pressed="' + (m === mode) + '"' +
+    (off ? ' aria-disabled="true"' : '') + ' title="' + title + '">' + icon + '<span>' + label + '</span></button>';
   return '<span class="omode" role="group" aria-label="輸出">' +
     seg('off', 'o-off', ICON.pause, '關', '這次先關掉這支手把（重開程式會恢復）') +
     seg('kbm', 'o-kbm', ICON.kbd, '鍵鼠', '手把按鍵送出鍵盤、滑鼠') +
-    seg('pad', xbox ? 'o-xbox' : 'o-pad', ICON.gpad, xbox ? 'Xbox' : '手把', xbox ? '遊戲看到一支 Xbox 手把（需要 ViGEmBus）' : '程式不送東西，遊戲直接用手把') + '</span>';
+    seg('xbox', 'o-xbox', ICON.xpad, 'Xbox', '遊戲看到一支 Xbox 手把（需要 ViGEmBus' + (nat ? '、HidHide' : '') + '）') +
+    seg('pad', 'o-pad', ICON.gpad, '手把', nat ? '程式不送東西，遊戲直接用手把' : 'Windows 認不得 Switch 2 Pro，遊戲讀不到它；要用手把玩請選 Xbox', !nat) + '</span>';
 }
 
 export function disp(k) {
@@ -93,7 +100,8 @@ export function render(st) {
   h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
-  else if (om === 'pad' && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(pad) + '</span></div>';
+  else if (om === 'xbox' && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span></div>';
+  else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {
     if (g.q) h += '<div class="qcap" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 66) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';

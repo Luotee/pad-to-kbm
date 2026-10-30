@@ -265,7 +265,7 @@ gui_check_config() {
     python3 - "$1" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
-missing = [k for k in ("_help", "pads", "mapping_enabled") if k not in doc]
+missing = [k for k in ("_help", "pads", "output_mode") if k not in doc]
 missing += ["pads." + p for p in ("dualsense", "ns_pro", "ns2_pro") if p not in doc.get("pads", {})]
 if missing:
     print("missing keys: " + ", ".join(missing))
@@ -277,14 +277,14 @@ PY
 }
 
 # Rewrite the config in place (truncate + write, no rename) with one
-# mapping_enabled key changed.
-gui_set_mapping_enabled() {
+# output_mode key changed.
+gui_set_output_mode() {
     python3 - "$1" "$2" "$3" <<'PY'
 import json, sys
-path, slug, value = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
+path, slug, value = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, encoding="utf-8") as f:
     doc = json.load(f)
-doc.setdefault("mapping_enabled", {})[slug] = value
+doc.setdefault("output_mode", {})[slug] = value
 with open(path, "w", encoding="utf-8") as f:
     json.dump(doc, f, ensure_ascii=False, indent=2)
 PY
@@ -487,8 +487,8 @@ layer_gui_smoke() {
         return
     fi
 
-    echo "=== hot-edit mapping_enabled.dualsense=false" >>"$log"
-    gui_set_mapping_enabled "$cfg" dualsense false >>"$log" 2>&1
+    echo "=== hot-edit output_mode.dualsense=pad" >>"$log"
+    gui_set_output_mode "$cfg" dualsense pad >>"$log" 2>&1
     sleep "$GUI_HOTEDIT_WAIT_S"
     if ! gui_alive "$GUI_PID"; then
         GUI_PID=""
@@ -497,8 +497,8 @@ layer_gui_smoke() {
         return
     fi
 
-    echo "=== hot-edit invalid slug mapping_enabled.ps5=false" >>"$log"
-    gui_set_mapping_enabled "$cfg" ps5 false >>"$log" 2>&1
+    echo "=== hot-edit invalid slug output_mode.ps5=pad" >>"$log"
+    gui_set_output_mode "$cfg" ps5 pad >>"$log" 2>&1
     sleep "$GUI_HOTEDIT_WAIT_S"
     if ! gui_alive "$GUI_PID"; then
         GUI_PID=""
