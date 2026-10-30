@@ -403,7 +403,7 @@ pub(crate) fn kind_for_vid_pid(vid: u16, pid: u16) -> Option<ControllerKind> {
 /// handshake (SDL `BTrySetupUSB`) we don't send, so it would never stream
 /// and would hold the worker forever. `BusType::Unknown` (hidapi could not
 /// classify the parent devnode) counts as not Bluetooth.
-fn is_candidate(vid: u16, pid: u16, bus: hidapi::BusType) -> Option<ControllerKind> {
+pub(crate) fn is_candidate(vid: u16, pid: u16, bus: hidapi::BusType) -> Option<ControllerKind> {
     let kind = kind_for_vid_pid(vid, pid)?;
     match kind {
         ControllerKind::NsPro if !matches!(bus, hidapi::BusType::Bluetooth) => None,

@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 /// The kind a HID instance id belongs to, if it is a pad the app hides.
 fn kind_of(id: &str) -> Option<ControllerKind> {
-    hidhide::parse_vid_pid(id).and_then(|(v, p)| hidhide::kind_for(v, p))
+    hidhide::kind_for_instance(id)
 }
 
 fn contains_ci(list: &[String], item: &str) -> bool {

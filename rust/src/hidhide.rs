@@ -134,6 +134,19 @@ pub fn kind_for(vid: u16, pid: u16) -> Option<ControllerKind> {
     crate::gamepad::hid_source::kind_for_vid_pid(vid, pid).filter(|k| k.has_native_driver())
 }
 
+/// `kind_for` a HID instance id, limited to the buses the HID source drives
+/// (`hid_source::is_candidate`): a USB Switch Pro is never driven, so hiding
+/// it would leave the game with no pad at all. Bluetooth HID ids carry the
+/// HID (`00001124`) or HOGP (`00001812`) service UUID.
+pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
+    use crate::gamepad::hid_source::is_candidate;
+    let (vid, pid) = parse_vid_pid(id)?;
+    let lower = id.to_ascii_lowercase();
+    let bt = lower.contains("{00001124-") || lower.contains("{00001812-");
+    let bus = if bt { hidapi::BusType::Bluetooth } else { hidapi::BusType::Usb };
+    kind_for(vid, pid).filter(|&k| is_candidate(vid, pid, bus) == Some(k))
+}
+
 // ─── List merging ────────────────────────────────────────────────────────────
 
 fn contains_ci(list: &[String], item: &str) -> bool {
@@ -705,6 +718,21 @@ mod tests {
         // DualSense Edge: the app does not drive it.
         assert_eq!(kind_for(0x054C, 0x0DF2), None);
         assert_eq!(kind_for(0x046D, 0xC52B), None);
+    }
+
+    #[test]
+    fn kind_for_instance_follows_the_buses_the_app_drives() {
+        // DualSense: USB and Bluetooth.
+        let ds_usb = r"HID\VID_054C&PID_0CE6&MI_03\7&1a2b&0&0000";
+        let ds_bt = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\9&2d1c&0&0000";
+        assert_eq!(kind_for_instance(ds_usb), Some(ControllerKind::DualSense));
+        assert_eq!(kind_for_instance(ds_bt), Some(ControllerKind::DualSense));
+        // Switch Pro: Bluetooth only; a USB one is not driven, so hiding it
+        // would leave the game with nothing.
+        let ns_bt = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\9&1&0&0000";
+        assert_eq!(kind_for_instance(ns_bt), Some(ControllerKind::NsPro));
+        assert_eq!(kind_for_instance(r"HID\VID_057E&PID_2009\7&3&0&0000"), None);
+        assert_eq!(kind_for_instance(r"HID\VID_046D&PID_C52B\7&3&0&0000"), None);
     }
 
     // ── merge / unmerge ──
