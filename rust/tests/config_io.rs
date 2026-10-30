@@ -96,22 +96,55 @@ fn invalid_payload_fails_validation_and_does_not_touch_disk() {
     assert_eq!(on_disk.trim(), FIXTURE.trim(), "disk untouched on validation failure");
 }
 
-#[test]
-fn set_mapping_enabled_preserves_help() {
-    use dualsense_mapper::gamepad::ControllerKind;
+/// The example config on disk with `output_mode` swapped for a pre-v3.6.0
+/// `mapping_enabled` block.
+fn legacy_mapping_copy(dir: &tempfile::TempDir, mapping: serde_json::Value) -> (std::path::PathBuf, serde_json::Value) {
     let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.json");
-    let orig: serde_json::Value =
+    let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&example).unwrap()).unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    v.as_object_mut().unwrap().remove("output_mode");
+    v["mapping_enabled"] = mapping;
     let path = dir.path().join("c.json");
-    std::fs::copy(&example, &path).unwrap();
+    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    (path, v)
+}
+
+#[test]
+fn set_output_mode_migrates_one_slug_and_keeps_help() {
+    use dualsense_mapper::config::OutputMode;
+    use dualsense_mapper::gamepad::ControllerKind;
+    let dir = tempfile::tempdir().unwrap();
+    let (path, orig) =
+        legacy_mapping_copy(&dir, json!({"dualsense": false, "ns_pro": false, "ns2_pro": false}));
     let mut doc = ConfigDoc::load(&path).unwrap();
-    doc.set_mapping_enabled(ControllerKind::DualSense, false);
+    doc.set_output_mode(ControllerKind::DualSense, OutputMode::Xbox);
+    assert_eq!(doc.typed().output_mode_for(ControllerKind::DualSense), OutputMode::Xbox);
+    assert!(!doc.typed().mapping_enabled.contains_key("dualsense"), "typed entry dropped");
+    assert_eq!(doc.typed().output_mode_for(ControllerKind::NsPro), OutputMode::Pad, "others still fall back");
     write_atomic(&path, &doc).unwrap();
     let raw: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(raw["mapping_enabled"]["dualsense"], false);
+    assert_eq!(raw["output_mode"], json!({"dualsense": "xbox"}));
+    assert_eq!(raw["mapping_enabled"], json!({"ns_pro": false, "ns2_pro": false}), "one source per slug");
     assert_eq!(raw["_help"], orig["_help"]);
+}
+
+#[test]
+fn set_output_mode_drops_an_emptied_mapping_enabled() {
+    use dualsense_mapper::config::OutputMode;
+    use dualsense_mapper::gamepad::ControllerKind;
+    let dir = tempfile::tempdir().unwrap();
+    let (path, _) = legacy_mapping_copy(&dir, json!({"ns2_pro": false}));
+    let mut doc = ConfigDoc::load(&path).unwrap();
+    doc.set_output_mode(ControllerKind::Ns2Pro, OutputMode::Kbm);
+    doc.set_output_mode(ControllerKind::NsPro, OutputMode::Pad); // no legacy entry: no-op removal
+    write_atomic(&path, &doc).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(raw.get("mapping_enabled").is_none(), "empty legacy block removed: {raw}");
+    assert_eq!(raw["output_mode"], json!({"ns2_pro": "kbm", "ns_pro": "pad"}));
+    let back = ConfigDoc::load(&path).unwrap();
+    assert_eq!(back.typed().output_mode_for(ControllerKind::Ns2Pro), OutputMode::Kbm);
 }
 
 #[test]

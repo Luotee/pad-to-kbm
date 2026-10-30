@@ -47,6 +47,7 @@ fn cfg_with_touchpad_tl_left_click() -> Config {
         touchpad_deadzone_radius: 2,
         touchpad_click_freeze_enabled: true,
         mapping_enabled: Default::default(),
+        output_mode: Default::default(),
         rumble_on_connect: true,
         stick_cal: Default::default(),
         last_pad: None,

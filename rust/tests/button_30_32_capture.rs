@@ -6,7 +6,7 @@
 use dualsense_mapper::config::{Binding, Config};
 use dualsense_mapper::config_io::ConfigDoc;
 use dualsense_mapper::engine::Engine;
-use dualsense_mapper::gui::commands::set_mapping_enabled_impl;
+use dualsense_mapper::gui::commands::set_output_mode_impl;
 use std::path::PathBuf;
 
 const SLUGS: [&str; 3] = ["dualsense", "ns_pro", "ns2_pro"];
@@ -72,7 +72,7 @@ fn v25_file_round_trips_30_32_and_keeps_help() {
     let cfg = Config::load_from_str(&serde_json::to_string(&v).unwrap()).unwrap();
     let engine = Engine::spawn_with_fake_gamepad(cfg).unwrap();
     let h = engine.handle();
-    set_mapping_enabled_impl(&h, tmp.path(), "dualsense", false).unwrap();
+    set_output_mode_impl(&h, tmp.path(), "dualsense", "pad").unwrap();
 
     let disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();

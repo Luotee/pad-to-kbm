@@ -147,7 +147,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::rename_macro,
             crate::gui::commands::set_settings,
             crate::gui::commands::reset_settings,
-            crate::gui::commands::set_mapping_enabled,
+            crate::gui::commands::set_output_mode,
             crate::gui::commands::set_pad_off,
             crate::gui::commands::get_vigem_status,
             crate::gui::commands::install_vigem,

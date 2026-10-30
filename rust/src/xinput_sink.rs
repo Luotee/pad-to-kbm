@@ -1,19 +1,18 @@
-//! Virtual Xbox 360 pad backend (the Switch 2 Pro's no-mapping mode).
+//! Virtual Xbox 360 pad backend (Xbox output mode, any pad).
 //!
-//! Iron rule 7 exception, the only one: with mapping OFF for a Switch 2 Pro,
-//! the engine shows it to games as a virtual Xbox 360 pad through an
-//! **externally installed** ViGEmBus driver (user-mode client calls only; the
-//! app never ships or installs a driver, and never hooks or injects). The
-//! engine owns the plug / unplug lifecycle; this module only talks to the
-//! bus.
+//! Iron rule 7 exception: a pad in Xbox output mode is shown to games as a
+//! virtual Xbox 360 pad through an **externally installed** ViGEmBus driver
+//! (user-mode client calls only; the app never ships or installs a driver,
+//! and never hooks or injects). The engine owns the plug / unplug
+//! lifecycle; this module only talks to the bus.
 //!
 //! * `VigemPad` (Windows): vigem-client 0.1 (MIT). `plug` connects to the
 //!   bus, plugs an Xbox 360 wired target and waits until it accepts reports.
 //! * `NullPad` (every platform): never plugs (`PadError::Unsupported`). The
 //!   non-Windows builds and the engine's test seam use it.
 //!
-//! Stuck-input safety (iron rule 3 spirit): the engine unplugs on mapping
-//! ON, Disconnected, pause and shutdown. If the engine thread unwinds, the
+//! Stuck-input safety (iron rule 3 spirit): the engine unplugs on leaving
+//! Xbox mode, Disconnected, pause and shutdown. If the engine thread unwinds, the
 //! pad is dropped, and vigem-client's `Xbox360Wired` unplugs itself in its
 //! own `Drop` (vigem-client 0.1.4 `src/x360.rs`, `impl Drop for
 //! Xbox360Wired`). The panic hook in `main.rs` also calls
@@ -79,8 +78,9 @@ pub fn platform_pad() -> Box<dyn VirtualPad> {
 // ─── Panic-hook registry ─────────────────────────────────────────────────────
 
 /// The production engine's pad, for the panic hook. `Weak`: the engine
-/// thread holds the only strong reference, so an unwinding engine thread
-/// still drops (and so unplugs) the pad.
+/// thread holds the only lasting strong reference (a plug in flight holds
+/// one until it returns), so an unwinding engine thread still drops (and so
+/// unplugs) the pad.
 static GLOBAL: OnceLock<Weak<Mutex<Box<dyn VirtualPad>>>> = OnceLock::new();
 
 /// Bind the panic hook to the production engine's pad (first call wins, as

@@ -591,43 +591,45 @@ pub fn reset_settings_impl(
     set_settings_impl(engine, config_path, Settings::defaults())
 }
 
-// ─── set_mapping_enabled ──────────────────────────────────────────────────────
+// ─── set_output_mode ──────────────────────────────────────────────────────────
 
-/// Tauri command: turn mapping ON/OFF for one controller kind (persisted).
+/// Tauri command: where one controller kind's input goes, `mode` =
+/// kbm / xbox / pad (persisted).
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
-pub fn set_mapping_enabled(
+pub fn set_output_mode(
     app: tauri::AppHandle,
     engine: State<'_, Handle>,
     config_path: State<'_, PathBuf>,
     kind: String,
-    enabled: bool,
+    mode: String,
 ) -> Result<(), String> {
-    set_mapping_enabled_impl(&*engine, &config_path, &kind, enabled)
+    set_output_mode_impl(&*engine, &config_path, &kind, &mode)
         .map_err(|e| format!("{e:#}"))?;
     let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
     Ok(())
 }
 
-/// Pure implementation of `set_mapping_enabled` callable without `tauri::State`.
+/// Pure implementation of `set_output_mode` callable without `tauri::State`.
 ///
-/// Unknown `kind` slugs are rejected before touching disk.
-pub fn set_mapping_enabled_impl(
+/// Unknown `kind` slugs and `mode` values are rejected before touching disk.
+pub fn set_output_mode_impl(
     engine: &Handle,
     config_path: &Path,
     kind: &str,
-    enabled: bool,
+    mode: &str,
 ) -> anyhow::Result<()> {
     let k = crate::gamepad::ControllerKind::from_slug(kind)
         .ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
+    let m = crate::config::OutputMode::from_slug(mode)
+        .ok_or_else(|| anyhow::anyhow!("unknown output mode '{mode}'"))?;
     let mut doc = ConfigDoc::load(config_path)?;
-    doc.set_mapping_enabled(k, enabled);
+    doc.set_output_mode(k, m);
     doc.validate()?;
     write_atomic(config_path, &doc)?;
-    engine
-        .config_write()
-        .mapping_enabled
-        .insert(k.slug().to_string(), enabled);
+    let mut live = engine.config_write();
+    live.output_mode.insert(k.slug().to_string(), m);
+    live.mapping_enabled.remove(k.slug());
     Ok(())
 }
 

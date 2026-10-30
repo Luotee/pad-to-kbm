@@ -4,7 +4,7 @@
 //! round-trip of `_help`, `_keyboard_keys`, and any future "_*" doc fields.
 //! We carry both.
 
-use crate::config::{migrate_v1, Binding, ButtonEntry, Config, MacroDef, ADDED_IDS};
+use crate::config::{migrate_v1, Binding, ButtonEntry, Config, MacroDef, OutputMode, ADDED_IDS};
 use crate::gamepad::ControllerKind;
 use crate::pad_bindings::{PadBindings, Page, Side, TriggerMode};
 use anyhow::{Context, Result};
@@ -155,12 +155,28 @@ impl ConfigDoc {
         self.raw["touchpad_click_freeze_enabled"] = Value::from(v);
     }
 
-    pub fn set_mapping_enabled(&mut self, kind: crate::gamepad::ControllerKind, enabled: bool) {
-        self.typed.mapping_enabled.insert(kind.slug().to_string(), enabled);
-        if !self.raw["mapping_enabled"].is_object() {
-            self.raw["mapping_enabled"] = serde_json::json!({});
+    /// Set one pad's `output_mode` and drop its legacy `mapping_enabled`
+    /// entry (and the block once empty), so each slug has one source.
+    pub fn set_output_mode(&mut self, kind: ControllerKind, mode: OutputMode) {
+        let slug = kind.slug();
+        self.typed.output_mode.insert(slug.to_string(), mode);
+        self.typed.mapping_enabled.remove(slug);
+        if !self.raw["output_mode"].is_object() {
+            self.raw["output_mode"] = serde_json::json!({});
         }
-        self.raw["mapping_enabled"][kind.slug()] = Value::Bool(enabled);
+        self.raw["output_mode"][slug] = Value::from(mode.slug());
+        if let Some(obj) = self.raw.as_object_mut() {
+            let empty = match obj.get_mut("mapping_enabled").and_then(Value::as_object_mut) {
+                Some(t) => {
+                    t.remove(slug);
+                    t.is_empty()
+                }
+                None => false,
+            };
+            if empty {
+                obj.remove("mapping_enabled");
+            }
+        }
     }
 
     /// Set min_press_ms without running validation.

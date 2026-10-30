@@ -1,13 +1,13 @@
 //! Platform-neutral mirror of a virtual Xbox 360 pad's state.
 //!
-//! The Switch 2 Pro has no Windows driver that games understand. With
-//! mapping OFF for it, the engine forwards it to games as a virtual Xbox 360
-//! pad (`xinput_sink`, ViGEmBus). This module only keeps the state that pad
-//! should report and translates our button ids into it, so the mapping is
-//! unit-tested on every platform.
+//! In Xbox output mode the engine forwards a pad (any kind) to games as a
+//! virtual Xbox 360 pad (`xinput_sink`, ViGEmBus). This module only keeps
+//! the state that pad should report and translates our button ids into it,
+//! so the mapping is unit-tested on every platform.
 //!
 //! The id table is positional (the Xbox button in the same place, not with
-//! the same letter): NS B / A / Y / X (ids 0–3) → Xbox A / B / X / Y.
+//! the same letter) and shared by every pad: NS B / A / Y / X, DualSense
+//! Cross / Circle / Square / Triangle (ids 0–3) → Xbox A / B / X / Y.
 //! Sticks come only from the `Stick` axes; the stick virtual direction ids
 //! (15..=22) never set D-pad bits. Capture, GL, GR and C (29..=32) and the
 //! DualSense touchpad quadrants are inert (no Xbox equivalent).
