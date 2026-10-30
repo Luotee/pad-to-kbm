@@ -169,6 +169,16 @@ pub(crate) fn rescan_delay(end: SessionEnd) -> Duration {
     }
 }
 
+/// True when the next scan starts from a fresh Manager / Adapter / watcher.
+/// The pad may come back long after a turn-off or a lost link. A pad turned
+/// off from the header then reconnected only after an app restart (which is
+/// a fresh adapter); the suspect is the one WinRT watcher stopped and
+/// started in place every `SCAN_RESTART_AFTER`. Re-opening is cheap.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn reopen_adapter_after(end: SessionEnd) -> bool {
+    matches!(end, SessionEnd::ScanRestart | SessionEnd::TurnedOff | SessionEnd::LinkLost)
+}
+
 /// True for Windows builds whose BLE stack is rate limited (Windows 10).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn ble_rate_limited(build: u32) -> bool {
@@ -472,7 +482,8 @@ mod imp {
         local: [u8; 6],
     }
 
-    async fn open_ble() -> Result<Ble> {
+    /// `quiet`: the routine re-open after a scan restart logs at debug level.
+    async fn open_ble(quiet: bool) -> Result<Ble> {
         let manager = Manager::new().await.context("BLE manager")?;
         let adapter = manager
             .adapters()
@@ -487,7 +498,11 @@ mod imp {
             .context("adapter address")?
             .ok_or_else(|| anyhow!("adapter address unavailable"))?;
         let events = adapter.events().await.context("adapter events")?;
-        tracing::info!(adapter = %addr, "NS2 BLE: scanning for a Switch 2 Pro");
+        if quiet {
+            tracing::debug!(adapter = %addr, "NS2 BLE: adapter re-opened; scanning");
+        } else {
+            tracing::info!(adapter = %addr, "NS2 BLE: scanning for a Switch 2 Pro");
+        }
         Ok(Ble { adapter, events, local: addr.into_inner() })
     }
 
@@ -496,6 +511,7 @@ mod imp {
         // Repeated identical failures (Bluetooth off, a pad that keeps
         // dropping) are logged once, then at debug level.
         let mut last_err = String::new();
+        let mut quiet = false;
         while !ctx.stopped() {
             if ctx.suspended() {
                 // Another controller owns the session: leave the radio alone.
@@ -503,7 +519,7 @@ mod imp {
                 continue;
             }
             if ble.is_none() {
-                match open_ble().await {
+                match open_ble(quiet).await {
                     Ok(b) => ble = Some(b),
                     Err(e) => {
                         note_failure(&mut last_err, &e);
@@ -534,6 +550,10 @@ mod imp {
                 }
             };
             tracing::debug!(?end, "NS2 BLE session ended");
+            if reopen_adapter_after(end) {
+                ble = None;
+            }
+            quiet = end == SessionEnd::ScanRestart;
             pause(ctx, rescan_delay(end)).await;
         }
     }
@@ -1114,6 +1134,20 @@ mod tests {
         assert_eq!(rescan_delay(SessionEnd::Stopped), Duration::ZERO);
         // A routine scan restart is not a failure: no pause.
         assert_eq!(rescan_delay(SessionEnd::ScanRestart), Duration::ZERO);
+    }
+
+    #[test]
+    fn long_waits_reopen_the_adapter() {
+        // The pad may come back long after a turn-off or a lost link: these
+        // start from a fresh adapter, as an app restart does.
+        assert!(reopen_adapter_after(SessionEnd::ScanRestart));
+        assert!(reopen_adapter_after(SessionEnd::TurnedOff));
+        assert!(reopen_adapter_after(SessionEnd::LinkLost));
+        // Connect failures keep the adapter (a scan error already drops it),
+        // and so do the ends that do not scan again at once.
+        assert!(!reopen_adapter_after(SessionEnd::Failed));
+        assert!(!reopen_adapter_after(SessionEnd::Stopped));
+        assert!(!reopen_adapter_after(SessionEnd::Suspended));
     }
 
     #[test]
