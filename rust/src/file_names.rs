@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE: &str = "padtokbm.json";
 pub const UI_PREFS_FILE: &str = "padtokbm.ui.json";
+/// What the HidHide hider added (v3.6.0, `hidhide::HideState`), for cleanup
+/// after a crash. Deleted when nothing is left to undo.
+pub const HIDHIDE_STATE_FILE: &str = "padtokbm.hidhide.json";
 pub const LEGACY_CONFIG_FILE: &str = "dualsense-mapper.json";
 pub const LEGACY_UI_PREFS_FILE: &str = "dualsense-mapper.ui.json";
 
