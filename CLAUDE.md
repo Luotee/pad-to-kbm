@@ -158,10 +158,10 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `get_stick_positions`; mutators `set_binding`, `swap_bindings`,
 `set_trigger_mode`, `clear_pad`, `reset_pad`, `set_pad_tables`,
 `set_macro`, `rename_macro`, `delete_macro`, `set_settings`,
-`set_mapping_enabled`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
+`set_output_mode`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
 `reset_stick_cal`, `set_ui_prefs`; runtime-only `set_pad_off` (header 關,
-returns the off pads, no `config-changed`); ViGEmBus `get_vigem_status`,
-`install_vigem`; fire-and-forget
+returns the off pads, no `config-changed`); Xbox output `get_xbox_status`,
+`get_vigem_status`, `install_vigem`, `install_hidhide`; fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
 (`connected` bool + `connected_pads` + `off_pads` + `warnings`),
@@ -267,8 +267,8 @@ regresses real, observed bugs the codebase already fixed once:
    against stuck keys / stuck mouse buttons when the process dies or the
    controller drops. `release_all_held` releases every held key **and**
    every held mouse button, and never waits on `min_press_ms` —
-   shutdown beats anti-cheat profile. The virtual Xbox pad (Switch 2 Pro,
-   no-mapping mode) is likewise unplugged on Disconnected, pause, shutdown
+   shutdown beats anti-cheat profile. The virtual Xbox pad (any pad in
+   Xbox output mode) is likewise unplugged on Disconnected, pause, shutdown
    and in the panic hook (`emergency_unplug`); `vigem-client` also unplugs
    on Drop.
 4. **Macro threads drain every unmatched `Press` as `Release` on every
@@ -296,14 +296,19 @@ regresses real, observed bugs the codebase already fixed once:
 7. **No process hooking, no DLL injection, no driver.** User-mode
    `SendInput` (Windows) / `CGEvent` (macOS) only, via the `enigo`
    crate. Anything else lands us in actual cheat-software territory.
-   Single exception (v2.6.0): a virtual Xbox 360 pad through an
-   externally installed ViGEmBus, used only for a controller Windows
-   cannot use natively (the Switch 2 Pro, `ControllerKind::needs_virtual_pad`)
-   and only while its mapping is OFF. The app never ships a driver. On the
-   user's click it may download the pinned official ViGEmBus installer,
-   verify size + sha256, and run it; the user goes through the installer's
-   own elevation prompt (`vigem_setup.rs`, v3.2.0). Hooking and injection
-   stay forbidden.
+   Single exception (v2.6.0, widened in v3.6.0): two externally installed
+   Nefarius drivers, ViGEmBus (a virtual Xbox 360 pad) and HidHide (hides
+   the real pad from games), used only while the user picks Xbox output
+   for a pad (`output_mode` `xbox`; HidHide only for a pad with a native
+   driver, `ControllerKind::has_native_driver`). The app never ships a
+   driver. On the user's click it may download each pinned official
+   installer, verify size + sha256, and run it; the user goes through the
+   installer's own elevation prompt (`vigem_setup.rs`, `hidhide_setup.rs`).
+   User-mode client calls only: the ViGEm client, and HidHide's
+   control-device IOCTLs (`hidhide.rs`). HidHide changes are limited to the
+   pad's own HID instance ids on the blacklist and our exe on the
+   whitelist, merged with the user's existing lists, and undone when Xbox
+   output ends. Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window
    opens. That means:
@@ -366,9 +371,9 @@ is the README FAQ「會不會被當成外掛？」):
 - Macro step delays are always `[min, max]` ranges, never constants.
 - Synthesized keys honor `min_press_ms` (randomized minimum down/up gap).
 - Simultaneous events on the same gamepad tick are spread by `tick_jitter_ms`.
-- No process hooking, DLL injection, or driver (the ViGEmBus exception
-  in iron rule 7 aside: never bundled, only the verified official
-  installer on the user's click). User-mode `SendInput` / `CGEvent` only.
+- No process hooking, DLL injection, or driver (the ViGEmBus + HidHide
+  exception in iron rule 7 aside: never bundled, only the verified
+  official installers on the user's click). User-mode `SendInput` / `CGEvent` only.
 - `log_events: true` writes every synthesized event with a timestamp
   so the user can self-audit.
 
@@ -481,5 +486,6 @@ shipped three broken releases under admin override — don't repeat it.
   for the other (Phase 2 macOS is the explicit target — don't add
   Windows-only behaviour without a `#[cfg(target_os = "macos")]`
   counterpart or a deliberate "Phase 2 TBD" CHANGELOG note). The Switch 2
-  Pro (BLE + virtual pad) is such a Phase 2 TBD item on macOS.
+  Pro (BLE + virtual pad) and Xbox output (ViGEmBus + HidHide) are such
+  Phase 2 TBD items on macOS.
 - Tracking `docs/superpowers/` content.

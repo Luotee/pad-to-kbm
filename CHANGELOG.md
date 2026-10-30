@@ -3,6 +3,60 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-10-31
+
+### Added
+
+- **Xbox output for the DualSense and the Switch Pro.** Any controller can
+  now be shown to games as a virtual Xbox 360 pad, for games that only read
+  XInput or read the controller badly. The real DualSense / Switch Pro is
+  hidden from games with HidHide, so a game does not get the same input
+  twice. PadToKBM hides only that controller's own HID devices, lets itself
+  through on HidHide's whitelist, keeps any entries you made in HidHide, and
+  takes its own entries out again when the controller leaves Xbox, when the
+  app exits, and at the next start after a crash.
+- **關｜鍵鼠｜Xbox｜手把 in the header**, per controller. On the Switch 2 Pro
+  手把 is greyed out and does nothing: Windows has no driver for it, so a
+  game cannot read it directly. Its tooltip says to pick Xbox.
+- **One-click installers.** Picking Xbox on a PC that lacks a driver opens a
+  prompt with one row per driver (ViGEmBus, plus HidHide for the DualSense /
+  Switch Pro) and one button: 安裝這兩個, or 安裝 ViGEmBus / 安裝 HidHide
+  when only one is missing. Each is the pinned official installer (ViGEmBus
+  1.22.0, HidHide 1.5.230), downloaded from its GitHub release, checked for
+  size and sha256 and then run (Windows asks for administrator rights). An
+  installer that fails leaves the prompt open with the reason. Until the
+  drivers are in, the controller sends nothing.
+- **Reconnect hint.** A controller that was already connected when it was
+  hidden stays visible to games until it reconnects. A white banner says
+  so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
+  PS 鍵連回來」. It goes away after the reconnect.
+- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`.
+
+### Changed
+
+- **`output_mode` replaces `mapping_enabled`** in `padtokbm.json`:
+  `{ "dualsense": "kbm" | "xbox" | "pad", … }` per controller. The bundled
+  first-run config has `output_mode` and no `mapping_enabled`.
+  `set_output_mode` replaces the `set_mapping_enabled` IPC.
+- The virtual pad is now plugged in off the engine thread. A ViGEmBus that
+  does not answer no longer freezes the window (no status, no events).
+- Iron rule 7 (CLAUDE.md) covers both drivers: never bundled, only the
+  verified official installers on the user's click, user-mode client calls
+  only, and the HidHide changes are limited to the pad's own devices and
+  undone when Xbox output ends.
+
+### Migration
+
+- Old configs keep working. A controller missing from `output_mode` falls
+  back to `mapping_enabled`: `true` is 鍵鼠, `false` is 手把 (Xbox on the
+  Switch 2 Pro). `output_mode` wins when both are there. The old key for a
+  controller is removed the first time you change that controller's mode.
+- A DualSense / Switch Pro on 手把 stays on 手把; pick Xbox to get the
+  virtual pad.
+- Rumble from games is not passed from the virtual Xbox pad to the real
+  controller yet.
+- Xbox output (ViGEmBus + HidHide) is Windows only; macOS is Phase 2 TBD.
+
 ## [3.5.0] - 2026-10-21
 
 ### Added
