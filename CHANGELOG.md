@@ -3,6 +3,19 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-10-30
+
+### Fixed
+
+- A Switch 2 Pro turned off with its tab's power button could stay
+  disconnected until PadToKBM was restarted. The pad was reported in Xbox
+  mode; how long it stayed off before it was switched back on is not known.
+  The scan now starts from a fresh Bluetooth adapter after a turn-off, after
+  a lost link and on every 30 s scan restart, as an app restart does. The
+  suspect is the one Windows BLE watcher that was stopped and started in
+  place every 30 s and may stop hearing the pad. With the fix, a pad turned
+  off this way reconnects within a few seconds on hardware.
+
 ## [3.5.0] - 2026-10-21
 
 ### Added
