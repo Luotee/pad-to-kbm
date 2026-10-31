@@ -18,6 +18,8 @@
 #   scripts/verify.sh --skip-gui      everything except gui-smoke
 #   scripts/verify.sh --skip-web      everything except web
 #   scripts/verify.sh --only <layer>  one layer
+#   scripts/verify.sh --strict ...    a selected layer that SKIPs counts as a
+#                                     FAIL (CI: a missing tool must not pass)
 #
 # Logs: rust/target/verify/<layer>.log. Exit status is non-zero if any layer
 # FAILs. A missing tool turns its layer into SKIP with a hint (except cargo
@@ -49,6 +51,7 @@ GUI_STARTUP_TIMEOUT_S=8
 GUI_HOTEDIT_WAIT_S=3
 GUI_CLOSE_TIMEOUT_S=10
 PLAYWRIGHT_CORE_VER="1.63.0"
+STRICT=0
 
 ALL_LAYERS=(linux windows-tests gui-smoke web)
 declare -A SELECTED=()
@@ -63,7 +66,7 @@ GUI_TMP_LINUX=""
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 usage() {
-    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 log_path() {
@@ -654,6 +657,10 @@ layer_web() {
             return
         fi
     else
+        if [ "$STRICT" = 1 ]; then
+            record web FAIL "font coverage: could not set up the pinned venv (--strict) — see log"
+            return
+        fi
         font="font SKIP (could not set up the pinned venv, offline? — see log)"
     fi
     record web PASS "units ${units}; ${summary:-ok}; ${font}"
@@ -685,7 +692,8 @@ print_summary() {
             "${DURATION[$layer]:-0}" "${DETAIL[$layer]}"
     done
     for layer in "${ALL_LAYERS[@]}"; do
-        if [ "${STATUS[$layer]}" = FAIL ]; then
+        if [ "${STATUS[$layer]}" = FAIL ] ||
+            { [ "$STRICT" = 1 ] && [ "${SELECTED[$layer]}" = 1 ] && [ "${STATUS[$layer]}" = SKIP ]; }; then
             any_fail=1
             echo "  log ($layer): $(log_path "$layer")"
         fi
@@ -713,6 +721,7 @@ main() {
                 ;;
             --skip-gui) SELECTED[gui-smoke]=0 ;;
             --skip-web) SELECTED[web]=0 ;;
+            --strict)   STRICT=1 ;;
             --only)
                 only="${2:-}"
                 if [ -z "$only" ] || [ -z "${SELECTED[$only]+set}" ]; then

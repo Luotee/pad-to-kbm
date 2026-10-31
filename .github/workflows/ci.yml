@@ -1,0 +1,133 @@
+name: CI
+
+# Runs once per pull request (and by hand). CI tests the PR's merge commit, so
+# merge only a branch that already contains origin/main. Pushes to main and the
+# release tag do not re-run it. The Linux jobs call scripts/verify.sh, the same
+# command run before every release, with --strict so a tool missing on the
+# runner FAILs instead of SKIPping. A PR that only changes README.md, CLAUDE.md
+# or docs/** skips every step after the scope check and reports success
+# (.github/docs-only.sh).
+#
+# Not here: gui-smoke (it drives the GUI exe through WSL interop), and anything
+# that needs a physical controller. Those stay on the release checklist.
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    # Pinned, not ubuntu-latest: the label moves between Ubuntu releases.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Docs-only change?
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: .github/docs-only.sh
+      - name: Install libudev
+        if: steps.scope.outputs.docs_only != 'true'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev
+      - name: Cache cargo
+        if: steps.scope.outputs.docs_only != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-linux-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: cargo-linux-
+      - name: cargo test (verify.sh linux)
+        if: steps.scope.outputs.docs_only != 'true'
+        run: scripts/verify.sh --strict --only linux
+      - name: Log on failure
+        if: failure()
+        run: tail -n 200 rust/target/verify/linux.log
+
+  windows:
+    # Native cargo test on Windows. Locally verify.sh builds these with
+    # cargo xwin and runs them through WSL interop; the runner runs them directly.
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Docs-only change?
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: .github/docs-only.sh
+      - name: Cache cargo
+        if: steps.scope.outputs.docs_only != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-windows-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: cargo-windows-
+      - name: cargo test
+        if: steps.scope.outputs.docs_only != 'true'
+        working-directory: rust
+        run: cargo test --release
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Docs-only change?
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: .github/docs-only.sh
+      - uses: actions/setup-node@v4
+        if: steps.scope.outputs.docs_only != 'true'
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        if: steps.scope.outputs.docs_only != 'true'
+        with:
+          python-version: '3.12'
+      - name: Playwright version
+        if: steps.scope.outputs.docs_only != 'true'
+        id: pw
+        run: |
+          echo "version=$(sed -n -E 's/^PLAYWRIGHT_CORE_VER="([^"]+)"/\1/p' scripts/verify.sh)" >> "$GITHUB_OUTPUT"
+          echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright Chromium and font tooling
+        if: steps.scope.outputs.docs_only != 'true'
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/pad-to-kbm-tools
+          # The runner image is in the key: a browser cached on one Ubuntu
+          # release links against libraries another release may not ship.
+          key: web-${{ runner.os }}-${{ steps.pw.outputs.image }}-${{ steps.pw.outputs.version }}-${{ hashFiles('scripts/tools/requirements.txt', 'scripts/font_tools.py') }}
+      - name: Install Chromium
+        if: steps.scope.outputs.docs_only != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: npx --yes "playwright@${{ steps.pw.outputs.version }}" install --with-deps chromium
+      - name: Install Chromium system deps
+        if: steps.scope.outputs.docs_only != 'true' && steps.cache.outputs.cache-hit == 'true'
+        run: npx --yes "playwright@${{ steps.pw.outputs.version }}" install-deps chromium
+      - name: Click-through, unit tests, font coverage (verify.sh web)
+        if: steps.scope.outputs.docs_only != 'true'
+        run: scripts/verify.sh --strict --only web
+      - name: Log on failure
+        if: failure()
+        run: tail -n 200 rust/target/verify/web.log
+      - name: Upload screenshots
+        if: always() && steps.scope.outputs.docs_only != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-screenshots
+          path: rust/target/verify/*.png
+          if-no-files-found: ignore
