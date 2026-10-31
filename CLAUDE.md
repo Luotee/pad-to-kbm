@@ -220,7 +220,7 @@ non-zero on any FAIL. Logs: `rust/target/verify/<layer>.log`.
 | `web` | the click-through recipe above, automated: `scripts/verify/web-smoke.mjs` (Playwright + cached Chromium, mocked `__TAURI__`); screenshots in `rust/target/verify/` |
 
 Flags: `--quick` (linux + windows-tests), `--skip-gui`, `--skip-web`,
-`--only <layer>`. Toolchain paths come from the untracked
+`--only <layer>`, `--strict` (a selected layer that SKIPs FAILs; CI uses it). Toolchain paths come from the untracked
 `~/.config/pad-to-kbm/verify-env.sh` (falls back to the pre-rename
 `~/.config/dualsense-mapper/verify-env.sh`); it holds machine-local paths
 only and never goes in the repo. The layers need cargo, cargo-xwin with
@@ -231,6 +231,11 @@ layer into SKIP with a hint (missing cargo FAILs `linux`).
 - The agent runs `scripts/verify.sh` (all layers) before every release
   PR and pastes its summary table into the PR body's **Test plan**. A
   SKIP needs a one-line reason there.
+- CI (`.github/workflows/ci.yml`, once per pull request) runs the `linux`
+  and `web` layers through `scripts/verify.sh --strict` (a SKIP is a FAIL
+  there) and `cargo test --release` natively on a Windows runner. It does
+  not run gui-smoke, so the local run stays mandatory. Merge only a branch
+  that contains `origin/main` and a green CI.
 - Do not hand the maintainer a manual checklist for anything the script
   covers. Only what needs a physical controller (radio link, pairing,
   real button presses / macros on hardware) goes to the human, batched
@@ -423,10 +428,9 @@ A version bump touches **three** files in the release commit:
 2. `rust/tauri.conf.json` — `"version"` field (must match Cargo.toml)
 3. `CHANGELOG.md` — new top-level `## [X.Y.Z] - YYYY-MM-DD` heading
 
-Bumping fewer than three is a release-flow bug; halt. There is no
-mechanical gate yet (no `tests/test_version_consistency.py`); a CI
-addition is welcome but until then, reviewers enforce the rule by
-eye on every release PR.
+Bumping fewer than three is a release-flow bug; halt.
+`rust/tests/version_consistency.rs` fails `cargo test` (and so CI) when the
+three disagree.
 
 ### Tagging
 
