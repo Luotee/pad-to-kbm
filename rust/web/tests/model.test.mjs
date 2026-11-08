@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   PADS, PAD_NAMES, QUICK_IDS, slotRef, slotKey, boardBinds, entryForTile, keyToTile, tileToKey,
-  MOUSE_TILE, slotLabel,
+  MOUSE_TILE, slotLabel, slotOff,
 } from '../board/model.js';
 import { MAIN, NAV } from '../board/keys.js';
 
@@ -79,4 +79,11 @@ test('mouse_tiles_and_labels', () => {
   assert.deepEqual(MOUSE_TILE, { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '上滾', 'wheel-down': '下滾' });
   assert.equal(slotLabel(example, 'dualsense', 'L11'), 'D-pad ↑');
   assert.equal(slotLabel(example, 'ns2_pro', '0'), 'Cross（叉叉）');
+});
+
+test('slotOff: only the Xbox Nano Share slot (29) is unavailable, with its title', () => {
+  assert.equal(slotOff('xbox_nano', '29'), 'Xbox Nano 的 Share 鍵目前不會送給電腦');
+  // Its other slots, and 29 on the Switch pads (Capture), stay usable.
+  for (const k of ['0', '4', '5', '6', '23', '24', 'L11', 'R0']) assert.equal(slotOff('xbox_nano', k), '', k);
+  for (const p of ['dualsense', 'ns_pro', 'ns2_pro']) assert.equal(slotOff(p, '29'), '', p);
 });

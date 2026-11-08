@@ -307,10 +307,13 @@ regresses real, observed bugs the codebase already fixed once:
    gamepad layer too, and `SourceHub` arbitrates so that one controller
    owns the session at a time. The user stick calibration (`stick_cal`,
    `gamepad/stick_cal.rs`) is applied in `SourceHub` to the owner's stick
-   events, on top of the pad's factory calibration. The Xbox Nano's Share
-   is not in its HID report: it is read from the Nano's keyboard collection
-   through Raw Input (`gamepad/raw_share.rs`, Windows only) and folded into
-   the Nano's session state as button 29. New platform quirks live here.
+   events, on top of the pad's factory calibration. The Xbox Nano has two
+   readers, picked when its worker finds it: with Microsoft's Xbox driver
+   (its HID path carries `&IG_`, and that collection sends no report) it is
+   read through XInput (`gamepad/xinput_source.rs`, Windows only: its slot
+   by `XInputGetCapabilitiesEx` 045E:0B4F, never our ViGEm pad), otherwise
+   through its HID report. Its Share is in neither, so the board greys that
+   slot out (`model.js` `slotOff`). New platform quirks live here.
 7. **No process hooking, no DLL injection, no driver.** User-mode
    `SendInput` (Windows) / `CGEvent` (macOS) only, via the `enigo`
    crate. Anything else lands us in actual cheat-software territory.
@@ -339,11 +342,13 @@ regresses real, observed bugs the codebase already fixed once:
    `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
    address (USB) is not touched, nor is a Bluetooth LE pad (the Xbox Nano:
    its address is shown, but that IOCTL is a classic-Bluetooth disconnect;
-   its tab has no ⏻ either). Of the Nano only the gamepad collection
-   (`&Col01`) is hidden and remembered: its keyboard collection carries
-   Share (Raw Input).
+   its tab's ⏻ is greyed out). Of the Nano only the gamepad collection
+   (`&Col01`, in both id formats: `…_REV&0609_<addr>&Col01` and, with
+   Microsoft's Xbox driver, `…&REV_0619&<addr>&COL01&IG_00`) is hidden and
+   remembered.
    Connection state still comes from the HID
-   stream (iron rule 11).
+   stream (iron rule 11) or, for a Nano under Microsoft's driver, from
+   XInput.
    Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window
@@ -387,7 +392,7 @@ regresses real, observed bugs the codebase already fixed once:
     worker thread's state machine (Searching → Handshaking →
     Streaming) emits `Connected` on the first decoded input
     frame (the Xbox Nano, which reports only on change, also on its
-    read-only initial GET_REPORT reply or its first Share key; it has
+    read-only initial GET_REPORT reply; it has
     its own HID worker so an idle Nano never blocks a DualSense / Switch
     Pro) and `Disconnected` on either read-error or a per-kind
     report-stream deadline (DualSense 800 ms, Switch Pro
@@ -395,7 +400,11 @@ regresses real, observed bugs the codebase already fixed once:
     1000 ms without a decoded report; the Xbox Nano reports only on
     change, so it has no deadline: read error, manual disconnect, or —
     after 2 s without a report — its HID device path no longer
-    enumerated; present but silent keeps the session). The two HID
+    enumerated; present but silent keeps the session). A Nano under
+    Microsoft's Xbox driver is read through XInput instead, and XInput's
+    connection state is the ground truth there: its slot's first
+    successful read → `Connected`, `ERROR_DEVICE_NOT_CONNECTED` →
+    `Disconnected` (`gamepad/xinput_source.rs`). The two HID
     workers share hidapi's C library, whose global state has no lock:
     every `HidApi::new` / `refresh_devices` / `open_device` goes through
     `hid_source::with_hidapi`.
@@ -531,5 +540,5 @@ shipped three broken releases under admin override — don't repeat it.
   Windows-only behaviour without a `#[cfg(target_os = "macos")]`
   counterpart or a deliberate "Phase 2 TBD" CHANGELOG note). The Switch 2
   Pro (BLE + virtual pad), Xbox output (ViGEmBus + HidHide) and the Xbox
-  Nano's Share (Raw Input) are such Phase 2 TBD items on macOS.
+  Nano (HID over GATT, XInput) are such Phase 2 TBD items on macOS.
 - Tracking `docs/superpowers/` content.

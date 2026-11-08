@@ -1046,8 +1046,8 @@ try {
       check(`header[${pad}]: first tab at x=19`, m.tabs[0].left === 19, J);
       check(`header[${pad}]: icon 7 from the tab edge, name 6 after it`, m.tabs.every(t => t.iconL === 7 && t.gap === 6), J);
       check(`header[${pad}]: unselected tabs 7 px right of the name`, m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
-      // The Xbox Nano never has one (Bluetooth LE: the app cannot turn it off), selected or not.
-      check(`header[${pad}]: power key only on the selected tab, never on the Nano`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad && q !== 'xbox_nano' ? 1 : 0))), J);
+      // The Nano has one too, greyed out and disabled (Bluetooth LE: the app cannot turn it off).
+      check(`header[${pad}]: power key only on the selected tab (greyed out on the Nano)`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
       check(`header[${pad}]: tabs, segments, gear, lamps on whole pixels; 關 39 / 鍵鼠 59 wide`, m.ints.length === 0 && m.offW === 39 && m.kbmW === 59 && !!sel, J);
       if (pad === 'xbox_nano') {
         // The Nano on 手把: the joined Xbox／手把 option lit, the header still fits and the gear stays put.
@@ -1220,9 +1220,15 @@ try {
     const segsN = () => page.locator('#board .omode button').evaluateAll(els => els.map(e => ({
       cls: e.className, mode: e.dataset.mode, text: e.textContent.trim(), svg: e.querySelectorAll('svg').length, on: e.getAttribute('aria-pressed') })));
     const joined = () => page.evaluate(() => { const j = document.querySelector('#board .omode .xjoin'); return j && { on: j.classList.contains('on'), w: j.getBoundingClientRect().width, n: j.querySelectorAll('button').length }; });
-    // No ⏻ on the Nano: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
-    check('Nano tab: connected and selected, no power key', (await page.locator('#board .hdr .pwr').count()) === 0 &&
-      (await page.locator('#board .pdw.act [data-pad="xbox_nano"]').count()) === 1);
+    // ⏻ on the Nano is shown but greyed out: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
+    check('Nano tab: connected and selected, one power key, disabled, exact title',
+      (await page.locator('#board .hdr .pwr').count()) === 1 &&
+      (await page.locator('#board .pdw.act [data-pad="xbox_nano"]').count()) === 1 &&
+      await page.locator('#board .hdr .pwr').isDisabled() &&
+      (await page.locator('#board .hdr .pwr').getAttribute('title')) === 'Xbox Nano 無法從電腦關機：請長按 Xbox 鍵約 6 秒');
+    const dcBefore = await countCalls(page, 'disconnect_gamepad');
+    await page.locator('#board .hdr .pwr').click({ force: true });
+    check('Nano ⏻ click sends no disconnect_gamepad', (await countCalls(page, 'disconnect_gamepad')) === dcBefore);
     const sg = await segsN();
     check('Nano: four segments 關／鍵鼠／Xbox／手把, each with its icon',
       JSON.stringify(sg.map(x => x.text)) === '["關","鍵鼠","Xbox","手把"]' && sg.every(x => x.svg === 1), JSON.stringify(sg));
@@ -1267,6 +1273,42 @@ try {
       await page.evaluate(() => { const y = k => document.querySelector(`#board .slot[data-slot="${k}"]`).getBoundingClientRect().top, pad = document.querySelector('#board svg.pad').getBoundingClientRect(); return y('29') > pad.top + 150 && [4, 5, 6].every(k => y(k) < pad.top); }), JSON.stringify(tags));
     check('Nano face slots read Y／X／B／A', tags['3'] === 'Y' && tags['2'] === 'X' && tags['1'] === 'B' && tags['0'] === 'A', JSON.stringify(tags));
     check('Nano has no touchpad / GL / GR / C slots', (await page.locator('#board .slot[data-slot="25"], #board .slot[data-slot="30"], #board .slot[data-slot="31"], #board .slot[data-slot="32"]').count()) === 0);
+    // Share never reaches the computer (not in the XInput state, nor the HID report): its slot is greyed out and
+    // cannot be bound — no click, double click, tile drop or swap sends anything.
+    const share = slot(page, '29');
+    check('Nano Share slot: disabled, exact title, not draggable',
+      await share.isDisabled() && (await share.getAttribute('title')) === 'Xbox Nano 的 Share 鍵目前不會送給電腦' &&
+      (await share.getAttribute('draggable')) === 'false', String(await share.getAttribute('title')));
+    const shareCalls = async () => (await countCalls(page, 'set_binding')) + (await countCalls(page, 'swap_bindings'));
+    const sb0 = await shareCalls(), cap0 = await countCalls(page, 'set_capture_active');
+    await share.click({ force: true });
+    await settle(page);
+    check('Nano Share slot: a click never selects it for capture', await page.evaluate(() => !document.querySelector('#board .slot.sel')) &&
+      (await countCalls(page, 'set_capture_active')) === cap0);
+    await page.click('#board [data-tile="Q"]');
+    await share.click({ force: true });
+    await settle(page);
+    await share.dblclick({ force: true });
+    await settle(page);
+    await page.evaluate(() => { const d = new DataTransfer(); const s = document.querySelector('#board .slot[data-slot="29"]');
+      document.querySelector('#board [data-tile="W"]').dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: d }));
+      document.querySelector('#board [data-tile="W"]').dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: d })); });
+    // A bound slot (the first one lit) dragged onto Share: no swap, and it is not cleared as dragged out.
+    const boundKey = await page.evaluate(() => document.querySelector('#board .slot.on:not([data-slot="29"])')?.dataset.slot);
+    const boundText = boundKey ? await slotText(page, boundKey) : '';
+    await page.evaluate(k => { const d = new DataTransfer(); const s = document.querySelector('#board .slot[data-slot="29"]'), a = document.querySelector(`#board .slot[data-slot="${k}"]`);
+      a.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: d }));
+      a.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: d })); }, boundKey);
+    await settle(page);
+    check('Nano Share slot: click, double click, tile drop and slot swap send no set_binding / swap_bindings', (await shareCalls()) === sb0,
+      JSON.stringify((await calls(page)).slice(-4)));
+    if (await page.locator('#board .tile.picked').count()) await page.click('#board .tile.picked');
+    check('Nano: a bound slot dropped on Share keeps its own key', !!boundText && (await slotText(page, boundKey)) === boundText,
+      boundKey + ' ' + boundText + ' → ' + (boundKey && await slotText(page, boundKey)));
+    await settle(page);
     await page.click('#board .qcap [data-qs="L"][data-mode="single"]');
     await settle(page);
     check('Nano 單鍵 folds LT into one slot tagged LT', (await tagOf('23')) === 'LT', String(await tagOf('23')));

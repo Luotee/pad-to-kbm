@@ -20,10 +20,10 @@ pub mod ns_protocol;
 pub mod ns2_ble;
 pub mod ns2_protocol;
 pub mod pad;
-pub mod raw_share;
 pub mod rumble;
 pub mod stick_cal;
 pub mod xbox_protocol;
+pub mod xinput_source;
 
 pub use battery::Battery;
 pub use controller::ControllerKind;

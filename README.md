@@ -78,11 +78,11 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
     <td><sub><b>自訂顏色。</b>點「＋」，拖色相和飽和兩條色帶，或直接打色碼。</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/readme/xbox-nano.png" alt="Xbox Nano 分頁：按住 Share，Share 格子和鍵盤的 F12 亮起"></td>
+    <td><img src="docs/images/readme/xbox-nano.png" alt="Xbox Nano 分頁：按住 Xbox 鍵，Xbox 格子和鍵盤的 F12 亮起；Share 格子是灰的"></td>
     <td><img src="docs/images/readme/known-pads.png" alt="設定的記住的手把分頁：DualSense 藍牙 23:D2，Xbox Nano 藍牙 F9:A8 連線中"></td>
   </tr>
   <tr>
-    <td><sub><b>Xbox Nano。</b>每顆鍵都能綁，Share 也可以（這裡送 F12）。四支手把的圖都照實物描的。</sub></td>
+    <td><sub><b>Xbox Nano。</b>Xbox 鍵也能綁（這裡送 F12）；Share 鍵不會送給電腦，格子是灰的。四支手把的圖都照實物描的。</sub></td>
     <td><sub><b>記住的手把。</b>藏過的手把會留在這裡，藍牙手把附上位址末四碼；連線中的不能刪。</sub></td>
   </tr>
 </table>
@@ -121,13 +121,13 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 缺什麼，選 Xbox 時的提示會列出來，按一下就下載官方安裝程式、核對檔案後執行（會要求系統管理員權限）。
 連過一次的手把會被記住，之後先開 PadToKBM 再開手把就直接藏好；如果開程式時手把已經開著，程式會先把它關機，按 PS／HOME 鍵打開就好。只有需要重連的那一支會被關機：有兩支同型號的手把時，正在用的那支不受影響。記住的手把可以在「設定 → 記住的手把」刪除；藍牙手把會顯示藍牙位址末四碼（例如 23:D2），同型號的兩支分得出來。
 畫面出現「再連一次」時，要按分頁上的電源鍵斷開、再按 PS／HOME 鍵連回來一次；手把用 USB 線連著時，畫面會改說拔掉 USB 線再插回去。從 Xbox 切到鍵鼠，手把仍然藏著；切到「手把」或關掉程式，手把就不再藏起來（切到「關」不會放回來）。
-Xbox Nano 不需要這些：它本來就是 Xbox 手把，選「Xbox」或「手把」都是讓遊戲直接讀它。它走低功耗藍牙，PadToKBM 沒辦法替它關機，所以它的分頁沒有電源鍵；鍵鼠模式出現「再連一次」時，長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開。
+Xbox Nano 不需要這些：它本來就是 Xbox 手把，選「Xbox」或「手把」都是讓遊戲直接讀它。它走低功耗藍牙，PadToKBM 沒辦法替它關機，所以它分頁上的電源鍵是灰的、按不動；鍵鼠模式出現「再連一次」時，長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開。
 遊戲的震動目前還不會轉給手把。
 
 ### Xbox Nano 按 Xbox 鍵會跳出 Xbox Game Bar？
 
 那是 Windows 自己的功能，不是 PadToKBM 送的。不想要的話，到 Windows「設定 → 遊戲 → Game Bar」把「允許您的控制器開啟 Game Bar」關掉（Windows 10 叫「使用控制器上的這個按鈕開啟 Xbox Game Bar」）。
-Xbox 鍵和 Share 鍵在 PadToKBM 裡一樣可以綁鍵；Share 是從 Windows 的鍵盤輸入讀到的（Raw Input，只讀不攔）。
+Xbox 鍵在 PadToKBM 裡一樣可以綁鍵；Share 鍵目前不會送給電腦，所以它的格子是灰的、不能綁。裝了微軟的 Xbox 無線驅動程式時，PadToKBM 改從 XInput 讀 Nano（自動判斷，不用設定）。
 
 ### 設定檔在哪？可以直接改嗎？
 
@@ -140,7 +140,7 @@ Xbox 鍵和 Share 鍵在 PadToKBM 裡一樣可以綁鍵；Share 是從 Windows �
 
 ### 不想用的時候可以把手把關掉嗎？
 
-可以，點手把名稱旁的電源鍵。配對會保留，按 PS／HOME 鍵就能再連上。Xbox Nano 例外：它的分頁沒有電源鍵，要長按 Xbox 鍵約 6 秒關機。
+可以，點手把名稱旁的電源鍵。配對會保留，按 PS／HOME 鍵就能再連上。Xbox Nano 例外：它分頁上的電源鍵是灰的，要長按 Xbox 鍵約 6 秒關機。
 只想讓遊戲直接用手把（不轉鍵鼠）就選「手把」；暫時不想讓它送東西就選「關」。
 
 ### 想讓遊戲或 Steam 控制燈條，怎麼辦？

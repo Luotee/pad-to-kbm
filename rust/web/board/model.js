@@ -81,6 +81,13 @@ export function tileToKey(tile) {
   return tile;
 }
 
+// Slots the board never binds: the reason (its title), or '' when the slot is usable. The Xbox Nano's
+// Share (29) reaches neither the XInput state nor the HID report, so a binding there could never fire.
+const OFF_SLOTS = { xbox_nano: { 29: 'Xbox Nano 的 Share 鍵目前不會送給電腦' } };
+export function slotOff(pad, key) {
+  return OFF_SLOTS[pad]?.[String(key)] || '';
+}
+
 // The label stored with an entry: the base entry's label for that id.
 export function slotLabel(config, pad, key) {
   const { id } = slotRef(key);

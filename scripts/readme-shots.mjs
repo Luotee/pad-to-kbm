@@ -51,8 +51,8 @@ config.output_mode = { ...config.output_mode, ns2_pro: 'kbm' };
 // DualSense: L2 stays a quick page, R2 is a plain key, so the board shows both trigger modes.
 config.pads.dualsense.trigger_mode = { l: 'page', r: 'key' };
 { const b = config.pads.dualsense.buttons; b['24'] = { label: b['24'].label, type: 'key', value: 'LCtrl' }; }
-// Xbox Nano: Share (29) sends F12, so its shot shows Share held.
-{ const b = config.pads.xbox_nano.buttons; b['29'] = { label: b['29'].label, type: 'key', value: 'F12' }; }
+// Xbox Nano: the Xbox key (5) sends F12, so its shot shows it held (Share, 29, is greyed out: it never reaches the PC).
+{ const b = config.pads.xbox_nano.buttons; b['5'] = { label: b['5'].label, type: 'key', value: 'F12' }; }
 // 設定 → 記住的手把: a DualSense on Bluetooth and the Xbox Nano (connected now).
 const NANO_ID = 'HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\\8&113d3dd1&0&0000';
 config.hidhide_known = [
@@ -198,12 +198,12 @@ try {
   await shot('macro-editor.png');
   await page.click('#board .med [data-act="mdone"]');
 
-  // 7. Xbox Nano (v3.7.0): its traced art, Share held (bound to F12).
+  // 7. Xbox Nano (v3.7.0): its traced art, the Xbox key held (bound to F12), Share greyed out.
   await page.click('#board [data-pad="xbox_nano"]');
-  await emit('button-down', { id: 29 });
-  await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F12', action: 'down', source: { button: 29 } });
+  await emit('button-down', { id: 5 });
+  await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F12', action: 'down', source: { button: 5 } });
   await shot('xbox-nano.png');
-  await emit('button-up', { id: 29 });
+  await emit('button-up', { id: 5 });
   await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F12', action: 'up' });
 
 } finally {

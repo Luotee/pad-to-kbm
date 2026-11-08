@@ -67,7 +67,7 @@ fn each_button_fixture_presses_only_its_button() {
 
 #[test]
 fn share_is_not_in_the_gamepad_report() {
-    // Share comes from the Nano's keyboard collection (Raw Input), not here.
+    // Share is not in the gamepad report (nor in XInput): the board greys it out.
     let states = decode_all("share");
     assert!(pressed_ids(&states).is_empty(), "share.hex: {:?}", pressed_ids(&states));
 }

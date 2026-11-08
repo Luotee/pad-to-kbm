@@ -32,7 +32,8 @@ const NS2_PRO_CAPS: [u32; 29] = [
     30, 31, 32,
 ];
 
-/// Xbox Nano: 0..=24 plus 29 (Share, read from Raw Input). Same set as the
+/// Xbox Nano: 0..=24 plus 29 (Share: listed, but never sent to the PC, so
+/// the board greys it out). Same set as the
 /// Switch Pro; the ids keep the DualSense numbering.
 const XBOX_NANO_CAPS: [u32; 26] = NS_PRO_CAPS;
 

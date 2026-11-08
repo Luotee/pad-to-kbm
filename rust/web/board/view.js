@@ -5,7 +5,7 @@ import { layoutFor, slotsOf, groupSlots, routeHTML } from './layout.js';
 import { padSvg } from './padart.js';
 import { esc, tagSvg, TAGTXT, switchHTML } from './tags.js';
 import { LABEL } from './keys.js';
-import { boardBinds, PADS, PAD_NAMES } from './model.js';
+import { boardBinds, PADS, PAD_NAMES, slotOff } from './model.js';
 import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
 import { battSvg, tipHTML } from './battery.js';
@@ -82,10 +82,12 @@ export function disp(k) {
 }
 
 function slotBtn(st, key, tag, x, y, b) {
-  const k = b[key] || '', mac = k.startsWith('M:'), wait = st.sel === key;
+  const k = b[key] || '', mac = k.startsWith('M:'), wait = st.sel === key, off = slotOff(st.pad, key);
+  // A slot the pad never sends (the Nano's Share) is greyed out and disabled; events.js ignores it too.
   return '<button type="button" class="slot' + (k ? ' on' : '') + (mac ? ' mac' : '') + (st.held[key] ? ' hit' : '') + (wait ? ' wait sel' : '') +
-    '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k ? 'true' : 'false') + '" aria-label="' +
-    esc((TAGTXT[tag] || tag) + (k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
+    '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k && !off ? 'true' : 'false') + '"' +
+    (off ? ' disabled title="' + esc(off) + '"' : '') + ' aria-label="' +
+    esc((TAGTXT[tag] || tag) + (off ? '：無法使用' : k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
     '<span class="val">' + esc(disp(k)) + '</span></button>';
 }
 
@@ -109,15 +111,17 @@ export function render(st) {
   const pad = st.pad, cfg = st.config, modes = triggerModes(cfg, pad), L = layoutFor(pad, modes), b = boardBinds(cfg, pad);
   let h = '<header class="hdr"><div class="ttl">按鍵設定</div><div class="pads">';
   for (const p of PADS) {
-    // No power key on the Xbox Nano: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
-    const c = st.connected.has(p), act = pad === p, pwr = c && act && p !== 'xbox_nano';
+    // The Xbox Nano's power key is greyed out and disabled: the app cannot turn a Bluetooth LE pad off.
+    const c = st.connected.has(p), act = pad === p, pwr = c && act, nano = p === 'xbox_nano';
     // v3.8.0: a connected pad whose battery is readable shows it in place of the lamp, and the plate on hover.
     const bt = c && st.battery ? st.battery[p] : null;
     h += '<span class="pdw' + (act ? ' act' : '') + (c ? ' c' : '') + '"><button type="button" class="pd' + (act ? ' act' : '') + '" data-pad="' + p +
       '" aria-pressed="' + act + '" aria-label="' + PAD_NAMES[p] + (c ? '（已連線）' : '（未連線）') + '">' +
       (bt ? '<span class="tbatt">' + battSvg(bt, '#ffffff') + '</span>' : '<span class="live' + (c ? '' : ' idle') + '"></span>') + '<span>' +
       PAD_NAMES[p] + '</span></button>' + (bt ? tipHTML(bt) : '') +
-      (pwr ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
+      (pwr ? (nano
+        ? '<button type="button" class="pwr" disabled aria-label="斷開 ' + PAD_NAMES[p] + '（無法使用）" title="Xbox Nano 無法從電腦關機：請長按 Xbox 鍵約 6 秒">' + ICON.power + '</button>'
+        : '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>') : '') + '</span>';
   }
   // The DualSense touchpad-cursor switch sits left of 連線震動 (reskin Q18), so the other controls keep
   // their place when it comes and goes; it locks with the board outside 鍵鼠 (events.js LOCKED).
