@@ -1069,6 +1069,148 @@ try {
     await settle(page);
   }
 
+  // ── v3.8.0: the pad battery. controller-status.battery (readable connected pads only) puts a 13x7 pixel
+  // battery in place of the lamp, a breathing bolt over it while charging, and a grey plate on hover. ──
+  {
+    const ALL = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'];
+    const BATT = { dualsense: { pct: 80, charging: false }, ns_pro: { pct: 75, charging: false }, xbox_nano: { pct: 60, charging: true } };
+    const status = (pads, battery) => page.evaluate(([p, b]) => window.__mockEmit('controller-status',
+      { connected: true, kind: p[0] || null, connected_pads: p, warnings: [], off_pads: [], battery: b }), [pads, battery]);
+    const icons = () => page.evaluate(() => [...document.querySelectorAll('#board .pdw')].map(w =>
+      (w.querySelector('.tbatt') ? 'batt' : '') + (w.querySelector('.live') ? (w.querySelector('.live.idle') ? 'idle' : 'live') : '') + (w.querySelector('.btip') ? '+tip' : '')));
+    const bars = () => page.evaluate(() => [...document.querySelectorAll('#board .pdw')].map(w => {
+      const s = w.querySelector('.tbatt svg');
+      if (!s) return null;
+      const n = c => s.innerHTML.split('fill="' + c + '"').length - 1;
+      return { g: n('#7ee05a'), y: n('#ffd23f') - (s.querySelector('.bolt') ? 1 : 0), r: n('#ff5a4a'), bolt: s.querySelectorAll('.bolt').length };
+    }));
+    await status(ALL, BATT);
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+    const ic = await icons();
+    check('battery: a tab with a battery shows it instead of the lamp, plus its plate; Switch 2 Pro keeps the green lamp',
+      JSON.stringify(ic) === JSON.stringify(['batt+tip', 'batt+tip', 'live', 'batt+tip']), JSON.stringify(ic));
+    const bs = await bars();
+    check('battery: bars by level and colour (80 → 3 green, 75 → 3 green, 60 → 2 yellow), the bolt on the charging Nano only',
+      JSON.stringify(bs) === JSON.stringify([{ g: 3, y: 0, r: 0, bolt: 0 }, { g: 3, y: 0, r: 0, bolt: 0 }, null, { g: 0, y: 2, r: 0, bolt: 1 }]), JSON.stringify(bs));
+    for (const [pct, want] of [[50, { g: 0, y: 2, r: 0, bolt: 0 }], [20, { g: 0, y: 0, r: 1, bolt: 0 }], [5, { g: 0, y: 0, r: 0, bolt: 0 }]]) {
+      await status(ALL, { ...BATT, dualsense: { pct, charging: false } });
+      await settle(page);
+      const b = (await bars())[0];
+      check(`battery: ${pct}% → ${want.g + want.y + want.r} bar(s), ${want.y ? 'yellow' : want.r ? 'red' : 'none'}`, JSON.stringify(b) === JSON.stringify(want), JSON.stringify(b));
+    }
+    await status(ALL, BATT);
+    await settle(page);
+    const pos = await page.evaluate(() => {
+      const R = e => e.getBoundingClientRect(), win = R(document.getElementById('win'));
+      return [...document.querySelectorAll('#board .pdw')].filter(w => w.querySelector('.tbatt')).map(w => {
+        const b = R(w.querySelector('.tbatt')), s = R(w.querySelector('.tbatt svg'));
+        return { act: w.classList.contains('act'), bx: b.left - win.left, by: b.top - win.top, bw: b.width, bh: b.height, sx: s.left - win.left, sy: s.top - win.top, sw: s.width, sh: s.height };
+      });
+    });
+    console.log(`  battery positions: ${JSON.stringify(pos)}`);
+    check('battery: the 8 px box and the 13x9 svg on whole pixels (selected and unselected tabs)',
+      pos.length === 3 && pos.every(p => [p.bx, p.by, p.sx, p.sy].every(Number.isInteger) && p.bw === 13 && p.bh === 8 && p.sw === 13 && p.sh === 9 && p.sx === p.bx && p.sy === p.by), JSON.stringify(pos));
+    // The plate: hidden until the battery is hovered, then below the tab, inside the window, on whole pixels.
+    const plate = pad => page.evaluate(p => {
+      const R = e => e.getBoundingClientRect(), win = R(document.getElementById('win')), t = document.querySelector(`#board .pdw:has([data-pad="${p}"]) .btip`);
+      if (!t) return null;
+      const r = R(t), s = R(t.querySelector('svg')), x = R(t.querySelector('span')), tab = R(t.parentElement), cs = getComputedStyle(t);
+      return { shown: cs.display !== 'none', text: t.textContent, left: r.left - win.left, top: r.top - win.top, right: r.right - win.left, bottom: r.bottom - win.top, w: r.width, h: r.height,
+        winW: win.width, winH: win.height, tabBottom: tab.bottom - win.top, bg: cs.backgroundColor, clip: cs.clipPath !== 'none', color: cs.color,
+        svg: { x: s.left - r.left, y: s.top - r.top, w: s.width, h: s.height }, txt: { x: x.left - r.left, y: x.top - r.top, r: r.right - x.right, b: r.bottom - x.bottom } };
+    }, pad);
+    await page.mouse.move(500, 400);
+    await settle(page);
+    const before = await plate('dualsense');
+    check('battery plate hidden until hovered', before && !before.shown, JSON.stringify(before));
+    await page.hover('#board [data-pad="dualsense"] .tbatt');
+    await settle(page);
+    const tip = await plate('dualsense');
+    const inBox = t => t.txt.x >= 0 && t.txt.y >= 0 && t.txt.r >= 0 && t.txt.b >= 0 && t.svg.x >= 0 && t.svg.y >= 0 && t.svg.y + t.svg.h <= t.h;
+    console.log(`  battery plate (DualSense): ${JSON.stringify(tip)}`);
+    check('hover DualSense battery → grey notched plate, white 80%, doubled battery, inside the window on whole pixels',
+      tip && tip.shown && tip.text === '80%' && tip.bg === 'rgb(119, 133, 147)' && tip.clip && tip.color === 'rgb(255, 255, 255)' &&
+      tip.svg.w === 26 && tip.svg.h === 18 && inBox(tip) && tip.top >= tip.tabBottom &&
+      tip.left >= 0 && tip.top >= 0 && tip.right <= tip.winW && tip.bottom <= tip.winH && [tip.left, tip.top, tip.svg.x, tip.svg.y, tip.txt.y].every(Number.isInteger), JSON.stringify(tip));
+    await page.screenshot({ path: path.join(outDir, 'web-battery-hover.png'), animations: 'disabled' });
+    await page.hover('#board [data-pad="xbox_nano"] .tbatt');
+    await settle(page);
+    const tipN = await plate('xbox_nano');
+    console.log(`  battery plate (Nano, charging): ${JSON.stringify(tipN)}`);
+    check('hover the charging Nano → 60% 充電中, inside the window on whole pixels', tipN && tipN.shown && tipN.text === '60% 充電中' && !tipN.text.includes('約') &&
+      inBox(tipN) && tipN.right <= tipN.winW && [tipN.left, tipN.top, tipN.txt.y].every(Number.isInteger), JSON.stringify(tipN));
+    await page.screenshot({ path: path.join(outDir, 'web-battery-charging.png'), animations: 'disabled' });
+    await page.hover('#board [data-pad="ns_pro"] .tbatt');
+    await settle(page);
+    const tipP = await plate('ns_pro');
+    check('Switch Pro plate says 75% (no 約)', tipP && tipP.shown && tipP.text === '75%', JSON.stringify(tipP));
+    await page.mouse.move(500, 400);
+    await settle(page);
+    // The bolt breathes (1.6 s, opacity 1 → .15 → 1); with reduced motion it stands still at full opacity.
+    const anim = () => page.evaluate(() => {
+      const b = document.querySelector('#board .pdw:has([data-pad="xbox_nano"]) .tbatt .bolt'), cs = b && getComputedStyle(b);
+      return cs && { name: cs.animationName, dur: cs.animationDuration, ease: cs.animationTimingFunction, iter: cs.animationIterationCount, op: cs.opacity };
+    });
+    const a1 = await anim();
+    check('charging bolt breathes: 1.6 s ease-in-out, infinite', !!a1 && a1.name !== 'none' && a1.dur === '1.6s' && a1.ease === 'ease-in-out' && a1.iter === 'infinite', JSON.stringify(a1));
+    const kf = await page.evaluate(name => {
+      for (const sh of document.styleSheets) for (const r of sh.cssRules) if (r.type === CSSRule.KEYFRAMES_RULE && r.name === name) return [...r.cssRules].map(k => k.keyText + ':' + k.style.opacity);
+      return null;
+    }, a1 ? a1.name : '');
+    check('charging bolt keyframes: opacity 1 → 0.15 → 1', JSON.stringify(kf) === JSON.stringify(['0%, 100%:1', '50%:0.15']), JSON.stringify(kf));
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await settle(page);
+    const a2 = await anim();
+    check('reduced motion: the bolt does not move and stays at opacity 1', !!a2 && a2.name === 'none' && a2.op === '1', JSON.stringify(a2));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    // Disconnect: a status without ns_pro → its tab is back to the (idle) lamp, no plate; a battery entry for a pad
+    // that is not connected is ignored.
+    await status(['dualsense', 'ns2_pro', 'xbox_nano'], BATT);
+    await settle(page);
+    const ic2 = await icons();
+    check('Switch Pro disconnects → its tab is back to the lamp, no battery, no plate', JSON.stringify(ic2) === JSON.stringify(['batt+tip', 'idle', 'live', 'batt+tip']), JSON.stringify(ic2));
+    await status(['dualsense', 'ns2_pro', 'xbox_nano'], {});
+    await settle(page);
+    const ic3 = await icons();
+    check('a status with no battery → every connected tab shows the green lamp', JSON.stringify(ic3) === JSON.stringify(['live', 'idle', 'live', 'live']), JSON.stringify(ic3));
+    // Header: all four connected, every one with a battery, the ! shown — still fits, gear 30 at 975, whole pixels.
+    await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null });
+    const FULL = { dualsense: { pct: 100, charging: true }, ns_pro: { pct: 25, charging: false }, ns2_pro: { pct: 50, charging: true }, xbox_nano: { pct: 10, charging: false } };
+    await status(ALL, FULL);
+    for (const pad of ALL) {
+      await page.click(`#board [data-pad="${pad}"]`);
+      await settle(page);
+      const want = pad === 'ns2_pro' ? 'xbox' : 'kbm';
+      if ((await modeOf()) !== want) { await page.click(`#board .omode [data-mode="${want}"]`); await settle(page); }
+      if ((await pop().count()) === 1) { await page.click('#board [data-act="vglater"]'); await settle(page); }
+      const m = await page.evaluate(() => {
+        const R = e => e.getBoundingClientRect(), win = R(document.getElementById('win')), hdr = document.querySelector('#board .hdr');
+        return {
+          fit: hdr.scrollWidth <= hdr.clientWidth, bang: document.querySelectorAll('#board .hdr .vgbang').length,
+          gearW: R(hdr.querySelector('.gear')).width, gearRight: R(hdr.querySelector('.gear')).right - win.left,
+          tabs: [...document.querySelectorAll('#board .pdw .pd')].map(pd => {
+            const r = R(pd), ic = R(pd.querySelector('.tbatt')), nm = R(pd.querySelector(':scope > span:last-child'));
+            return { act: pd.classList.contains('act'), left: r.left - win.left, w: r.width, iconL: ic.left - r.left, gap: nm.left - ic.right, right: r.right - nm.right };
+          }),
+          free: R(hdr.querySelector('.sp')).width,
+          ints: [...document.querySelectorAll('#board .pd, #board .omode button, #board .gear, #board .tbatt, #board .tbatt svg')].filter(e => !Number.isInteger(R(e).left) || !Number.isInteger(R(e).top)).map(e => e.className.baseVal ?? e.className),
+        };
+      });
+      const J = JSON.stringify(m);
+      console.log(`  battery header[${pad}]: ${J}`);
+      check(`battery header[${pad}]: four batteries and the ! fit 980 px, gear 30 wide at 975, first tab at 19`, m.fit && m.bang === 1 && m.gearW === 30 && m.gearRight === 975 && m.tabs[0].left === 19, J);
+      check(`battery header[${pad}]: battery 7 from the tab edge, name 6 after it; unselected tabs 7 right of the name`,
+        m.tabs.every(t => t.iconL === 7 && t.gap === 6) && m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
+      check(`battery header[${pad}]: tabs, segments, gear, batteries on whole pixels`, m.ints.length === 0, J);
+      if (pad === 'dualsense') await page.screenshot({ path: path.join(outDir, 'web-battery-four.png'), animations: 'disabled' });
+    }
+    await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
+    await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); window.__mockEmit('config-changed', { source: 'external' }); });
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+  }
+
   // ── v3.7.0: Xbox Nano tab. The Nano is an Xbox pad already: Xbox and 手把 are one option (stored as
   // `pad`), the pink spans both cells; LT／RT, LB／RB and View／Xbox／Menu／Share name its keys. ──
   {

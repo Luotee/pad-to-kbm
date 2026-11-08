@@ -598,3 +598,17 @@ html,body,#app{background:transparent !important}
 .mock .obanner.rc span{display:flex;align-items:center;gap:3px}
 /* 鍵鼠 reconnect hint: the 這次不再提醒 button sits in the banner and takes clicks. */
 .mock .obanner.rc .mini{pointer-events:auto;height:20px;padding:0 8px;display:inline-flex;align-items:center;margin-left:4px;font-size:12px}
+/* v3.8.0 pad battery: the 13x9 pixel battery takes the lamp's place in the tab (7 px from the edge, 6 to the name),
+   drawn in an 8 px box from its top (the battery's own 7 rows sit at rows 1..7, the bolt's ring may poke out by a
+   row), so selected and unselected tabs put it on whole pixels as they did the lamp. Charging: the bolt breathes
+   (1.6 s, opacity 1 → .15 → 1); reduced motion leaves it still at full opacity. Hover: the grey notched caption
+   plate (as the L2/R2 plates) under the tab, the battery doubled + "80%" (+ 充電中). */
+.mock .tbatt{flex:none;display:flex;align-items:flex-start;height:8px}
+.mock .tbatt svg,.mock .btip svg{display:block}
+.mock .bolt{animation:battBreathe 1.6s ease-in-out infinite}
+@keyframes battBreathe{0%,100%{opacity:1}50%{opacity:.15}}
+@media (prefers-reduced-motion:reduce){.mock .bolt{animation:none;opacity:1}}
+.mock .btip{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:20;height:26px;box-sizing:border-box;padding:0 8px;gap:6px;align-items:center;
+  white-space:nowrap;pointer-events:none;background:#778593;clip-path:var(--notch);color:#fff;font-size:12px;line-height:12px}
+.mock .btip>span{display:block;height:12px}
+.mock .pdw:hover .btip{display:flex}

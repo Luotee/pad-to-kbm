@@ -8,6 +8,7 @@ import { LABEL } from './keys.js';
 import { boardBinds, PADS, PAD_NAMES } from './model.js';
 import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
+import { battSvg, tipHTML } from './battery.js';
 import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
 import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner, reconnectDismissable, autoOffBanner } from './vigem.js';
@@ -110,9 +111,12 @@ export function render(st) {
   for (const p of PADS) {
     // No power key on the Xbox Nano: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
     const c = st.connected.has(p), act = pad === p, pwr = c && act && p !== 'xbox_nano';
+    // v3.8.0: a connected pad whose battery is readable shows it in place of the lamp, and the plate on hover.
+    const bt = c && st.battery ? st.battery[p] : null;
     h += '<span class="pdw' + (act ? ' act' : '') + (c ? ' c' : '') + '"><button type="button" class="pd' + (act ? ' act' : '') + '" data-pad="' + p +
-      '" aria-pressed="' + act + '" aria-label="' + PAD_NAMES[p] + (c ? '（已連線）' : '（未連線）') + '"><span class="live' + (c ? '' : ' idle') + '"></span><span>' +
-      PAD_NAMES[p] + '</span></button>' +
+      '" aria-pressed="' + act + '" aria-label="' + PAD_NAMES[p] + (c ? '（已連線）' : '（未連線）') + '">' +
+      (bt ? '<span class="tbatt">' + battSvg(bt, '#ffffff') + '</span>' : '<span class="live' + (c ? '' : ' idle') + '"></span>') + '<span>' +
+      PAD_NAMES[p] + '</span></button>' + (bt ? tipHTML(bt) : '') +
       (pwr ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
   }
   // The DualSense touchpad-cursor switch sits left of 連線震動 (reskin Q18), so the other controls keep
