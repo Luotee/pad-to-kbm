@@ -335,7 +335,10 @@ regresses real, observed bugs the codebase already fixed once:
    once per pad per launch (`platform::power_off_addrs`, the ⏻'s
    `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
    address (USB) is not touched, nor is a Bluetooth LE pad (the Xbox Nano:
-   its address is shown, but that IOCTL is a classic-Bluetooth disconnect).
+   its address is shown, but that IOCTL is a classic-Bluetooth disconnect;
+   its tab has no ⏻ either). Of the Nano only the gamepad collection
+   (`&Col01`) is hidden and remembered: its keyboard collection carries
+   Share (Raw Input).
    Connection state still comes from the HID
    stream (iron rule 11).
    Hooking and injection stay forbidden.
@@ -387,7 +390,12 @@ regresses real, observed bugs the codebase already fixed once:
     report-stream deadline (DualSense 800 ms, Switch Pro
     1000 ms; the Switch 2 Pro over BLE uses the BLE disconnect event or
     1000 ms without a decoded report; the Xbox Nano reports only on
-    change, so it has no deadline: read error or manual disconnect).
+    change, so it has no deadline: read error, manual disconnect, or —
+    after 2 s without a report — its HID device path no longer
+    enumerated; present but silent keeps the session). The two HID
+    workers share hidapi's C library, whose global state has no lock:
+    every `HidApi::new` / `refresh_devices` / `open_device` goes through
+    `hid_source::with_hidapi`.
     `SourceHub` forwards only the owner's events. No more `is_connected()` cache, no
     more "must press a button to confirm" UX hack — the radio
     link presence is observed directly via report stream

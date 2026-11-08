@@ -20,9 +20,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   DualSense or a Switch Pro, in either order; one of them is in use at a
   time, as before. A Nano that is on but idle shows as connected at once when
   it answers the read of its current state, otherwise on its first input.
-- **鍵鼠 hides the Xbox Nano** with HidHide, like the DualSense / Switch Pro.
+- **鍵鼠 hides the Xbox Nano** with HidHide, like the DualSense / Switch Pro:
+  its gamepad device only, so its keyboard device (Share) stays readable.
   記住的手把 lists it as `Xbox Nano 藍牙 F9:A8` (its Bluetooth address's last
   four digits; the row's tooltip has the whole address).
+- A Nano that drops off without a read error (Windows keeps its device for a
+  while) is let go once nothing has come from it for 2 seconds and its
+  device is gone: the keys it held are released. A Nano that is still there
+  but idle stays connected.
+- **The title bar shows the version**: `PAD TO KBM v3.7.0`.
 - **Pad art traced from the product photos** for all four controllers:
   bodies, panels and keys where they are on the real pad, labels inside their
   key faces, and every line ends at its key.
@@ -33,19 +39,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controller, so both let the game read the Nano itself (no virtual pad, no
   ViGEmBus prompt) and light up together. An `output_mode` of `xbox` for the
   Nano reads as `pad`.
+- The Xbox Nano tab has no ⏻: the app cannot turn a Bluetooth LE controller
+  off (it would only reconnect). Turn it off on the controller (hold the Xbox
+  button for about 6 seconds).
 
 ### Migration
 
-- Older configs get the Xbox Nano's default table (`pads.xbox_nano`) and
-  `output_mode.xbox_nano: "kbm"` on load.
+- Older configs load with the Xbox Nano's default table (`pads.xbox_nano`);
+  a missing `output_mode.xbox_nano` reads as 鍵鼠 (nothing is written for it).
+  To let a game read the Nano directly, pick 手把.
 - The Xbox Nano is not turned off by the app: it uses Bluetooth LE, and the
-  automatic power-off (and the tab's ⏻) only drop a classic Bluetooth link.
+  automatic power-off only drops a classic Bluetooth link.
   When it was on while it got hidden, the 鍵鼠 「再連一次」 banner says 「再連一次
   Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開」
   (no ⏻).
 - The Xbox key may open the Xbox Game Bar: that is Windows (Settings →
   Gaming → Game Bar), not PadToKBM.
-- macOS: Phase 2 TBD for the Xbox Nano's Share (Raw Input is Windows only).
+- A config written by a v3.7.0 test build may remember all four of the
+  Nano's HID devices in `hidhide_known`; the extra ones (keyboard, mouse,
+  vendor) are dropped on load and the next write leaves them out, and the
+  next HidHide round takes them out of HidHide.
+- macOS: Phase 2 TBD for the Xbox Nano. It is Windows only, Share included
+  (Raw Input is Windows only).
 
 ## [3.6.0] - 2026-11-08
 
