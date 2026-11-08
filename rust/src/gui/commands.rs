@@ -783,11 +783,16 @@ pub async fn install_vigem(engine: State<'_, Handle>) -> Result<String, String> 
 /// HidHide missing or unsupported); `false` while the pad needs one
 /// reconnect (hiding is not applied yet); `true` when it is hidden.
 /// Hiding applies in 鍵鼠 and Xbox mode.
+/// `auto_off`: the app powered this pad off this launch because it needed
+/// that reconnect (the ⏻'s Bluetooth disconnect dropped its link), and it
+/// has not reconnected since; `false` once it is back, and when the
+/// power-off dropped no link (USB): then `hidden` stays `false`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct XboxStatus {
     pub vigem: String,
     pub hidhide: String,
     pub hidden: Option<bool>,
+    pub auto_off: bool,
 }
 
 /// Tauri command: [`XboxStatus`] for pad `kind` (slug). Probes both drivers
@@ -811,11 +816,12 @@ pub fn xbox_status_impl(engine: &Handle, kind: &str, vigem: &str, hidhide: &str)
     let k = ControllerKind::from_slug(kind).ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
     let link = engine.hider();
     let hidhide = if link.is_some() { hidhide } else { "unsupported" };
+    let auto_off = link.is_some() && engine.auto_off(k);
     let hidden = match link {
         Some(link) if hidhide == "installed" => link.hidden(k),
         _ => None,
     };
-    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden })
+    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden, auto_off })
 }
 
 /// Tauri command: download the pinned official HidHide installer, verify it

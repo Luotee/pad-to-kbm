@@ -11,7 +11,7 @@ import { outputMode, hasNative } from './view.js';
 import * as act from './actions.js';
 import { ICON } from './icons.js';
 
-// status: the selected pad's get_xbox_status reply { vigem, hidhide, hidden }, null until asked.
+// status: the selected pad's get_xbox_status reply { vigem, hidhide, hidden, auto_off }, null until asked.
 // stale: a controller-status / config-changed came in, so `hidden` may have changed.
 export const VG = { status: null, probing: false, next: null, autoOpened: false, quiet: false, stale: false, pop: false, busy: false, err: '', rcDismissed: new Set() };
 const NAME = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
@@ -110,6 +110,14 @@ export function reconnectBanner() {
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵連回來';
 }
 
+// The app powered this pad off itself because it needed that reconnect (`auto_off`): say so
+// while it is away. No 這次不再提醒: it goes when the pad is back.
+export function autoOffBanner() {
+  if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || !VG.status.auto_off) return '';
+  if (state.connected.has(state.pad)) return '';
+  return '已替你把 ' + NAME[state.pad] + ' 關機，好讓遊戲看不到它。按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵打開就能用了';
+}
+
 // The 鍵鼠 banner may be put off for this launch, per pad (memory only: no config, no IPC).
 export function reconnectDismissable() { return hideMode() === 'kbm'; }
 
@@ -152,10 +160,10 @@ export async function startVigem() {
     const quiet = VG.quiet; VG.quiet = false;
     if (mode === 'xbox' || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode, open: !quiet }); } else VG.pop = false;
   });
-  // Another tab: the drivers are the same, `hidden` is per pad (refreshed on the next paint).
+  // Another tab: the drivers are the same, `hidden` / `auto_off` are per pad (refreshed on the next paint).
   onPadChange(() => {
     VG.pop = false; VG.err = '';
-    if (VG.status) VG.status = { ...VG.status, hidden: null };
+    if (VG.status) VG.status = { ...VG.status, hidden: null, auto_off: false };
     VG.stale = true;
   });
   // A reconnect (controller-status) or a mode / config change can clear the reconnect banner.

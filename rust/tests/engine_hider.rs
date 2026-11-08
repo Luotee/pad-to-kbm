@@ -64,7 +64,8 @@ impl Control for FakeCtl {
     }
 }
 
-struct FakeBackend(FakeCtl);
+/// The driver and the present HID instance ids (a test may change them).
+struct FakeBackend(FakeCtl, Arc<Mutex<Vec<String>>>);
 
 impl Backend for FakeBackend {
     type Ctl = FakeCtl;
@@ -72,7 +73,7 @@ impl Backend for FakeBackend {
         Ok(self.0.clone())
     }
     fn present(&mut self) -> Vec<String> {
-        vec![MOUSE.to_string(), DS_USB.to_string()]
+        self.1.lock().unwrap().clone()
     }
     fn own_path(&mut self) -> Option<String> {
         Some(OWN.to_string())
@@ -110,6 +111,7 @@ struct Rig {
     engine: Engine,
     h: Handle,
     worker: HiderWorker,
+    present: Arc<Mutex<Vec<String>>>,
 }
 
 fn rig(cfg: Config) -> Rig {
@@ -121,6 +123,15 @@ fn rig_with(
     cfg: Config,
     learn: impl FnOnce(&Handle, &std::path::Path) -> Box<dyn Fn(Vec<KnownPad>) + Send>,
 ) -> Rig {
+    rig_present(cfg, &[MOUSE, DS_USB], learn)
+}
+
+fn rig_present(
+    cfg: Config,
+    present: &[&str],
+    learn: impl FnOnce(&Handle, &std::path::Path) -> Box<dyn Fn(Vec<KnownPad>) + Send>,
+) -> Rig {
+    let present = Arc::new(Mutex::new(present.iter().map(|s| s.to_string()).collect::<Vec<_>>()));
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("padtokbm.json");
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
@@ -130,14 +141,14 @@ fn rig_with(
     let h = engine.handle();
     let worker = HiderWorker::spawn(
         state_path.clone(),
-        FakeBackend(ctl.clone()),
+        FakeBackend(ctl.clone(), present.clone()),
         Duration::from_millis(20),
         Box::new(h.status_notifier()),
         learn(&h, &cfg_path),
     )
     .unwrap();
     h.attach_hider(worker.link());
-    Rig { _dir: dir, state_path, ctl, engine, h, worker }
+    Rig { _dir: dir, state_path, ctl, engine, h, worker, present }
 }
 
 fn hidden(h: &Handle) -> Option<bool> {
@@ -164,7 +175,8 @@ fn a_pad_is_hidden_in_kbm_and_xbox_and_released_on_pad() {
     // Leaves to 手把: the entry goes, the user's stays.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
     eventually("unhidden", || r.ctl.black() == vec![FOREIGN_DEV.to_string()]);
-    assert_eq!(hidden(&r.h), None);
+    // The status is published after the round that wrote the blacklist.
+    eventually("not applicable", || hidden(&r.h).is_none());
 
     r.worker.stop();
     r.engine.shutdown();
@@ -270,6 +282,112 @@ fn present_pads_cannot_be_forgotten_and_forget_all_keeps_them() {
     r.engine.shutdown();
 }
 
+// ── the app powers a pad off when it needs a replug (Task 9) ──
+
+use ControllerKind::DualSense as DS;
+
+fn auto_off(h: &Handle) -> bool {
+    xbox_status_impl(h, "dualsense", "installed", "installed").unwrap().auto_off
+}
+
+/// No power-off reaches the source for a while.
+fn no_power_off(h: &Handle, why: &str) {
+    let until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < until {
+        assert_eq!(h.fake_disconnects_received(), 0, "powered off: {why}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// `hidden` and `auto_off` stay as they are for a while.
+fn stays(r: &Rig, hid: Option<bool>, off: bool) {
+    let until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < until {
+        assert_eq!((hidden(&r.h), auto_off(&r.h)), (hid, off));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_pad_hidden_while_connected_is_powered_off_once() {
+    let r = rig(test_helpers::load_example());
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("the app sends the ⏻", || r.h.fake_disconnects_received() == 1);
+    assert!(!auto_off(&r.h), "not known yet whether a link went down");
+    // The worker: the link went down (one pad), then the pad left.
+    r.h.fake_power_off(DS, 1);
+    r.h.fake_event(GamepadEvent::Disconnected);
+    eventually("auto_off reported", || auto_off(&r.h));
+    eventually("left: hidden", || hidden(&r.h) == Some(true));
+    assert!(r.ctl.black().contains(&DS_USB.to_string()), "kept for the reconnect");
+    // Turned back on: it arrives hidden, auto_off goes.
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("auto_off cleared on the reconnect", || !auto_off(&r.h));
+    stays(&r, Some(true), false);
+    no_power_off(&r.h, "hidden already");
+    // Released (手把) and hidden again while connected: one replug needed,
+    // but the app powers a pad off at most once per launch.
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
+    eventually("released", || hidden(&r.h).is_none());
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Xbox);
+    eventually("needs a replug again", || hidden(&r.h) == Some(false));
+    no_power_off(&r.h, "second time this launch");
+    assert!(!auto_off(&r.h));
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn a_power_off_that_dropped_no_link_keeps_the_reconnect_hint() {
+    let r = rig(test_helpers::load_example());
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("the app sends the ⏻", || r.h.fake_disconnects_received() == 1);
+    // USB, or no Bluetooth link matched: nothing went down; the worker
+    // dropped its handle and the pad comes straight back.
+    r.h.fake_power_off(DS, 0);
+    r.h.fake_event(GamepadEvent::Disconnected);
+    stays(&r, Some(false), false);
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("connected", || r.h.current_status().is_some());
+    stays(&r, Some(false), false);
+    no_power_off(&r.h, "no retry");
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn a_remembered_pad_hidden_before_it_came_is_not_powered_off() {
+    let mut cfg = test_helpers::load_example();
+    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_USB.into() }];
+    let r = rig_present(cfg, &[MOUSE], |_, _| Box::new(|_| {}));
+    eventually("hidden at start, absent", || r.ctl.black().contains(&DS_USB.to_string()));
+    eventually("no replug", || hidden(&r.h) == Some(true));
+    r.h.fake_disconnects_received();
+    *r.present.lock().unwrap() = vec![MOUSE.to_string(), DS_USB.to_string()];
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("a round saw it", || dualsense_mapper::gui::commands::present_pad_ids_impl(&r.h) == vec![DS_USB.to_string()]);
+    no_power_off(&r.h, "it arrived hidden");
+    stays(&r, Some(true), false);
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn a_pad_not_wanted_hidden_is_not_powered_off() {
+    let mut cfg = test_helpers::load_example();
+    cfg.output_mode.insert("dualsense".into(), OutputMode::Pad);
+    let r = rig(cfg);
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("connected", || r.h.current_status().is_some());
+    no_power_off(&r.h, "手把 mode hides nothing");
+    assert_eq!(hidden(&r.h), None);
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
 // ── get_xbox_status ──
 
 #[test]
@@ -277,10 +395,10 @@ fn xbox_status_reports_hidden_from_the_worker() {
     let r = rig(xbox(ControllerKind::DualSense));
     eventually("first round", || hidden(&r.h) == Some(false));
     let st = xbox_status_impl(&r.h, "dualsense", "installed", "installed").unwrap();
-    assert_eq!(st, XboxStatus { vigem: "installed".into(), hidhide: "installed".into(), hidden: Some(false) });
+    assert_eq!(st, XboxStatus { vigem: "installed".into(), hidhide: "installed".into(), hidden: Some(false), auto_off: false });
     assert_eq!(
         serde_json::to_value(&st).unwrap(),
-        serde_json::json!({ "vigem": "installed", "hidhide": "installed", "hidden": false })
+        serde_json::json!({ "vigem": "installed", "hidhide": "installed", "hidden": false, "auto_off": false })
     );
     // HidHide missing: hidden is not applicable.
     let st = xbox_status_impl(&r.h, "dualsense", "missing", "missing").unwrap();
@@ -303,9 +421,14 @@ fn xbox_status_without_a_worker_says_hidhide_is_unsupported() {
     let st = xbox_status_impl(&h, "dualsense", "installed", "installed").unwrap();
     assert_eq!(
         serde_json::to_value(&st).unwrap(),
-        serde_json::json!({ "vigem": "installed", "hidhide": "unsupported", "hidden": null })
+        serde_json::json!({ "vigem": "installed", "hidhide": "unsupported", "hidden": null, "auto_off": false })
     );
     h.retry_hiding(); // no worker: a no-op
+    // No worker, no replug: a connected pad is never powered off.
+    h.fake_disconnects_received();
+    h.fake_event(GamepadEvent::Connected(ControllerKind::DualSense));
+    eventually("connected", || h.current_status().is_some());
+    no_power_off(&h, "no hider");
     engine.shutdown();
 }
 

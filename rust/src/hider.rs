@@ -90,6 +90,8 @@ pub struct Hider {
     wanted: Vec<ControllerKind>,
     connected: Vec<ControllerKind>,
     needs_replug: Vec<ControllerKind>,
+    /// Connected kinds whose next leave keeps the replug ([`Hider::still_held`]).
+    held: Vec<ControllerKind>,
     /// The config's remembered ids (`hidhide_known`).
     known: Vec<String>,
     /// Learned this session, not in `known` yet (the config write is on its
@@ -121,6 +123,7 @@ impl Hider {
             wanted: Vec::new(),
             connected: Vec::new(),
             needs_replug: Vec::new(),
+            held: Vec::new(),
             known: Vec::new(),
             pending: Vec::new(),
             forgotten: Vec::new(),
@@ -166,9 +169,23 @@ impl Hider {
             .filter(|k| k.has_native_driver() && wanted.contains(k))
             .collect();
         let before = &self.connected;
-        self.needs_replug.retain(|k| wanted.contains(k) && !(before.contains(k) && !connected.contains(k)));
+        let left = |k: &ControllerKind| before.contains(k) && !connected.contains(k);
+        let held = &self.held;
+        self.needs_replug.retain(|k| wanted.contains(k) && !(left(k) && !held.contains(k)));
+        // A note covers one leave ([`Hider::still_held`]).
+        self.held.retain(|k| !left(k));
         self.wanted = wanted;
         self.connected = connected.to_vec();
+    }
+
+    /// Pad `kind` is about to leave the engine although its link stayed up
+    /// (the app's power-off dropped no Bluetooth link): a game may still
+    /// hold it, so that one leave does not clear its replug. Ignored unless
+    /// `kind` is connected now.
+    pub fn still_held(&mut self, kind: ControllerKind) {
+        if self.connected.contains(&kind) && !self.held.contains(&kind) {
+            self.held.push(kind);
+        }
     }
 
     /// The config's remembered ids (`hidhide_known`). An id that left the
@@ -372,6 +389,7 @@ pub trait Backend: Send + 'static {
 enum Msg {
     Update { wanted: Vec<ControllerKind>, connected: Vec<ControllerKind> },
     Known(Vec<String>),
+    StillHeld(ControllerKind),
     Retry,
     Stop(Sender<()>),
 }
@@ -394,6 +412,20 @@ impl HiderLink {
     /// once the first [`HiderLink::update`] has come.
     pub fn set_known(&self, ids: Vec<String>) {
         let _ = self.tx.send(Msg::Known(ids));
+    }
+
+    /// See [`Hider::still_held`]. Sent before the update in which `kind`
+    /// leaves.
+    pub fn still_held(&self, kind: ControllerKind) {
+        let _ = self.tx.send(Msg::StillHeld(kind));
+    }
+
+    /// Kinds that need one reconnect, after a round that fully succeeded
+    /// (empty otherwise). The engine powers such a pad off once
+    /// (`engine::run_loop`).
+    pub fn needs_replug(&self) -> Vec<ControllerKind> {
+        let st = self.status.read().unwrap_or_else(|p| p.into_inner());
+        if st.supported && st.ok { st.needs_replug.clone() } else { Vec::new() }
     }
 
     /// Run a round now (after HidHide was installed).
@@ -531,6 +563,7 @@ fn run_worker<B: Backend>(
                     hider.set_known(&ids);
                     run = true;
                 }
+                Msg::StillHeld(kind) => hider.still_held(kind),
                 Msg::Retry => run = true,
                 Msg::Stop(ack) => stop = Some(ack),
             }
@@ -947,6 +980,38 @@ mod tests {
         r.hider.set_inputs(&[DS], &[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(true));
+    }
+
+    #[test]
+    fn a_leave_whose_link_stayed_up_keeps_the_replug_once() {
+        // The app's power-off reached no Bluetooth link (USB, or no match):
+        // the pad left the engine but Windows kept the device, so a game may
+        // still hold it.
+        let mut r = rig(Fake::default());
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_BT]).unwrap();
+        assert_eq!(r.hider.status().hidden(DS), Some(false));
+        r.hider.still_held(DS);
+        r.hider.set_inputs(&[DS], &[]);
+        assert_eq!(r.hider.status().hidden(DS), Some(false), "still held: still needs a replug");
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_BT]).unwrap();
+        assert_eq!(r.hider.status().hidden(DS), Some(false));
+        // Consumed by that leave: the next leave (a real power-off) clears it.
+        r.hider.set_inputs(&[DS], &[]);
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+    }
+
+    #[test]
+    fn still_held_for_a_kind_not_connected_is_ignored() {
+        let mut r = rig(Fake::default());
+        r.hider.set_inputs(&[DS], &[]);
+        r.hider.still_held(DS);
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_BT]).unwrap();
+        assert_eq!(r.hider.status().hidden(DS), Some(false));
+        r.hider.set_inputs(&[DS], &[]);
+        assert_eq!(r.hider.status().hidden(DS), Some(true), "a stale note never outlives its leave");
     }
 
     #[test]

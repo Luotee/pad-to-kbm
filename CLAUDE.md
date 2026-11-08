@@ -162,7 +162,7 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `reset_stick_cal`, `set_ui_prefs` (it and `get_ui_prefs` also carry `hidhide_prompt_dismissed`,
 written to the config only once true); runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
-at all: absent on a dry run / non-Windows, where no prompt shows),
+at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered the pad off for its reconnect),
 `get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
 (`hidhide_known` in the config) `get_present_pad_ids` (pads present at the
 hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
@@ -320,10 +320,15 @@ regresses real, observed bugs the codebase already fixed once:
    control-device IOCTLs (`hidhide.rs`). HidHide changes are limited to the
    pad's own HID instance ids on the blacklist and our exe on the
    whitelist, merged with the user's existing lists, and undone when the
-   pad leaves 鍵鼠 / Xbox, when the app exits, and at the next start after
-   a crash (the state file `padtokbm.hidhide.json`). A pad hidden once is
+   pad leaves 鍵鼠 / Xbox, when the app exits (GUI: including Windows
+   logoff / shutdown), and at the next start after a crash (the state file
+   `padtokbm.hidhide.json`). A pad hidden once is
    remembered (`hidhide_known`, at most 16) and hidden at start even while
-   it is off; that changes nothing about when the entries are undone.
+   it is off; that changes nothing about when the entries are undone. A pad
+   hidden while connected needs one reconnect: the app then drops its
+   Bluetooth link itself, once per launch, with the ⏻'s disconnect
+   (`platform.rs`, no administrator rights); connection state still comes
+   from the HID stream (iron rule 11).
    Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window

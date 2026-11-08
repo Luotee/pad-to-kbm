@@ -26,7 +26,7 @@ use super::events::GamepadEvent;
 use super::lightbar::{
     ds_lightbar_report, ds_lightbar_setup_report, LightWrite, LightbarLive, LightbarPlayer,
 };
-use super::SourceCmd;
+use super::{PowerOffLog, SourceCmd};
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -668,11 +668,13 @@ impl HidSource {
     /// flag; the engine mutates them through `set_settings`.
     /// `lightbar` carries the live lightbar settings for DualSense sessions.
     /// `cmd_rx` receives the hub's commands: manual disconnect from the GUI,
-    /// and rumble requests.
+    /// and rumble requests. Each manual disconnect's power-off result goes to
+    /// `power_log`.
     pub fn new(
         params: CursorParams,
         lightbar: LightbarLive,
         cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
+        power_log: PowerOffLog,
     ) -> Result<Self> {
         let (tx, rx) = unbounded::<GamepadEvent>();
         let stop = Arc::new(AtomicBool::new(false));
@@ -681,7 +683,7 @@ impl HidSource {
         thread::Builder::new()
             .name("dualsense-hid".into())
             .spawn(move || {
-                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx);
+                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx, power_log);
                 let _ = done_tx.send(());
             })
             .map_err(|e| anyhow!("spawning HID worker thread: {e}"))?;
@@ -768,6 +770,7 @@ fn worker_real(
     params: CursorParams,
     lightbar: LightbarLive,
     cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
+    power_log: PowerOffLog,
 ) {
     let mut api = match hidapi::HidApi::new() {
         Ok(a) => a,
@@ -832,11 +835,19 @@ fn worker_real(
                 // the Bluetooth link (see `crate::platform`). The DualSense
                 // has no HID power-off command; the Switch Pro got its
                 // subcmd 0x06 above and the link drop makes it certain.
+                // The result is recorded before `Disconnected` is sent.
                 if outcome == "manual-disconnect" {
-                    match crate::platform::power_off_connected(kind) {
-                        Ok(n) => tracing::info!(removed = n, "controller power-off requested"),
-                        Err(e) => tracing::warn!(error = %e, "controller power-off failed"),
-                    }
+                    let links = match crate::platform::power_off_connected(kind) {
+                        Ok(n) => {
+                            tracing::info!(removed = n, "controller power-off requested");
+                            n
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "controller power-off failed");
+                            0
+                        }
+                    };
+                    power_log.record(kind, links);
                 }
                 tracing::info!(?outcome, "read loop exited; back to Searching");
                 let _ = tx.send(GamepadEvent::Disconnected);

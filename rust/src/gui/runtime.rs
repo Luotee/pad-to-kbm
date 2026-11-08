@@ -197,8 +197,9 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
         .on_window_event(|window, event| {
             // Clicking ✕ now fully exits the process (Windows convention).
             // `app.exit(0)` ends the Tauri event loop; `run_return` hands
-            // back to `runtime::run`, which calls `engine.shutdown()` so held
-            // keys release before the process exits (Iron rule #3). Users who want
+            // back to `runtime::run`, whose `cleanup.run("exit")` (shutdown.rs)
+            // runs `engine.shutdown()` so held keys release, and undoes the
+            // HidHide entries, before the process exits (Iron rule #3). Users who want
             // background mapping while the window is hidden should
             // minimise to the taskbar instead, or use the tray's Open
             // entry to re-show the window after this exits.

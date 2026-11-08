@@ -7,9 +7,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
-  a 「這次不再提醒」 button (per controller, until the next time the app is
-  opened; nothing is written to the config). The Xbox banner is unchanged.
 - **Xbox output for the DualSense and the Switch Pro.** Any controller can
   now be shown to games as a virtual Xbox 360 pad, for games that only read
   XInput or read the controller badly. The real DualSense / Switch Pro is
@@ -30,16 +27,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   size and sha256 and then run (Windows asks for administrator rights). An
   installer that fails leaves the prompt open with the reason. Until the
   drivers are in, the controller sends nothing.
-- **Reconnect hint.** A controller that was already connected when it was
-  hidden stays visible to games until it reconnects. A white banner says
-  so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
-  PS 鍵連回來」. It goes away after the reconnect.
 - **鍵鼠 hides the DualSense / Switch Pro too**, with HidHide, so a game
   does not read the real pad next to the keys. Without HidHide 鍵鼠 works as
   before; the install prompt opens once on its own, 「稍後」 is remembered,
   and a gold 「!」 stays next to the gear until HidHide is in (it reopens the
   prompt; so does picking 鍵鼠 in the header). Nothing shows where HidHide is
   unsupported. The 「再連一次」 banner also shows in 鍵鼠.
+- **Reconnect hint.** A controller that was already connected when it was
+  hidden stays visible to games until it reconnects. A white banner says
+  so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
+  PS 鍵連回來」. It goes away after the reconnect.
+- **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
+  a 「這次不再提醒」 button (per controller, until the next time the app is
+  opened; nothing is written to the config). The Xbox banner is unchanged.
+- **PadToKBM turns the controller off when it needs that reconnect.** A
+  DualSense / Switch Pro that is on when it gets hidden (on when the app
+  opens, or connected for the first time) is turned off by the app itself,
+  once per controller each time the app is opened: the same Bluetooth
+  disconnect as the tab's ⏻, no administrator rights, no device restart.
+  While it is off a white banner says 「已替你把 DualSense 關機，好讓遊戲看不到
+  它。按 PS 鍵打開就能用了」 (HOME on the Switch Pro), with no 「這次不再提醒」;
+  it goes when the controller is back on, already hidden. Where nothing could
+  be turned off (USB), the 「再連一次」 banner shows as before.
+  `get_xbox_status` reports this as `auto_off`.
 - **Controllers are remembered for hiding.** A DualSense / Switch Pro that
   PadToKBM has hidden once is remembered, and from the next start it is
   hidden as soon as the app opens, even while it is still off: turned on

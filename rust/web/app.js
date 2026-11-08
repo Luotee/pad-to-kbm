@@ -1,7 +1,7 @@
 // The key-binding board: one 980×640 screen scaled to the window (spec 3).
 
 import { state, init, onRender } from './board/store.js';
-import { render, outputMode, boardLocked } from './board/view.js';
+import { render, outputMode, boardLocked, evenBanners } from './board/view.js';
 import { wire, selectSlot } from './board/events.js';
 import { resetInk } from './board/tags.js';
 import { startLive } from './board/live.js';
@@ -49,6 +49,7 @@ function paint() {
   board.className = 'mock' + (outputMode(state, state.pad) !== 'kbm' ? ' off' : '') + (lock ? ' lock' : '');
   board.innerHTML = render(state);
   fitKeyLabels(board);
+  evenBanners(board);
   maybeProbe();
   // A slot waiting for a key, or a picked tile, ends when the board locks.
   if (lock && (state.sel !== null || state.picked)) queueMicrotask(() => selectSlot(null));

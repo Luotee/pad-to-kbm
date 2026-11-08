@@ -98,7 +98,7 @@ function tauriMock({ config, version }) {
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).
-    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true },
+    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true, auto_off: false },
     after: { vigem: 'installed', hidhide: 'installed' },
     // v3.6.0 ui prefs kept across a page.reload() (sessionStorage), as the config file would be.
     dismissed: false,
@@ -626,6 +626,53 @@ try {
     const m = await countCalls(page, 'get_xbox_status');
     check('five events during a slow probe → at most two probes', m - n >= 1 && m - n <= 2, `${n} → ${m}`);
     await page.evaluate(() => { window.__mock.slowXbox = false; });
+  }
+  // The app powered the pad off itself (it needed a replug): a white banner while it is away,
+  // no 這次不再提醒; gone once it is back. Xbox and 鍵鼠 alike.
+  {
+    const aoText = name => '已替你把 ' + name + ' 關機，好讓遊戲看不到它。按 ' + (name === 'DualSense' ? 'PS' : 'HOME') + ' 鍵打開就能用了';
+    const away = () => page.evaluate(() => window.__mockEmit('controller-status', { connected: false, kind: null, connected_pads: [], warnings: [], off_pads: [] }));
+    const back = kind => page.evaluate(k => window.__mockEmit('controller-status', { connected: true, kind: k, connected_pads: [k], warnings: [], off_pads: [] }), kind);
+    await setXbox({ hidden: true, auto_off: true });
+    await away();
+    await settle(page);
+    const t = await banner();
+    check('auto-off: DualSense away → the power-off banner', t === aoText('DualSense') && (await page.locator('#board .obanner.ao').count()) === 1, t);
+    check('auto-off: no 這次不再提醒, no ⏻ icon', (await page.locator('#board .obanner [data-act="rcdismiss"]').count()) === 0 && (await page.locator('#board .obanner svg').count()) === 0);
+    check('auto-off: banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
+    const m = await page.evaluate(() => {
+      const b = document.querySelector('#board .obanner.ao'), sp = b.querySelector('span'), br = b.getBoundingClientRect(), sr = sp.getBoundingClientRect();
+      const s = document.getElementById('board').getBoundingClientRect(), cs = getComputedStyle(b);
+      return { bl: br.left, br: br.right, bt: br.top, bb: br.bottom, sl: sr.left, sr: sr.right, st: sr.top, sb: sr.bottom, kl: s.left, kr: s.right,
+        inner: [br.top + parseFloat(cs.borderTopWidth), br.bottom - parseFloat(cs.borderBottomWidth)], fs: parseFloat(getComputedStyle(sp).fontSize) };
+    });
+    const J = JSON.stringify(m);
+    check('auto-off: text inside the banner, one line', m.sl >= m.bl && m.sr <= m.br && m.st >= m.bt && m.sb <= m.bb && m.sb - m.st < 2 * m.fs, J);
+    check('auto-off: text vertically centred', Math.abs((m.st - m.inner[0]) - (m.inner[1] - m.sb)) <= 1, J);
+    check('auto-off: banner on whole pixels, inside the board', [m.bl, m.br, m.bt, m.bb].every(v => Math.abs(v - Math.round(v)) < 0.01) && m.bl >= m.kl && m.br <= m.kr, J);
+    await page.screenshot({ path: path.join(outDir, 'web-auto-off.png') });
+    // Back on (the reply still says auto_off): the banner goes with the connect.
+    await back('dualsense');
+    await settle(page);
+    check('auto-off: the pad connecting clears it', (await page.locator('#board .obanner.ao').count()) === 0 && (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
+    // The power-off dropped no link (USB): the old reconnect banner, as before.
+    await setXbox({ hidden: false, auto_off: false });
+    await back('dualsense');
+    await settle(page);
+    check('auto-off: no link dropped → the reconnect banner as before', ((await banner()) || '').startsWith('再連一次 DualSense') && (await page.locator('#board .obanner.ao').count()) === 0, await banner());
+    // Switch Pro in 鍵鼠: HOME.
+    await setXbox({ hidden: true, auto_off: true });
+    await page.click('#board [data-pad="ns_pro"]');
+    await settle(page);
+    if ((await modeOf()) !== 'kbm') { await page.click('#board .omode [data-mode="kbm"]'); await settle(page); }
+    if ((await pop().count()) === 1) { await page.click('#board [data-act="vglater"]'); await settle(page); }
+    await away();
+    await settle(page);
+    check('auto-off: Switch Pro in 鍵鼠 says HOME', (await banner()) === aoText('Switch Pro') && (await page.locator('#board .obanner [data-act="rcdismiss"]').count()) === 0, await banner());
+    await setXbox({ hidden: true, auto_off: false });
+    await back('dualsense');
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
   }
   // Failures keep the popover open with the reason.
   await page.click('#board .omode [data-mode="kbm"]');

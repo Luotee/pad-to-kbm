@@ -10,7 +10,7 @@ import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
 import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
-import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner, reconnectDismissable } from './vigem.js';
+import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner, reconnectDismissable, autoOffBanner } from './vigem.js';
 import { capHTML, popHTML as lbPopHTML, lbarHTML } from './lightbar.js';
 
 export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）';
@@ -82,6 +82,14 @@ function qcapHTML(pad, side, mode) {
 }
 
 
+// A banner is centred with translate(-50%): an odd width puts it, and the pixel font in it, on a
+// half pixel. One more pixel of right padding makes it even (after each paint).
+export function evenBanners(root) {
+  for (const b of root.querySelectorAll('.obanner')) {
+    if (b.offsetWidth % 2) b.style.paddingRight = (parseFloat(getComputedStyle(b).paddingRight) + 1) + 'px';
+  }
+}
+
 export function render(st) {
   const pad = st.pad, cfg = st.config, modes = triggerModes(cfg, pad), L = layoutFor(pad, modes), b = boardBinds(cfg, pad);
   let h = '<header class="hdr"><div class="ttl">按鍵設定</div><div class="pads">';
@@ -100,6 +108,7 @@ export function render(st) {
   h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
+  else if ((om === 'xbox' || om === 'kbm') && autoOffBanner()) h += '<div class="obanner white ao" role="status"><span>' + autoOffBanner() + '</span></div>';
   else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span>' + (reconnectDismissable() ? '<button type="button" class="mini" data-act="rcdismiss">這次不再提醒</button>' : '') + '</div>';
   else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om) + '</span></div>';
   const hot = {};
