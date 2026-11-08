@@ -12,22 +12,24 @@ use crate::engine::Engine;
 use crate::hider::HiderWorker;
 use std::sync::Mutex;
 
-/// Something [`Cleanup`] finishes exactly once.
+/// Something [`Cleanup`] finishes exactly once. Returns whether it finished
+/// in time.
 pub trait Part: Send + 'static {
-    fn finish(self);
+    fn finish(self) -> bool;
 }
 
 impl Part for Engine {
-    fn finish(self) {
+    fn finish(self) -> bool {
         self.shutdown();
+        true
     }
 }
 
 impl Part for HiderWorker {
-    fn finish(self) {
-        // Waits at most ~2 s; what it could not undo, the next start does
-        // from the state file.
-        self.stop();
+    fn finish(self) -> bool {
+        // Waits at most ~2 s; false when the worker did not confirm. What it
+        // could not undo, the next start does from the state file.
+        self.stop()
     }
 }
 
@@ -46,23 +48,32 @@ impl<E: Part, H: Part> Cleanup<E, H> {
     /// call did the work. A concurrent second caller waits until the first
     /// has finished, so every caller returns with the cleanup done.
     pub fn run(&self, reason: &str) -> bool {
+        self.run_outcome(reason).is_some()
+    }
+
+    /// [`Cleanup::run`], telling what happened: `None` when an earlier call
+    /// already did it; otherwise `Some` of the hider's result (`None`: no
+    /// hider, `Some(false)`: its undo timed out).
+    pub fn run_outcome(&self, reason: &str) -> Option<Option<bool>> {
         // Held for the whole cleanup on purpose (see above). A panic in a
         // part poisons it; the parts are gone by then, so carry on.
         let mut parts = self.parts.lock().unwrap_or_else(|p| p.into_inner());
-        let Some((engine, hider)) = parts.take() else { return false };
-        let had_hider = hider.is_some();
+        let (engine, hider) = parts.take()?;
         engine.finish();
-        if let Some(h) = hider {
-            h.finish();
-        }
-        tracing::info!("{}", message(reason, had_hider));
-        true
+        let hider = hider.map(Part::finish);
+        tracing::info!("{}", message(reason, hider));
+        Some(hider)
     }
 }
 
 /// The log line [`Cleanup::run`] writes (gui-smoke greps for it).
-fn message(reason: &str, hider: bool) -> String {
-    format!("cleanup ({reason}): engine shut down{}", if hider { ", HidHide entries removed" } else { "" })
+fn message(reason: &str, hider: Option<bool>) -> String {
+    let tail = match hider {
+        None => "",
+        Some(true) => ", HidHide entries removed",
+        Some(false) => ", HidHide undo timed out (next start finishes it)",
+    };
+    format!("cleanup ({reason}): engine shut down{tail}")
 }
 
 /// Console control events (wincon.h). Ctrl-C (0) and Ctrl-Break (1) are the
@@ -129,18 +140,20 @@ mod tests {
     struct Fake {
         name: &'static str,
         log: Log,
+        ok: bool,
     }
 
     impl Part for Fake {
-        fn finish(self) {
+        fn finish(self) -> bool {
             self.log.lock().unwrap().push(self.name);
+            self.ok
         }
     }
 
     fn parts(with_hider: bool) -> (Cleanup<Fake, Fake>, Log) {
         let log: Log = Arc::default();
-        let engine = Fake { name: "engine", log: log.clone() };
-        let hider = with_hider.then(|| Fake { name: "hider", log: log.clone() });
+        let engine = Fake { name: "engine", log: log.clone(), ok: true };
+        let hider = with_hider.then(|| Fake { name: "hider", log: log.clone(), ok: true });
         (Cleanup::new(engine, hider), log)
     }
 
@@ -188,9 +201,9 @@ mod tests {
 
     #[test]
     fn cleanup_message_names_hidhide_only_with_a_hider() {
-        assert_eq!(message("session end", false), "cleanup (session end): engine shut down");
+        assert_eq!(message("session end", None), "cleanup (session end): engine shut down");
         assert_eq!(
-            message("console close", true),
+            message("console close", Some(true)),
             "cleanup (console close): engine shut down, HidHide entries removed"
         );
     }
@@ -213,5 +226,24 @@ mod tests {
             (CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT),
             (c::CTRL_CLOSE_EVENT, c::CTRL_LOGOFF_EVENT, c::CTRL_SHUTDOWN_EVENT)
         );
+    }
+
+    #[test]
+    fn cleanup_message_says_when_the_hidhide_undo_timed_out() {
+        assert_eq!(
+            message("exit", Some(false)),
+            "cleanup (exit): engine shut down, HidHide undo timed out (next start finishes it)"
+        );
+    }
+
+    #[test]
+    fn cleanup_reports_a_hider_that_did_not_stop() {
+        let log: Log = Arc::default();
+        let engine = Fake { name: "engine", log: log.clone(), ok: true };
+        let hider = Fake { name: "hider", log: log.clone(), ok: false };
+        let c = Cleanup::new(engine, Some(hider));
+        assert_eq!(c.run_outcome("exit"), Some(Some(false)));
+        assert_eq!(c.run_outcome("exit"), None);
+        assert_eq!(*log.lock().unwrap(), vec!["engine", "hider"]);
     }
 }

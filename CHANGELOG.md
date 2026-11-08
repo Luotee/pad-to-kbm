@@ -14,7 +14,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   twice. PadToKBM hides only that controller's own HID devices, lets itself
   through on HidHide's whitelist, keeps any entries you made in HidHide, and
   takes its own entries out again when the controller leaves 鍵鼠 / Xbox, when the
-  app exits, and at the next start after a crash.
+  app exits (also when Windows logs off or shuts down with it open), and at the
+  next start after a crash.
 - **關｜鍵鼠｜Xbox｜手把 in the header**, per controller. On the Switch 2 Pro
   手把 is greyed out and does nothing: Windows has no driver for it, so a
   game cannot read it directly. Its tooltip says to pick Xbox.
@@ -68,6 +69,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
 - Xbox output (ViGEmBus + HidHide) and hiding the pad in 鍵鼠 (HidHide) are Windows only; macOS is Phase 2 TBD.
+- With `--cli`, only closing the console window is sure to take the HidHide
+  entries out on the way out: Windows does not send the logoff / shutdown
+  events to a process that loads user32, so after a logoff or shutdown they
+  come out at the next start.
 
 ## [3.5.1] - 2026-10-30
 

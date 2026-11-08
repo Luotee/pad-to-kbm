@@ -7,9 +7,10 @@
 #                  every test exe runs natively on Windows via WSL interop
 #   gui-smoke      GUI exe build, launched alone from a fresh %LOCALAPPDATA%\Temp
 #                  dir: window up, first-run config written, config hot-edit
-#                  (valid + invalid) does not kill the process, a session end
-#                  (WM_ENDSESSION) runs the cleanup once, a graceful window
-#                  close exits through the engine shutdown
+#                  (valid + invalid) does not kill the process, a graceful
+#                  window close exits through the cleanup (engine shutdown);
+#                  a second launch adopts a pre-v3.1.0 config, and a session
+#                  end (WM_ENDSESSION) there runs the cleanup, once
 #   web            headless Chromium click-through of rust/web/ with a mocked
 #                  window.__TAURI__ (scripts/verify/web-smoke.mjs)
 #
@@ -298,7 +299,7 @@ PY
 # (the example config with one binding changed). Expect it renamed to
 # padtokbm.json byte for byte, a .bak copy beside it, the old name gone.
 gui_legacy_adoption() {
-    local exe="$1" localappdata="$2" stamp win_dir seed deadline
+    local exe="$1" localappdata="$2" log="$3" stamp win_dir seed deadline title="" msg
     stamp="$(date +%Y%m%d-%H%M%S)-$$-legacy"
     win_dir="$localappdata\\Temp\\dsm-verify-$stamp"
     GUI_TMP_LINUX="$(wslpath -u "$win_dir")"
@@ -308,7 +309,7 @@ gui_legacy_adoption() {
     python3 - "$RUST_DIR/config.example.json" "$seed" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1], encoding="utf-8"))
-cfg["pads"]["dualsense"]["buttons"]["0"]["value"] = "F9"
+cfg["pads"]["dualsense"]["buttons"]["0"] = {"label": "Cross", "type": "key", "value": "F9"}
 json.dump(cfg, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
     cp "$seed" "$GUI_TMP_LINUX/$LEGACY_CONFIG_NAME"
@@ -319,9 +320,9 @@ PY
           win_run tasklist.exe /FI "IMAGENAME eq $GUI_EXE_NAME" /NH | grep -i "$GUI_EXE_NAME" >/dev/null; do
         sleep 0.5
     done
-    GUI_PID="$(win_ps "(Start-Process -FilePath '$win_dir\\$GUI_EXE_NAME' -ArgumentList '--dry-run' -WorkingDirectory '$win_dir' -PassThru).Id")"
-    if ! [[ "$GUI_PID" =~ ^[0-9]+$ ]]; then
-        GUI_PID=""; gui_cleanup; LEGACY_MSG="could not launch the exe"; return 1
+    # Logged (stdout.log): the session-end step below reads the cleanup line.
+    if ! gui_launch_logged "$win_dir\\$GUI_EXE_NAME" "$win_dir" "$log"; then
+        gui_cleanup; LEGACY_MSG="could not launch the exe"; return 1
     fi
     deadline=$((SECONDS + GUI_STARTUP_TIMEOUT_S))
     while [ "$SECONDS" -lt "$deadline" ] && [ ! -f "$GUI_TMP_LINUX/$CONFIG_NAME" ]; do
@@ -340,8 +341,62 @@ PY
     if ! gui_alive "$GUI_PID"; then
         GUI_PID=""; gui_cleanup; LEGACY_MSG="process exited after adopting the old config"; return 1
     fi
+
+    # Windows logging off / shutting down while the app is open: the main
+    # window's WM_ENDSESSION must run the cleanup (engine shutdown, then the
+    # HidHide undo; a --dry-run has no hider) before it returns.
+    deadline=$((SECONDS + GUI_STARTUP_TIMEOUT_S))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        title="$(win_ps "(Get-Process -Id $GUI_PID -ErrorAction SilentlyContinue).MainWindowTitle")"
+        [ -n "$title" ] && break
+        sleep 0.5
+    done
+    if [ -z "$title" ]; then
+        gui_cleanup; LEGACY_MSG="second launch: no window with a title"; return 1
+    fi
+    # The fatal-error dialog (main.rs) also has a title and keeps the process
+    # alive: the adopted config must load, not just be renamed.
+    if [ "$title" != "PadToKBM" ]; then
+        gui_dump_stdout
+        gui_cleanup; LEGACY_MSG="second launch: window '$title' instead of the app (adopted config did not load?)"; return 1
+    fi
+    echo "=== session end (WM_QUERYENDSESSION + WM_ENDSESSION, ENDSESSION_LOGOFF)"
+    if ! gui_session_end "$GUI_PID" "$win_dir"; then
+        gui_cleanup; LEGACY_MSG="session end did not run the cleanup (see log)"; return 1
+    fi
+    # The app runs on after a simulated session end; closing it afterwards
+    # must not run the cleanup again, nor panic.
+    echo "=== graceful close after the session end"
+    win_ps "(Get-Process -Id $GUI_PID).CloseMainWindow()"
+    deadline=$((SECONDS + GUI_CLOSE_TIMEOUT_S))
+    while [ "$SECONDS" -lt "$deadline" ] && gui_alive "$GUI_PID"; do
+        sleep 0.5
+    done
+    if gui_alive "$GUI_PID"; then
+        gui_cleanup; LEGACY_MSG="still running ${GUI_CLOSE_TIMEOUT_S}s after a close that followed the session end"; return 1
+    fi
+    GUI_PID=""
+    echo "--- stdout.log (second launch)"
+    tr -d '\r' <"$GUI_TMP_LINUX/stdout.log" | sed 's/\x1b\[[0-9;]*m//g'
+    if ! msg="$(gui_one_clean_exit "$GUI_TMP_LINUX/stdout.log")"; then
+        gui_cleanup; LEGACY_MSG="after the session end: $msg"; return 1
+    fi
     gui_cleanup
-    LEGACY_MSG="old $LEGACY_CONFIG_NAME adopted"
+    LEGACY_MSG="old $LEGACY_CONFIG_NAME adopted; session end ran the cleanup, once"
+}
+
+# Exactly one 'cleanup (' line in <stdout.log> and no panic. Prints why not.
+gui_one_clean_exit() {
+    local n
+    n="$(grep -c "cleanup (" "$1" 2>/dev/null)"
+    if [ "$n" != 1 ]; then
+        echo "expected exactly one 'cleanup (' line in stdout.log, found ${n:-0}"
+        return 1
+    fi
+    if grep -q "panicked" "$1" 2>/dev/null; then
+        echo "the exe panicked (see stdout.log in the log)"
+        return 1
+    fi
 }
 
 # PowerShell with its stderr appended to a log file (win_ps drops it).
@@ -397,25 +452,36 @@ if (\$r.ReturnValue -eq 0) { \$r.ProcessId } else { Write-Error \"Win32_Process.
 # Send the main window of <pid> what Windows sends at a logoff
 # (WM_QUERYENDSESSION, then WM_ENDSESSION wParam=TRUE, lParam
 # ENDSESSION_LOGOFF) and wait for the cleanup line in <dir>\stdout.log.
-# Prints what happened; non-zero if the window did not agree to end the
-# session or the line never came.
+# SendMessageTimeoutW (15 s, abort if hung) plus `timeout` around PowerShell:
+# a cleanup that hangs inside WM_ENDSESSION must FAIL, not block the run.
+# Prints what happened (and stdout.log on a failure); non-zero if the window
+# did not agree to end the session, did not return, or the line never came.
 gui_session_end() {
-    local pid="$1" win_dir="$2" ps1 out deadline
-    ps1="$GUI_TMP_LINUX/session-end.ps1"
-    cat >"$ps1" <<'PS1'
+    local pid="$1" win_dir="$2" out rc deadline
+    cat >"$GUI_TMP_LINUX/session-end.ps1" <<'PS1'
 param([int]$Id)
-Add-Type -Namespace DsmVerify -Name User32 -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);'
+Add-Type -Namespace DsmVerify -Name User32 -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);'
 $h = (Get-Process -Id $Id).MainWindowHandle
 $logoff = [IntPtr][long]2147483648
-$q = [DsmVerify.User32]::SendMessageW($h, 0x0011, [IntPtr]::Zero, $logoff)
-$e = [DsmVerify.User32]::SendMessageW($h, 0x0016, [IntPtr]1, $logoff)
-"hwnd=$h queryendsession=$q endsession=$e"
+$abortIfHung = 2
+$qr = [IntPtr]::Zero
+$q = [DsmVerify.User32]::SendMessageTimeoutW($h, 0x0011, [IntPtr]::Zero, $logoff, $abortIfHung, 15000, [ref]$qr)
+$er = [IntPtr]::Zero
+$e = [DsmVerify.User32]::SendMessageTimeoutW($h, 0x0016, [IntPtr]1, $logoff, $abortIfHung, 15000, [ref]$er)
+"hwnd=$h queryendsession: sent=$q result=$qr endsession: sent=$e result=$er"
 PS1
-    out="$( (cd /mnt/c && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-        -File "$win_dir\\session-end.ps1" -Id "$pid" 2>&1) | tr -d '\r')"
+    out="$(cd /mnt/c && timeout 40 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+        -File "$win_dir\\session-end.ps1" -Id "$pid" 2>&1)"
+    rc=$?
+    out="$(echo "$out" | tr -d '\r')"
     echo "$out"
-    if ! echo "$out" | grep -q "queryendsession=1 "; then
-        echo "the window did not answer WM_QUERYENDSESSION with TRUE"
+    if ! echo "$out" | grep -q "queryendsession: sent=1 result=1 endsession: sent=1 "; then
+        if [ "$rc" = 124 ]; then
+            echo "PowerShell did not return within 40s"
+        else
+            echo "the window did not answer WM_QUERYENDSESSION with TRUE, or WM_ENDSESSION timed out (sent=0)"
+        fi
+        gui_dump_stdout
         return 1
     fi
     deadline=$((SECONDS + GUI_CLOSE_TIMEOUT_S))
@@ -427,7 +493,13 @@ PS1
         sleep 0.5
     done
     echo "no 'cleanup (session end): engine shut down' in stdout.log within ${GUI_CLOSE_TIMEOUT_S}s"
+    gui_dump_stdout
     return 1
+}
+
+gui_dump_stdout() {
+    echo "--- stdout.log"
+    tr -d '\r' <"$GUI_TMP_LINUX/stdout.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
 }
 
 layer_gui_smoke() {
@@ -547,18 +619,6 @@ layer_gui_smoke() {
         return
     fi
 
-    # Windows logging off / shutting down while the app is open: the main
-    # window's WM_ENDSESSION must run the cleanup (engine shutdown, then the
-    # HidHide undo; a --dry-run has no hider) before it returns.
-    echo "=== session end (WM_QUERYENDSESSION + WM_ENDSESSION, ENDSESSION_LOGOFF)" >>"$log"
-    if ! msg="$(gui_session_end "$GUI_PID" "$win_dir" 2>&1)"; then
-        echo "$msg" >>"$log"
-        gui_cleanup
-        record gui-smoke FAIL "session end: $msg"
-        return
-    fi
-    echo "$msg" >>"$log"
-
     # ✕ / tray Quit end the Tauri event loop; the engine must still shut down
     # (iron rule 3: held keys released, lightbar exit frame) before the exit.
     echo "=== graceful close (CloseMainWindow)" >>"$log"
@@ -575,23 +635,15 @@ layer_gui_smoke() {
     GUI_PID=""
     echo "--- stdout.log" >>"$log"
     tr -d '\r' <"$GUI_TMP_LINUX/stdout.log" | sed 's/\x1b\[[0-9;]*m//g' >>"$log" 2>&1
-    if ! grep -q "engine shut down" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
+    # The cleanup after the event loop (runtime.rs: cleanup.run("exit")).
+    if ! grep -q "cleanup (exit): engine shut down" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
         gui_cleanup
-        record gui-smoke FAIL "graceful close exited without the engine shutdown (no 'engine shut down' in stdout.log)"
+        record gui-smoke FAIL "graceful close exited without the cleanup (no 'cleanup (exit): engine shut down' in stdout.log)"
         return
     fi
-    # The session-end cleanup already ran; the close after it must not run
-    # it again (nor panic).
-    local cleanups
-    cleanups="$(grep -c "cleanup (" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null)"
-    if [ "$cleanups" != 1 ]; then
+    if ! msg="$(gui_one_clean_exit "$GUI_TMP_LINUX/stdout.log")"; then
         gui_cleanup
-        record gui-smoke FAIL "expected exactly one 'cleanup (' line in stdout.log, found ${cleanups:-0}"
-        return
-    fi
-    if grep -q "panicked" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
-        gui_cleanup
-        record gui-smoke FAIL "the exe panicked (see stdout.log in the log)"
+        record gui-smoke FAIL "graceful close: $msg"
         return
     fi
 
@@ -601,12 +653,12 @@ layer_gui_smoke() {
     # (runs in this shell, not $(...), so the exit trap still sees GUI_PID)
     LEGACY_MSG=""
     echo "=== launch with a pre-v3.1.0 $LEGACY_CONFIG_NAME" >>"$log"
-    if ! gui_legacy_adoption "$exe" "$localappdata" >>"$log" 2>&1; then
+    if ! gui_legacy_adoption "$exe" "$localappdata" "$log" >>"$log" 2>&1; then
         echo "legacy adoption: $LEGACY_MSG" >>"$log"
         record gui-smoke FAIL "legacy config: $LEGACY_MSG"
         return
     fi
-    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; graceful close ran the engine shutdown; session end ran the cleanup once; $LEGACY_MSG"
+    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; graceful close ran the cleanup (exit); $LEGACY_MSG"
 }
 
 # ─── Layer: web ──────────────────────────────────────────────────────────────
