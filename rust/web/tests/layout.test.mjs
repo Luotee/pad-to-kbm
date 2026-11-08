@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { layoutFor, slotsOf, lint, routeHTML, groupSlots } from '../board/layout.js';
 
 const MODES = [{ l: 'page', r: 'page' }, { l: 'key', r: 'key' }, { l: 'page', r: 'key' }];
-const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
+const PADS = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'];
 
 test('layouts_have_no_crossings_or_overlaps', () => {
   for (const pad of PADS) for (const modes of MODES) {
@@ -125,4 +125,19 @@ test('route_legs_sit_on_whole_pixels', () => {
       }
     }
   }
+});
+
+// v3.7.0 Xbox Nano (traced art, variant 1): LB / RB sit level with their shoulder key's end, one level line
+// each; the Xbox key and Share drop straight down / up to the key centre.
+test('nano_routes_meet_its_traced_keys', async () => {
+  const { padAnchors } = await import('../board/padart.js');
+  const A = padAnchors('xbox_nano'), L = layoutFor('xbox_nano', MODES[0]);
+  assert.ok(A, 'padAnchors(xbox_nano)');
+  for (const [id, g, x] of [['l1', 'b1L', A.l1[0]], ['r1', 'b1R', 300 - A.l1[0]]]) {
+    const r = L.routes.find(q => q.id === id), grp = L.groups.find(q => q.id === g);
+    assert.equal(grp.y, A.l1[1] + 150, `${g} level with the LB / RB end`);
+    assert.deepEqual(r.pts, [[id === 'l1' ? 330 : 650, A.l1[1] + 150], [x + 340, A.l1[1] + 150]], id);
+  }
+  assert.deepEqual(L.routes.find(r => r.id === 'xg').pts, [[490, 108], [A.xg[0] + 340, A.xg[1] + 150]]);
+  assert.deepEqual(L.routes.find(r => r.id === 'share').pts, [[490, 353], [A.share[0] + 340, A.share[1] + 150]]);
 });

@@ -106,9 +106,11 @@ function defaultLayout(pad) {
   if (xn) {
     // Xbox Nano: left stick high (outer group), D-pad low (inner group), like the Switch pads. LB / RB sit level
     // with their shoulder key's end, one level line each; View / Xbox / Menu in the top row, Share below the pad.
-    G[2].y = 214; G[3].y = 214;
+    // Every line ends at the traced key (photoRoutes, padAnchors).
+    var lb = padAnchors(pad).l1[1] + 150;
+    G[2].y = lb; G[3].y = lb;
     R[0].pts = [[267, 145], [402, 145], [402, 175]]; R[1].pts = [[713, 145], [578, 145], [578, 175]];
-    R[2].pts = [[330, 214], [358, 214]]; R[3].pts = [[650, 214], [622, 214]];
+    R[2].pts = [[330, lb], [358, lb]]; R[3].pts = [[650, lb], [622, lb]];
     R[4].pts = [[677, 320], [648, 320], [648, 277], [531, 277]]; R[5].pts = [[825, 288], [792, 288], [792, 236], [578, 236]];
     G.push({ id: 'ls', kind: 'cross', x: 96, y: 288, keys: LS },
       { id: 'dpad', kind: 'diamond', x: 244, y: 320, keys: ['11', '13', '14', '12'], tags: ARROWS },

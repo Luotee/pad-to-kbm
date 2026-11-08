@@ -1,5 +1,6 @@
 // Controller art (spec 4.4, "B 貼紙" sticker style with contour shoulders). v3.7.0: DualSense, Switch Pro and
-// Switch 2 Pro are traced from product photos (bodies, two-tone panels, seams, keys at the photo positions).
+// Switch 2 Pro are traced from product photos (bodies, two-tone panels, seams, keys at the photo positions);
+// the Xbox Nano is traced from its photo too (modelXN).
 
 function circ(cx, cy, r) { return 'M' + (cx - r) + ',' + cy + ' a' + r + ',' + r + ' 0 1,0 ' + 2 * r + ',0 a' + r + ',' + r + ' 0 1,0 ' + -2 * r + ',0 Z'; }
 function rr(x, y, w, h, r) { return 'M' + (x + r) + ',' + y + ' h' + (w - 2 * r) + ' a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r + ' v' + (h - 2 * r) + ' a' + r + ',' + r + ' 0 0 1 ' + -r + ',' + r + ' h' + -(w - 2 * r) + ' a' + r + ',' + r + ' 0 0 1 ' + -r + ',' + -r + ' v' + -(h - 2 * r) + ' a' + r + ',' + r + ' 0 0 1 ' + r + ',' + -r + ' Z'; }
@@ -37,6 +38,49 @@ var SHOULDER = {
 };
 function fitOf(pad) { var f = SHOULDER[pad].fit; return { tf: 'translate(' + f.tx + ' ' + f.ty + ') scale(' + f.s + ')', at: function (q) { return [f.tx + f.s * q[0], f.ty + f.s * q[1]]; } }; }
 
+// ---- Xbox Nano (v3.7.0): traced from the product photo, variant 1 (traced body, face plate, short shoulder band;
+// user ruling: the outline is how the pad really looks). Photo -> pad units: k = 0.384 units per photo px,
+// x' = (x - 490)k + 150, y' = (y - 322)k + 40 (assets mock-board/padart.js modelXN, labelfix.json xbox_nano:1;
+// LT moved from x 94.5 to 95.2: RT, wider than LT, then also clears its key face by 1.45, and at 1x the stems
+// of LT and RT fall on pixel columns (bars on rows: y 25, cap 5).
+var XN_BODY = 'M58,40 H242 C256,40 267,46 273,55 C280,66 285,80 288,92 C292,110 295,128 294,146 C293,160 286,172 274,178 C266,181 256,181 248,180 C236,179 228,176 220,173 C214,171.5 210,171 204,171 H96 C90,171 86,171.5 80,173 C72,176 64,179 52,180 C44,181 34,181 26,178 C14,172 7,160 6,146 C5,128 8,110 12,92 C15,80 20,66 27,55 C33,46 44,40 58,40 Z';
+var XN_PLATE = 'M52,48 H248 C260,48 270,52 275,60 C279,67 280,75 280,84 C280,100 277,118 273,132 C269,147 260,158 244,161 C236,162 230,162 224,162 H76 C70,162 64,162 56,161 C40,158 31,147 27,132 C23,118 20,100 20,84 C20,75 21,67 25,60 C30,52 40,48 52,48 Z';
+// LT (back, drawn before the body) and LB (front, after it); labels [left, right, x, y, rotate, cap height].
+var XN_SH = {
+  back: 'M30,50 C33,34 45,23 62,21 L98,18.5 Q104,18 104,24.5 L104,36 L58,39 C46,40 37,44 30,50 Z',
+  front: 'M100,31 L58,31.5 C42,32 29,39 21,50 C18,54 16,58 15,62 Q13.5,67.5 19,68.5 Q23.5,69 25,65 C27,60 30,56 34,53 C40,48 48,45.5 58,45 L100,43.5 Q106,43.2 106,37.3 Q106,31 100,31 Z',
+  trigT: ['LT', 'RT', 95.2, 25, 0, 5], bumpT: ['LB', 'RB', 80, 37.6, -1.5, 5.5], trigA: [62, 25], bumpA: [18, 64]
+};
+// Sticks, d-pad, face diamond centre (keys 19 apart, r 9.5), Xbox key (r 10.5), View / Menu, Share (the pill).
+var XN_KEYS = { ls: [64, 86], dpad: [110, 126], rs: [191, 127], face: [238, 86], xg: [150, 66], view: [125, 85], menu: [175, 85], pill: [150, 96] };
+
+function modelXN() {
+  var P = [], Gl = [], K = XN_KEYS, sp = 19;
+  function add(d, role, tf) { P.push({ d: d, role: role, tf: tf || '' }); }
+  function both(d, role) { add(d, role); add(d, role, MIR); }
+  function stick(q) { add(circ(q[0], q[1], 20), 'well'); add(circ(q[0], q[1], 13.5), 'cap'); add(circ(q[0], q[1], 8.5), 'capTop'); }
+  function label(T, role) {
+    Gl.push({ kind: 'text', t: T[0], x: T[2], y: T[3], rot: T[4], cap: T[5], role: role }, { kind: 'text', t: T[1], x: 300 - T[2], y: T[3], rot: -T[4], cap: T[5], role: role });
+  }
+  both(XN_SH.back, 'trig');
+  add(XN_BODY, 'body');
+  add(XN_PLATE, 'plate');
+  both(XN_SH.front, 'bump');
+  label(XN_SH.trigT, 'trigT');
+  label(XN_SH.bumpT, 'bumpT');
+  stick(K.ls); stick(K.rs);
+  add(circ(K.dpad[0], K.dpad[1], 26), 'dwell'); add(cross(K.dpad[0], K.dpad[1], 6.5, 18), 'dcross');
+  add(circ(K.xg[0], K.xg[1], 10.5), 'small'); Gl.push({ kind: 'xg', x: K.xg[0], y: K.xg[1], role: 'smallT' });
+  add(circ(K.view[0], K.view[1], 7), 'small'); Gl.push({ kind: 'view', x: K.view[0], y: K.view[1], role: 'smallT' });
+  add(circ(K.menu[0], K.menu[1], 7), 'small'); Gl.push({ kind: 'menu', x: K.menu[0], y: K.menu[1], role: 'smallT' });
+  add(rr(K.pill[0] - 9, K.pill[1] - 3.5, 18, 7, 3.5), 'small');
+  var f = K.face;
+  [[f[0], f[1] - sp, 'Y'], [f[0] + sp, f[1], 'B'], [f[0], f[1] + sp, 'A'], [f[0] - sp, f[1], 'X']].forEach(function (q) {
+    add(circ(q[0], q[1], 9.5), 'face'); Gl.push({ kind: 'text', t: q[2], x: q[0], y: q[1], role: 'faceT' });
+  });
+  return { parts: P, glyphs: Gl };
+}
+
 // Key positions on the photo art (pad units). Switch pads: ls / dp / rs sticks and d-pad, mi / pl minus and
 // plus, cap / home, fc the face diamond centre.
 var NS_KEYS = {
@@ -45,6 +89,7 @@ var NS_KEYS = {
 };
 
 function model(pad) {
+  if (pad === 'xbox_nano') return modelXN();
   var P = [], Gl = [], S = SHOULDER[pad], F = fitOf(pad), ds = pad === 'dualsense', ns2 = pad === 'ns2_pro';
   function add(d, role, tf) { P.push({ d: d, role: role, tf: tf || '' }); }
   function both(d, role, tf) { add(d, role, tf); add(d, role, MIR + (tf ? ' ' + tf : '')); }
@@ -91,6 +136,10 @@ function model(pad) {
 // mirrors ZR / R1 / GR). Triggers end on the left of their visible part, clear of the label; the shoulder
 // points go through the shoulder's own fit.
 export function padAnchors(pad) {
+  if (pad === 'xbox_nano') {
+    var K = XN_KEYS;
+    return { zl: XN_SH.trigA, l1: XN_SH.bumpA, ls: K.ls, dpad: K.dpad, rs: K.rs, face: K.face, xg: K.xg, view: K.view, menu: K.menu, share: K.pill };
+  }
   var S = SHOULDER[pad];
   if (!S) return null;
   var F = fitOf(pad), a = { zl: F.at(S.trigA), l1: F.at(S.bumpA) };
@@ -111,7 +160,7 @@ function pixGlyph(rows, cx, cy, c) {
 var VL = {
   A: [6, 'M0,7 L3,0 L6,7 M1.3,4.4 H4.7'], B: [5, 'M0,0 V7 H3 Q5,7 5,5.1 Q5,3.5 3,3.5 H0 M0,0 H2.7 Q4.6,0 4.6,1.75 Q4.6,3.5 2.7,3.5'],
   X: [5, 'M0,0 L5,7 M5,0 L0,7'], Y: [6, 'M0,0 L3,3.4 L6,0 M3,3.4 V7'], L: [4, 'M0,0 V7 H4'], R: [5, 'M0,7 V0 H3 Q5,0 5,2 Q5,4 3,4 H0 M3,4 L5,7'],
-  Z: [5, 'M0,0 H5 L0,7 H5'], P: [5, 'M0,7 V0 H3 Q5,0 5,2 Q5,4 3,4 H0'], S: [5, 'M5,1 Q4.4,0 2.6,0 Q0.2,0 0.2,1.8 Q0.2,3.2 2.5,3.5 Q5,3.8 5,5.3 Q5,7 2.5,7 Q0.6,7 0,6'],
+  Z: [5, 'M0,0 H5 L0,7 H5'], T: [5, 'M0,0 H5 M2.5,0 V7'], P: [5, 'M0,7 V0 H3 Q5,0 5,2 Q5,4 3,4 H0'], S: [5, 'M5,1 Q4.4,0 2.6,0 Q0.2,0 0.2,1.8 Q0.2,3.2 2.5,3.5 Q5,3.8 5,5.3 Q5,7 2.5,7 Q0.6,7 0,6'],
   '1': [3, 'M0,1.5 L1.8,0 V7 M0,7 H3.6'], '2': [5, 'M0,1.8 Q0,0 2.5,0 Q5,0 5,2 Q5,3.4 3.6,4.4 L0,7 H5']
 };
 function vtext(t, cx, cy, cap, c, sw, rot) {
@@ -123,7 +172,7 @@ function vtext(t, cx, cy, cap, c, sw, rot) {
 }
 function glyphSvg(g, c) {
   var x = g.x, y = g.y;
-  if (g.kind === 'text' && /^[ABXYLRZ12]+$/.test(g.t)) return vtext(g.t, x, y, g.role === 'faceT' ? 7 : (g.cap || 6), c, g.role === 'faceT' ? 1.6 : 1.4 * (g.cap || 6) / 6, g.rot);
+  if (g.kind === 'text' && /^[ABXYLRZT12]+$/.test(g.t)) return vtext(g.t, x, y, g.role === 'faceT' ? 7 : (g.cap || 6), c, g.role === 'faceT' ? 1.6 : 1.4 * (g.cap || 6) / 6, g.rot);
   if (g.kind === 'text') {
     var fs = g.role === 'faceT' ? 10 : 9;
     return '<text x="' + x + '" y="' + (y + fs * 0.36) + '"' + (g.rot ? ' transform="rotate(' + g.rot + ' ' + x + ' ' + y + ')"' : '') + ' text-anchor="middle" font-size="' + fs + '" font-family="Cubic11,Microsoft JhengHei,sans-serif" fill="' + c + '">' + g.t + '</text>';
@@ -137,23 +186,25 @@ function glyphSvg(g, c) {
   // bitmaps on whole pixels, centred on the r7 button with clearance from its rim, 1 px strokes like the font.
   if (g.kind === 'home') return '<g transform="translate(' + x + ' ' + y + ')" fill="none" stroke="' + c + '" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M-3.6,-0.4 L0,-3.8 L3.6,-0.4"/><path d="M-2.4,-1.2 V3.4 H2.4 V-1.2"/><rect x="-0.8" y="0.9" width="1.6" height="2.5" fill="' + c + '" stroke="none"/></g>';
   if (g.kind === 'c') return '<path d="M' + (x + 2.2) + ',' + (y - 2.4) + ' A3.2,3.2 0 1 0 ' + (x + 2.2) + ',' + (y + 2.4) + '" fill="none" stroke="' + c + '" stroke-width="1.5"/>';
+  // Xbox Nano: the Xbox key's X, View (two windows), Menu (three bars).
+  if (g.kind === 'xg') return '<g fill="none" stroke="' + c + '" stroke-width="1.6" stroke-linecap="round"><path d="M' + (x - 3.2) + ',' + (y - 3.2) + ' L' + (x + 3.2) + ',' + (y + 3.2) + ' M' + (x + 3.2) + ',' + (y - 3.2) + ' L' + (x - 3.2) + ',' + (y + 3.2) + '"/></g>';
+  if (g.kind === 'view') return '<g fill="none" stroke="' + c + '" stroke-width="1.1"><rect x="' + (x - 3) + '" y="' + (y - 3) + '" width="4" height="3.4"/><rect x="' + (x - 1) + '" y="' + (y - 0.6) + '" width="4" height="3.4"/></g>';
+  if (g.kind === 'menu') return '<path d="M' + (x - 2.8) + ',' + (y - 2) + ' h5.6 M' + (x - 2.8) + ',' + y + ' h5.6 M' + (x - 2.8) + ',' + (y + 2) + ' h5.6" stroke="' + c + '" stroke-width="1.1"/>';
   if (g.kind === 'ps') return vtext('PS', x, y, 4.6, c, 1.5);  // smaller so it clears the r7 rim
   return '';
 }
 
 // Outline width per part (0 = none).
-var WIDTH = { panel: 2.5, grip: 2.5, plateDark: 2, seam: 2, grille: 0, bumpLite: 3.5, body: 5, tpad: 3.5, trig: 3.5, bump: 3.5, well: 3.5, cap: 3, capTop: 0, dcross: 3, dkey: 3, back: 3, face: 3 };
+var WIDTH = { plate: 2, dwell: 3.5, panel: 2.5, grip: 2.5, plateDark: 2, seam: 2, grille: 0, bumpLite: 3.5, body: 5, tpad: 3.5, trig: 3.5, bump: 3.5, well: 3.5, cap: 3, capTop: 0, dcross: 3, dkey: 3, back: 3, face: 3 };
 // The board pad is line work like the MapleStory controller (v3.3.0): navy ink, the body shows the panel
 // through, slate keys, no colour, no drop shadow. The app / tray icons are scripts/icon-art.mjs.
 var INK = '#2d4359';
-var LINE = { panel: '#8c959d', grip: '#a2aab1', plateDark: '#abb3b9', seam: 'none', grille: INK, bumpLite: '#d4d9dd', body: '#b2bac0', tpad: '#b2bac0', trig: '#7b8188', back: '#7b8188', bump: '#8f969d', well: '#b2bac0', cap: '#79838f', capTop: '#8a939d', dcross: '#79838f', dkey: '#79838f', face: '#79838f' };
+var LINE = { plate: '#bcc3c9', dwell: '#6c7682', panel: '#8c959d', grip: '#a2aab1', plateDark: '#abb3b9', seam: 'none', grille: INK, bumpLite: '#d4d9dd', body: '#b2bac0', tpad: '#b2bac0', trig: '#7b8188', back: '#7b8188', bump: '#8f969d', well: '#b2bac0', cap: '#79838f', capTop: '#8a939d', dcross: '#79838f', dkey: '#79838f', face: '#79838f' };
 function boardFill(role) { var w = role in WIDTH ? WIDTH[role] : 2.5; return [LINE[role] || '#79838f', w ? Math.min(w, 3) : 0]; }
 
 // Every part carries its role and every glyph its role and anchor (data-*), which web-smoke measures.
 function padArt(pad) {
-  var h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
-  if (!SHOULDER[pad]) return h + '</svg>';   // a pad without art yet: an empty drawing
-  var M = model(pad);
+  var M = model(pad), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
   M.parts.forEach(function (p) {
     var f = boardFill(p.role);
     h += '<path data-role="' + p.role + '" d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + INK + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';

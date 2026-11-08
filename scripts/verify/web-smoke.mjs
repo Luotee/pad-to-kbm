@@ -248,7 +248,7 @@ function tauriMock({ config, version }) {
 //   chamfer distance transform. Shoulder face = fill minus its own outline; trigger face = fill minus its
 //   outline, the body and the shoulder (fill + outline). The right side is mirrored onto the left.
 // - gap: the shoulder band (bump / bumpLite / trig, fill + outline) to the nearest key (face, dkey,
-//   dcross, small, well, cap; fill + outline) on a 4x raster. `skip` lists centres of small keys left out
+//   dcross, dwell, small, well, cap; fill + outline) on a 4x raster. `skip` lists centres of small keys left out
 //   of `keys` (DualSense Create / Options, which the user accepted at their measured distance); the
 //   touchpad is not a key here (the DualSense shoulder is drawn to meet it). `skipped` = those keys alone.
 function padArtMetrics(opt) {
@@ -305,7 +305,7 @@ function padArtMetrics(opt) {
   }
   let gap = null;
   {
-    const K = 4, R = raster(K, -40, -40, 380 * K, 300 * K), KEY = ['face', 'dkey', 'dcross', 'small', 'well', 'cap'], BAND = ['bump', 'bumpLite', 'trig'];
+    const K = 4, R = raster(K, -40, -40, 380 * K, 300 * K), KEY = ['face', 'dkey', 'dcross', 'dwell', 'small', 'well', 'cap'], BAND = ['bump', 'bumpLite', 'trig'];
     const skipped = e => e.dataset.role === 'small' && (opt.skip || []).some(q => { const c = centre(e); return Math.abs(c.x - q[0]) <= 1 && Math.abs(c.y - q[1]) <= 1; });
     const keys = R.mk(), skip = R.mk(), band = R.mk();
     for (const e of paths) {
@@ -2112,11 +2112,12 @@ try {
   }
 
   // ── v3.7.0: photo-traced pad art ──────────────────────────────────────────
-  // DualSense = photo art + shoulder F, Switch Pro / Switch 2 Pro = photo art + shoulder A (user Q13 / Q14):
+  // DualSense = photo art + shoulder F, Switch Pro / Switch 2 Pro = photo art + shoulder A (user Q13 / Q14),
+  // Xbox Nano = traced art variant 1 (short band):
   // every L／R label sits inside its visible key face, and no shoulder sticks to a key.
   {
-    const SHOULDER_GAP = { dualsense: { min: 5, skip: [[82, 50.5], [218, 50.5]] }, ns_pro: { min: 4 }, ns2_pro: { min: 4 } };
-    const pads = ['dualsense', 'ns_pro', 'ns2_pro'];
+    const SHOULDER_GAP = { dualsense: { min: 5, skip: [[82, 50.5], [218, 50.5]] }, ns_pro: { min: 4 }, ns2_pro: { min: 4 }, xbox_nano: { min: 4 } };
+    const pads = await page.locator('#board .hdr [data-pad]').evaluateAll(els => els.map(e => e.dataset.pad));
     for (const pad of pads) {
       await page.click(`#board .hdr [data-pad="${pad}"]`);
       await settle(page);
