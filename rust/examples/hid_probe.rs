@@ -3,7 +3,8 @@
 //!   hid_probe                          list every HID device
 //!   hid_probe --dump 045e:xxxx         print each input report: `<ms> <hex>`
 //!   hid_probe --dump V:P --label a     wait for Enter, record 3 s into
-//!                                      rust/tests/fixtures/xbox_nano/a.hex, repeat
+//!                                      <out>/a.hex, repeat
+//!   --out <dir>                        output dir (default ./xbox_nano)
 //!   hid_probe --dump V:P --labels a,b,x   same, with the label list up front
 //!
 //! Stop with Ctrl-C.
@@ -65,9 +66,35 @@ fn pick<'a>(api: &'a HidApi, vid: u16, pid: u16) -> Option<&'a DeviceInfo> {
         .copied()
 }
 
-fn fixture_dir() -> PathBuf {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    base.join("tests").join("fixtures").join("xbox_nano")
+/// Output dir: `--out <dir>` or `xbox_nano` under the current directory.
+fn out_dir(args: &[String]) -> PathBuf {
+    let p = args
+        .iter()
+        .position(|a| a == "--out")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("xbox_nano"));
+    if p.is_absolute() {
+        p
+    } else {
+        std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p)
+    }
+}
+
+/// Write one fixture file (creating the dir) and return its absolute path.
+fn write_fixture(dir: &std::path::Path, label: &str, lines: &[String]) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{label}.hex"));
+    std::fs::write(&path, lines.join("\n") + "\n")?;
+    let abs = std::fs::canonicalize(&path).unwrap_or(path);
+    // Windows canonicalize gives `\\?\` verbatim paths; show the plain form.
+    let t = abs.to_string_lossy().to_string();
+    let t = if let Some(r) = t.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{r}")
+    } else {
+        t.strip_prefix(r"\\?\").map(String::from).unwrap_or(t)
+    };
+    Ok(PathBuf::from(t))
 }
 
 fn wait_enter(prompt: &str) -> bool {
@@ -77,7 +104,7 @@ fn wait_enter(prompt: &str) -> bool {
     matches!(io::stdin().lock().read_line(&mut s), Ok(n) if n > 0)
 }
 
-fn record(dev: &HidDevice, label: &str) -> io::Result<()> {
+fn record(dev: &HidDevice, label: &str, dir: &std::path::Path) -> io::Result<()> {
     // Throw away whatever piled up while waiting for Enter.
     let mut buf = [0u8; 256];
     while matches!(dev.read_timeout(&mut buf, 0), Ok(n) if n > 0) {}
@@ -94,10 +121,7 @@ fn record(dev: &HidDevice, label: &str) -> io::Result<()> {
             }
         }
     }
-    let dir = fixture_dir();
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{label}.hex"));
-    std::fs::write(&path, lines.join("\n") + "\n")?;
+    let path = write_fixture(dir, label, &lines)?;
     println!("已存 {} 份報告 -> {}", lines.len(), path.display());
     Ok(())
 }
@@ -105,6 +129,17 @@ fn record(dev: &HidDevice, label: &str) -> io::Result<()> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+    let dir = out_dir(&args);
+    if args.iter().any(|a| a == "--selftest-write") {
+        match write_fixture(&dir, "selftest", &["00 11 22".to_string()]) {
+            Ok(p) => println!("已存 -> {}", p.display()),
+            Err(e) => {
+                eprintln!("寫檔失敗：{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let api = match HidApi::new() {
         Ok(a) => a,
         Err(e) => {
@@ -164,7 +199,7 @@ fn main() {
         }
     }
 
-    println!("輸出資料夾：{}", fixture_dir().display());
+    println!("輸出資料夾：{}", dir.display());
     let single = arg("--label").is_some() && arg("--labels").is_none();
     let mut queue = labels.into_iter();
     let mut cur = queue.next();
@@ -174,7 +209,7 @@ fn main() {
         {
             break;
         }
-        if let Err(e) = record(&dev, &label) {
+        if let Err(e) = record(&dev, &label, &dir) {
             eprintln!("寫檔失敗：{e}");
             std::process::exit(1);
         }
