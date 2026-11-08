@@ -726,7 +726,7 @@ try {
         const cs = getComputedStyle(p), bs = getComputedStyle(p, '::before');
         const w = parseFloat(bs.width) + parseFloat(bs.borderLeftWidth) + parseFloat(bs.borderRightWidth);
         const apex = pr.right - parseFloat(cs.borderRightWidth) - parseFloat(bs.right) - w / 2;
-        return { apex: Math.round(apex - b.left), seg: Math.round((xr.left + xr.right) / 2 - b.left), l: Math.round(xr.left - b.left), r: Math.round(xr.right - b.left) };
+        return { apex: apex - b.left, seg: (xr.left + xr.right) / 2 - b.left, l: xr.left - b.left, r: xr.right - b.left };
       });
       check('kbm-prompt-once: popover pointer aims at the 鍵鼠 segment', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
       await page.screenshot({ path: path.join(outDir, 'web-kbm-hidhide.png') });
