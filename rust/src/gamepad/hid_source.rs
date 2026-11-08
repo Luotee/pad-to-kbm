@@ -514,6 +514,8 @@ impl Session {
             ControllerKind::NsPro => decode_30(frame, &self.cal),
             // Not in SUPPORTED_HID.
             ControllerKind::Ns2Pro => None,
+            // Task 3 wires the Nano's report decoding.
+            ControllerKind::XboxNano => None,
         }
     }
 
@@ -525,6 +527,8 @@ impl Session {
             // returns None). PR 3 sets its real deadline; until then it
             // shares the Switch Pro value.
             ControllerKind::Ns2Pro => NS_DISCONNECT_AFTER,
+            // Measured value to tune in Task 3.
+            ControllerKind::XboxNano => Duration::from_millis(1000),
         }
     }
 
@@ -574,6 +578,8 @@ impl Session {
             }
             // Not in SUPPORTED_HID; the BLE worker plays its rumble.
             ControllerKind::Ns2Pro => return Ok(()),
+            // The Nano gets no rumble writes.
+            ControllerKind::XboxNano => return Ok(()),
         };
         self.last_write = Some(Instant::now());
         res.map(|_| ())
@@ -812,7 +818,7 @@ fn worker_real(
                         // The handshake's last subcommand counts for the write gap.
                         session.last_write = Some(Instant::now());
                     }
-                    ControllerKind::Ns2Pro => {}
+                    ControllerKind::Ns2Pro | ControllerKind::XboxNano => {}
                 }
                 session.attach_lightbar(&lightbar);
                 let mut prev_buttons = [false; BUTTON_SLOTS];

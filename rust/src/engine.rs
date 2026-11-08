@@ -1352,7 +1352,7 @@ mod tests {
         let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
         cfg.output_mode.clear();
         cfg.mapping_enabled.clear();
-        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro], "default 鍵鼠 is hidden");
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro, ControllerKind::XboxNano], "default 鍵鼠 is hidden");
         for k in ControllerKind::ALL {
             cfg.output_mode.insert(k.slug().into(), OutputMode::Pad);
         }

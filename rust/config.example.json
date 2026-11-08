@@ -1,6 +1,6 @@
 {
   "_help": [
-    "Each controller has its own table under 'pads': 'dualsense', 'ns_pro' (Switch Pro), 'ns2_pro' (Switch 2 Pro).",
+    "Each controller has its own table under 'pads': 'dualsense', 'ns_pro' (Switch Pro), 'ns2_pro' (Switch 2 Pro), 'xbox_nano' (Xbox Nano).",
     "A pad's 'buttons' must list every id 0..=32. Change 'type' to one of:",
     "  - 'key'      : set 'value' to a key name from _keyboard_keys below",
     "  - 'macro'    : set 'value' to a macro name defined in 'macros'",
@@ -160,6 +160,46 @@
       "quick_l": {},
       "quick_r": {},
       "trigger_mode": { "l": "page", "r": "page" }
+    },
+    "xbox_nano": {
+      "buttons": {
+        "0":   { "label": "Cross（叉叉）",               "type": "unbound" },
+        "1":   { "label": "Circle（圈圈）",              "type": "unbound" },
+        "2":   { "label": "Square（正方形）",             "type": "unbound" },
+        "3":   { "label": "Triangle（三角）",            "type": "unbound" },
+        "4":   { "label": "Share（拍照鍵）",              "type": "unbound" },
+        "5":   { "label": "PS 按鈕",                   "type": "unbound" },
+        "6":   { "label": "Options（Menu 鍵）",         "type": "unbound" },
+        "7":   { "label": "L3",                      "type": "unbound" },
+        "8":   { "label": "R3",                      "type": "unbound" },
+        "9":   { "label": "L1",                      "type": "unbound" },
+        "10":  { "label": "R1",                      "type": "unbound" },
+        "11":  { "label": "D-pad ↑",                 "type": "key",     "value": "Up" },
+        "12":  { "label": "D-pad ↓",                 "type": "key",     "value": "Down" },
+        "13":  { "label": "D-pad ←",                 "type": "key",     "value": "Left" },
+        "14":  { "label": "D-pad →",                 "type": "key",     "value": "Right" },
+        "15":  { "label": "L-stick ↑",               "type": "key",     "value": "Up" },
+        "16":  { "label": "L-stick ↓",               "type": "key",     "value": "Down" },
+        "17":  { "label": "L-stick ←",               "type": "key",     "value": "Left" },
+        "18":  { "label": "L-stick →",               "type": "key",     "value": "Right" },
+        "19":  { "label": "R-stick ↑",               "type": "unbound" },
+        "20":  { "label": "R-stick ↓",               "type": "unbound" },
+        "21":  { "label": "R-stick ←",               "type": "unbound" },
+        "22":  { "label": "R-stick →",               "type": "unbound" },
+        "23":  { "label": "L2（類比板機）",                "type": "unbound" },
+        "24":  { "label": "R2（類比板機）",                "type": "unbound" },
+        "25":  { "label": "Touchpad TL",             "type": "unbound" },
+        "26":  { "label": "Touchpad TR",             "type": "unbound" },
+        "27":  { "label": "Touchpad BL",             "type": "unbound" },
+        "28":  { "label": "Touchpad BR",             "type": "unbound" },
+        "29":  { "label": "Capture（Switch 擷取鍵）",     "type": "unbound" },
+        "30":  { "label": "GL（Switch 2 背鍵左）",        "type": "unbound" },
+        "31":  { "label": "GR（Switch 2 背鍵右）",        "type": "unbound" },
+        "32":  { "label": "C（Switch 2 C 鍵）",         "type": "unbound" }
+      },
+      "quick_l": {},
+      "quick_r": {},
+      "trigger_mode": { "l": "page", "r": "page" }
     }
   },
   "touchpad_cursor_enabled": true,
@@ -167,7 +207,7 @@
   "touchpad_midpoint_x": 960,
   "touchpad_midpoint_y": 540,
   "touchpad_click_freeze_enabled": true,
-  "output_mode": {"dualsense": "kbm", "ns_pro": "kbm", "ns2_pro": "kbm"},
+  "output_mode": {"dualsense": "kbm", "ns_pro": "kbm", "ns2_pro": "kbm", "xbox_nano": "kbm"},
   "rumble_on_connect": true,
   "lightbar": {
     "mode": "custom",

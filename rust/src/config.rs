@@ -1074,7 +1074,7 @@ mod tests {
         serde_json::to_string(&v).unwrap()
     }
 
-    fn modes(mapping: Option<&str>, output: Option<&str>) -> [OutputMode; 3] {
+    fn modes(mapping: Option<&str>, output: Option<&str>) -> [OutputMode; 4] {
         use crate::gamepad::ControllerKind;
         let cfg = Config::load_from_str(&json_with_modes(mapping, output)).unwrap();
         ControllerKind::ALL.map(|k| cfg.output_mode_for(k))
@@ -1082,27 +1082,33 @@ mod tests {
 
     #[test]
     fn output_mode_neither_field_is_kbm() {
-        assert_eq!(modes(None, None), [OutputMode::Kbm; 3]);
+        assert_eq!(modes(None, None), [OutputMode::Kbm; 4]);
     }
 
     #[test]
     fn output_mode_from_mapping_enabled_true() {
         let m = r#"{"dualsense": true, "ns_pro": true, "ns2_pro": true}"#;
-        assert_eq!(modes(Some(m), None), [OutputMode::Kbm; 3]);
+        assert_eq!(modes(Some(m), None), [OutputMode::Kbm; 4]);
     }
 
     #[test]
     fn output_mode_from_mapping_enabled_false() {
         // false meant "the game reads the pad" for the pads Windows drives
         // natively, and the virtual Xbox pad for the Switch 2 Pro.
-        let m = r#"{"dualsense": false, "ns_pro": false, "ns2_pro": false}"#;
-        assert_eq!(modes(Some(m), None), [OutputMode::Pad, OutputMode::Pad, OutputMode::Xbox]);
+        let m = r#"{"dualsense": false, "ns_pro": false, "ns2_pro": false, "xbox_nano": false}"#;
+        assert_eq!(
+            modes(Some(m), None),
+            [OutputMode::Pad, OutputMode::Pad, OutputMode::Xbox, OutputMode::Pad]
+        );
     }
 
     #[test]
     fn output_mode_explicit_values() {
         let o = r#"{"dualsense": "xbox", "ns_pro": "pad", "ns2_pro": "kbm"}"#;
-        assert_eq!(modes(None, Some(o)), [OutputMode::Xbox, OutputMode::Pad, OutputMode::Kbm]);
+        assert_eq!(
+            modes(None, Some(o)),
+            [OutputMode::Xbox, OutputMode::Pad, OutputMode::Kbm, OutputMode::Kbm]
+        );
     }
 
     #[test]
@@ -1110,7 +1116,10 @@ mod tests {
         let m = r#"{"dualsense": false, "ns_pro": true, "ns2_pro": false}"#;
         let o = r#"{"dualsense": "kbm", "ns_pro": "xbox"}"#;
         // ns2_pro has no output_mode entry: it still falls back.
-        assert_eq!(modes(Some(m), Some(o)), [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Xbox]);
+        assert_eq!(
+            modes(Some(m), Some(o)),
+            [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Xbox, OutputMode::Kbm]
+        );
     }
 
     #[test]
@@ -1118,6 +1127,14 @@ mod tests {
         // No native Windows path for the Switch 2 Pro.
         let o = r#"{"ns2_pro": "pad"}"#;
         assert_eq!(modes(None, Some(o))[2], OutputMode::Xbox);
+    }
+
+    #[test]
+    fn xbox_nano_defaults_to_kbm_and_keeps_pad_mode() {
+        // The Nano has a native driver, so `pad` stays `pad` (not Xbox).
+        let o = r#"{"xbox_nano": "pad"}"#;
+        assert_eq!(modes(None, Some(o))[3], OutputMode::Pad);
+        assert_eq!(modes(None, None)[3], OutputMode::Kbm);
     }
 
     #[test]
@@ -1219,10 +1236,12 @@ mod tests {
         let mut v = v2_value();
         v["pads"].as_object_mut().unwrap().remove("ns_pro");
         v["pads"].as_object_mut().unwrap().remove("ns2_pro");
+        v["pads"].as_object_mut().unwrap().remove("xbox_nano");
         v["pads"]["dualsense"]["buttons"]["0"] = serde_json::json!({"label": "x", "type": "key", "value": "z"});
         let cfg = Config::load_from_str(&v.to_string()).unwrap();
         assert_eq!(cfg.pad(ControllerKind::NsPro), &default_pad_bindings(ControllerKind::NsPro));
         assert_eq!(cfg.pad(ControllerKind::Ns2Pro), &default_pad_bindings(ControllerKind::Ns2Pro));
+        assert_eq!(cfg.pad(ControllerKind::XboxNano), &default_pad_bindings(ControllerKind::XboxNano));
         assert!(matches!(cfg.pad(ControllerKind::DualSense).buttons["0"].binding, Binding::Key(ref s) if s == "z"));
     }
 

@@ -296,3 +296,16 @@ fn stick_cal_round_trips_and_removes() {
     let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(raw.get("stick_cal").is_none(), "empty table removed from the file");
 }
+
+#[test]
+fn missing_xbox_nano_table_is_filled_with_defaults() {
+    use dualsense_mapper::pad_bindings::default_pad_bindings;
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.example.json");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v["pads"].as_object_mut().unwrap().remove("xbox_nano").is_some());
+    let cfg = Config::load_from_str(&v.to_string()).unwrap();
+    for k in ControllerKind::ALL {
+        assert_eq!(cfg.pad(k), &default_pad_bindings(k), "{k:?}");
+    }
+}

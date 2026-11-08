@@ -61,6 +61,8 @@ pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
         ControllerKind::NsPro => is_ns_pro_name,
         // PR 3 handles the NS2 Pro (BLE); there is no classic-BT link to drop.
         ControllerKind::Ns2Pro => return Ok(0),
+        // Nano is BLE HID-over-GATT; no classic-BT link to drop.
+        ControllerKind::XboxNano => return Ok(0),
     };
 
     // SAFETY: every struct is zero-initialised then has its `dwSize` set
