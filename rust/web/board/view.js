@@ -10,7 +10,7 @@ import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
 import { editorHTML } from './macros.js';
 import { settingsHTML } from './settings.js';
-import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner } from './vigem.js';
+import { bangHTML, popHTML, vigemBlocksBanner, reconnectBanner, reconnectDismissable } from './vigem.js';
 import { capHTML, popHTML as lbPopHTML, lbarHTML } from './lightbar.js';
 
 export const CAPTURE_TEXT = '按鍵鼠上的鍵，或點下面的方塊（再點一次格子取消）';
@@ -100,7 +100,7 @@ export function render(st) {
   h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
-  else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span></div>';
+  else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span>' + (reconnectDismissable() ? '<button type="button" class="mini" data-act="rcdismiss">這次不再提醒</button>' : '') + '</div>';
   else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {

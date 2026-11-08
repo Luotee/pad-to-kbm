@@ -595,6 +595,7 @@ try {
     check('reconnect banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
     const fits = await page.evaluate(() => { const b = document.querySelector('#board .obanner.rc').getBoundingClientRect(), s = document.getElementById('board').getBoundingClientRect(); return b.left >= s.left && b.right <= s.right; });
     check('reconnect banner fits the board', fits);
+    check('Xbox reconnect banner has no 這次不再提醒', (await page.locator('#board .obanner.rc [data-act="rcdismiss"]').count()) === 0);
     await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect.png') });
   }
   {
@@ -797,16 +798,43 @@ try {
     await settle(page);
     {
       const t = await banner();
-      check('kbm-reconnect: DualSense banner with the ⏻', t === '再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的  斷開，再按 PS 鍵連回來' &&
+      check('kbm-reconnect: DualSense banner with the ⏻', t === '再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的  斷開，再按 PS 鍵連回來這次不再提醒' &&
         (await page.locator('#board .obanner.rc svg').count()) === 1 && (await bang().count()) === 0 && (await pop().count()) === 0, t);
       check('kbm-reconnect: banner sits at the stage centre and fits', await bannerCentred(), JSON.stringify(await bannerBox()));
+    }
+    // 這次不再提醒: per pad, front-end memory only, no IPC, back after a reload.
+    {
+      const btn = page.locator('#board .obanner.rc [data-act="rcdismiss"]');
+      check('kbm-rcdismiss: the banner carries 這次不再提醒', (await btn.count()) === 1 && ((await btn.textContent()) || '').trim() === '這次不再提醒');
+      const m = await page.evaluate(() => {
+        const b = document.querySelector('#board .obanner.rc').getBoundingClientRect(), k = document.querySelector('#board .obanner.rc [data-act="rcdismiss"]').getBoundingClientRect();
+        const sp = document.querySelector('#board .obanner.rc span').getBoundingClientRect();
+        return { bt: b.top, bb: b.bottom, kt: k.top, kb: k.bottom, kl: k.left, kr: k.right, br: b.right, st: sp.top, sb: sp.bottom };
+      });
+      const gt = m.kt - m.bt, gb = m.bb - m.kb;
+      check('kbm-rcdismiss: button vertically centred in the banner, whole pixels', Math.abs(gt - gb) <= 1 && Math.abs((m.kt + m.kb) / 2 - (m.st + m.sb) / 2) <= 1 &&
+        [m.kt, m.kb, m.kl, m.kr].every(v => Math.abs(v - Math.round(v)) < 0.01) && m.kr <= m.br, JSON.stringify(m));
       await page.screenshot({ path: path.join(outDir, 'web-kbm-reconnect.png') });
+      await page.evaluate(() => { window.__mockCalls.length = 0; });
+      await btn.click();
+      await settle(page);
+      check('kbm-rcdismiss: click hides the banner, no IPC call', (await page.locator('#board .obanner.rc').count()) === 0 && (await calls(page)).length === 0, JSON.stringify(await calls(page)));
+      await page.click('#board [data-pad="ns_pro"]');
+      await page.evaluate(() => { window.__mock.xbox.hidden = false; window.__mockEmit('config-changed', { source: 'external' }); });
+      await settle(page);
+      check('kbm-rcdismiss: another pad still gets its banner', (await page.locator('#board .obanner.rc').count()) === 1 && ((await banner()) || '').includes('再按 HOME 鍵連回來'), await banner());
+      await page.click('#board [data-pad="dualsense"]');
+      await page.evaluate(() => { window.__mock.xbox.hidden = false; window.__mockEmit('config-changed', { source: 'external' }); });
+      await settle(page);
+      check('kbm-rcdismiss: back on DualSense it stays hidden', (await page.locator('#board .obanner.rc').count()) === 0);
+      await reloadWith({ vigem: 'installed', hidhide: 'installed', hidden: false }, true);
+      check('kbm-rcdismiss: a reload brings the DualSense banner back', (await page.locator('#board .obanner.rc [data-act="rcdismiss"]').count()) === 1, await banner());
     }
     await page.click('#board [data-pad="ns_pro"]');
     await settle(page);
     await page.evaluate(() => { window.__mock.xbox.hidden = false; window.__mockEmit('config-changed', { source: 'external' }); });
     await settle(page);
-    check('kbm-reconnect: Switch Pro banner says HOME', ((await banner()) || '').endsWith('再按 HOME 鍵連回來'), await banner());
+    check('kbm-reconnect: Switch Pro banner says HOME', ((await banner()) || '').endsWith('再按 HOME 鍵連回來這次不再提醒'), await banner());
     await setXbox({ hidden: true });
     await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'ns_pro', connected_pads: ['ns_pro'], warnings: [], off_pads: [] }));
     await settle(page);

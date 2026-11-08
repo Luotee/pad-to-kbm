@@ -7,6 +7,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
+  a 「這次不再提醒」 button (per controller, until the next time the app is
+  opened; nothing is written to the config). The Xbox banner is unchanged.
 - **Xbox output for the DualSense and the Switch Pro.** Any controller can
   now be shown to games as a virtual Xbox 360 pad, for games that only read
   XInput or read the controller badly. The real DualSense / Switch Pro is

@@ -13,7 +13,7 @@ import { ICON } from './icons.js';
 
 // status: the selected pad's get_xbox_status reply { vigem, hidhide, hidden }, null until asked.
 // stale: a controller-status / config-changed came in, so `hidden` may have changed.
-export const VG = { status: null, probing: false, next: null, autoOpened: false, quiet: false, stale: false, pop: false, busy: false, err: '' };
+export const VG = { status: null, probing: false, next: null, autoOpened: false, quiet: false, stale: false, pop: false, busy: false, err: '', rcDismissed: new Set() };
 const NAME = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
 const DRIVER = { vigem: { name: 'ViGEmBus', cmd: 'install_vigem' }, hidhide: { name: 'HidHide', cmd: 'install_hidhide' } };
 
@@ -106,8 +106,12 @@ export function vigemBlocksBanner() {
 export function reconnectBanner() {
   if (hideMode() === 'kbm' && VG.status && VG.status.hidhide !== 'installed') return '';   // nothing hides the pad here
   if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || VG.status.hidden !== false) return '';
+  if (hideMode() === 'kbm' && VG.rcDismissed.has(state.pad)) return '';   // 這次不再提醒
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵連回來';
 }
+
+// The 鍵鼠 banner may be put off for this launch, per pad (memory only: no config, no IPC).
+export function reconnectDismissable() { return hideMode() === 'kbm'; }
 
 // Each missing driver in turn (ViGEmBus first), then the status again. A failure
 // keeps the popover open with the reason.
@@ -165,6 +169,7 @@ export async function startVigem() {
     if (a === 'vgopen') { VG.pop = true; VG.err = ''; rerender(); return true; }
     if (a === 'vglater') { VG.pop = false; if (hideMode() === 'kbm') dismissPrompt(); rerender(); return true; }
     if (a === 'vgkbm') { VG.pop = false; VG.quiet = true; act.setMode('kbm'); return true; }
+    if (a === 'rcdismiss') { VG.rcDismissed.add(state.pad); rerender(); return true; }
     if (a === 'vginstall') { if (!VG.busy) install(); return true; }
     return false;
   });
