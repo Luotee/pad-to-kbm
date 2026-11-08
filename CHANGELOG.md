@@ -3,6 +3,48 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-08
+
+### Added
+
+- **Xbox Nano support** (Bluetooth, VID 045E / PID 0B4F). A fourth tab, Xbox
+  Nano, with its own bindings: A / B / X / Y, LB / RB, LT / RT (analog, with
+  快捷頁 / 單鍵 like the other triggers), View / Xbox / Menu, both sticks and
+  their clicks, the D-pad, and Share (slot 29). The keys are named as on the
+  pad (LT／RT, LB／RB, View／Xbox／Menu, Share).
+- **Share on the Xbox Nano.** The Nano sends Share as a key press on its own
+  keyboard device, which Windows keeps for itself; PadToKBM reads it through
+  Raw Input while a Nano is connected (read only: nothing is blocked or
+  hooked) and treats it as the Share button.
+- The Nano has its own HID reader, so it can be connected together with a
+  DualSense or a Switch Pro, in either order; one of them is in use at a
+  time, as before. A Nano that is on but idle shows as connected at once when
+  it answers the read of its current state, otherwise on its first input.
+- **鍵鼠 hides the Xbox Nano** with HidHide, like the DualSense / Switch Pro.
+  記住的手把 lists it as `Xbox Nano 藍牙 F9:A8` (its Bluetooth address's last
+  four digits; the row's tooltip has the whole address).
+- **Pad art traced from the product photos** for all four controllers:
+  bodies, panels and keys where they are on the real pad, labels inside their
+  key faces, and every line ends at its key.
+
+### Changed
+
+- **Xbox and 手把 are one option on the Xbox Nano.** It already is an Xbox
+  controller, so both let the game read the Nano itself (no virtual pad, no
+  ViGEmBus prompt) and light up together. An `output_mode` of `xbox` for the
+  Nano reads as `pad`.
+
+### Migration
+
+- Older configs get the Xbox Nano's default table (`pads.xbox_nano`) and
+  `output_mode.xbox_nano: "kbm"` on load.
+- The Xbox Nano is not turned off by the app: it uses Bluetooth LE, and the
+  automatic power-off (and the tab's ⏻) only drop a classic Bluetooth link.
+  When it was on while it got hidden, turn it off and on yourself.
+- The Xbox key may open the Xbox Game Bar: that is Windows (Settings →
+  Gaming → Game Bar), not PadToKBM.
+- macOS: Phase 2 TBD for the Xbox Nano's Share (Raw Input is Windows only).
+
 ## [3.6.0] - 2026-11-08
 
 ### Added

@@ -169,7 +169,8 @@ hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
 present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
-(`connected` bool + `connected_pads` + `off_pads` + `warnings`),
+(`connected` bool + `connected_pads` + `off_pads` + `warnings`; the pad
+slugs are `dualsense`, `ns_pro`, `ns2_pro`, `xbox_nano`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
 `{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
 hider remembers a pad).
@@ -253,8 +254,8 @@ These are project-specific invariants. Breaking any of them silently
 regresses real, observed bugs the codebase already fixed once:
 
 1. **`config.rs::Config::validate` must reject any config in which a
-   pad's `buttons` table (`pads.dualsense`, `pads.ns_pro`, `pads.ns2_pro`)
-   does not list every button id `0..=32` (the union of all supported
+   pad's `buttons` table (`pads.dualsense`, `pads.ns_pro`, `pads.ns2_pro`,
+   `pads.xbox_nano`) does not list every button id `0..=32` (the union of all supported
    pads' ids).** Missing ids are a user error, not a silent skip — except
    for the v2.1.0 touchpad-quadrant additions and the v2.5.0 Capture
    button and the v2.6.0 Switch 2 Pro additions (25..=32), which the load
@@ -333,7 +334,9 @@ regresses real, observed bugs the codebase already fixed once:
    `hidhide::bt_addr_of_instance`; never another pad of the same kind),
    once per pad per launch (`platform::power_off_addrs`, the ⏻'s
    `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
-   address (USB) is not touched. Connection state still comes from the HID
+   address (USB) is not touched, nor is a Bluetooth LE pad (the Xbox Nano:
+   its address is shown, but that IOCTL is a classic-Bluetooth disconnect).
+   Connection state still comes from the HID
    stream (iron rule 11).
    Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
@@ -516,6 +519,6 @@ shipped three broken releases under admin override — don't repeat it.
   for the other (Phase 2 macOS is the explicit target — don't add
   Windows-only behaviour without a `#[cfg(target_os = "macos")]`
   counterpart or a deliberate "Phase 2 TBD" CHANGELOG note). The Switch 2
-  Pro (BLE + virtual pad) and Xbox output (ViGEmBus + HidHide) are such
-  Phase 2 TBD items on macOS.
+  Pro (BLE + virtual pad), Xbox output (ViGEmBus + HidHide) and the Xbox
+  Nano's Share (Raw Input) are such Phase 2 TBD items on macOS.
 - Tracking `docs/superpowers/` content.

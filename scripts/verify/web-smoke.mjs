@@ -1047,6 +1047,19 @@ try {
       check(`header[${pad}]: unselected tabs 7 px right of the name`, m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
       check(`header[${pad}]: power key only on the selected tab`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
       check(`header[${pad}]: tabs, segments, gear, lamps on whole pixels; 關 39 / 鍵鼠 59 wide`, m.ints.length === 0 && m.offW === 39 && m.kbmW === 59 && !!sel, J);
+      if (pad === 'xbox_nano') {
+        // The Nano on 手把: the joined Xbox／手把 option lit, the header still fits and the gear stays put.
+        await page.click('#board .omode .o-pad');
+        await settle(page);
+        const n = await page.evaluate(() => {
+          const R = e => e.getBoundingClientRect(), win = R(document.getElementById('win')), hdr = document.querySelector('#board .hdr'), g = hdr.querySelector('.gear');
+          return { fit: hdr.scrollWidth <= hdr.clientWidth, on: !!hdr.querySelector('.omode .xjoin.on'), gearW: R(g).width, gearRight: R(g).right - win.left,
+            ints: [...document.querySelectorAll('#board .pd, #board .omode button, #board .omode .xjoin, #board .gear')].filter(e => !Number.isInteger(R(e).left) || !Number.isInteger(R(e).top)).length };
+        });
+        check('header[xbox_nano 手把]: .xjoin.on, fits 980 px, gear 30 wide at 975, whole pixels', n.on && n.fit && n.gearW === 30 && n.gearRight === 975 && n.ints === 0, JSON.stringify(n));
+        await page.click('#board .omode .o-kbm');
+        await settle(page);
+      }
     }
     await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
     await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); window.__mockEmit('config-changed', { source: 'external' }); });
@@ -1718,6 +1731,10 @@ try {
       m.out.length === 5 && m.sh === m.ch && m.sw === m.cw && m.out.every(o => o.ints && o.inside && o.mid <= 1 && o.bottom <= m.colBottom), JSON.stringify(m));
   }
   check('settings version line names PadToKBM 手把轉鍵鼠', /^PadToKBM 手把轉鍵鼠 v/.test(((await page.locator('#board .ver').textContent()) || '').trim()), await page.locator('#board .ver').textContent());
+  {
+    const about = (await page.locator('#board .ver').innerText()).split('\n').map(x => x.trim());
+    check('settings about line names the four pads', about[1] === '支援 DualSense、Switch Pro、Switch 2 Pro、Xbox Nano', JSON.stringify(about));
+  }
   check('一般 shows the config path and both open buttons', /padtokbm\.json/.test(await page.locator('#board .cfgp').textContent()) &&
     (await page.locator('#board [data-act="opencfg"]').count()) === 1 && (await page.locator('#board [data-act="opendir"]').count()) === 1);
   await page.click('#board [data-act="opencfg"]');
@@ -1897,6 +1914,13 @@ try {
     await settle(page);
     m = await measure();
     check('全部刪除 with none present: empty text shows', m.rows.length === 0 && m.empty === '還沒有記住的手把' && m.all === null, J());
+    // v3.7.0: the Xbox Nano (Bluetooth LE, HID over GATT) shows as Xbox Nano 藍牙 with its address's last two bytes.
+    const NANO = 'HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\\8&113d3dd1&0&0000';
+    await setKnown([{ kind: 'xbox_nano', id: NANO, addr: 'FB3A7C7DF9A8' }, { kind: 'ns_pro', id: NSP_BT, addr: A_NSP }], [NANO]);
+    m = await measure();
+    check('記住的手把: the Xbox Nano row reads Xbox Nano 藍牙 F9:A8 連線中; its title starts with the whole address', m.rows.length === 2 &&
+      /^Xbox Nano\s*藍牙\s*F9:A8\s*連線中\s*刪除$/.test(m.rows[0].text) && m.rows[0].title === '藍牙位址 FB:3A:7C:7D:F9:A8\n' + NANO && m.rows[0].dis === true, J());
+    check('記住的手把 (Nano): whole pixels, text inside its box, at least 2 px spare', m.bad.length === 0 && m.rows.every(r => r.free >= 2), J());
     const many = [], here = [];
     for (let i = 0; i < 16; i++) {
       // Bluetooth rows carry an address (the last one is an old entry without); its last two bytes are the row's i.

@@ -42,7 +42,7 @@ function fitOf(pad) { var f = SHOULDER[pad].fit; return { tf: 'translate(' + f.t
 // user ruling: the outline is how the pad really looks). Photo -> pad units: k = 0.384 units per photo px,
 // x' = (x - 490)k + 150, y' = (y - 322)k + 40 (assets mock-board/padart.js modelXN, labelfix.json xbox_nano:1;
 // LT moved from x 94.5 to 95.2: RT, wider than LT, then also clears its key face by 1.45, and at 1x the stems
-// of LT and RT fall on pixel columns (bars on rows: y 25, cap 5).
+// of LT and RT fall on pixel columns (bars on rows: y 25, cap 5)).
 var XN_BODY = 'M58,40 H242 C256,40 267,46 273,55 C280,66 285,80 288,92 C292,110 295,128 294,146 C293,160 286,172 274,178 C266,181 256,181 248,180 C236,179 228,176 220,173 C214,171.5 210,171 204,171 H96 C90,171 86,171.5 80,173 C72,176 64,179 52,180 C44,181 34,181 26,178 C14,172 7,160 6,146 C5,128 8,110 12,92 C15,80 20,66 27,55 C33,46 44,40 58,40 Z';
 var XN_PLATE = 'M52,48 H248 C260,48 270,52 275,60 C279,67 280,75 280,84 C280,100 277,118 273,132 C269,147 260,158 244,161 C236,162 230,162 224,162 H76 C70,162 64,162 56,161 C40,158 31,147 27,132 C23,118 20,100 20,84 C20,75 21,67 25,60 C30,52 40,48 52,48 Z';
 // LT (back, drawn before the body) and LB (front, after it); labels [left, right, x, y, rotate, cap height].
