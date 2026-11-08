@@ -12,7 +12,7 @@ use crate::config::{Config, OutputMode};
 use crate::event_log::{self, EventLog};
 use crate::gamepad::lightbar::LightbarLive;
 use crate::gamepad::stick_cal::{StickCalTable, StickPositions, StickProbe};
-use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
+use crate::gamepad::{Battery, ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
 use crate::hider::HiderLink;
 use crate::keyboard::KeyboardSink;
 use crate::macro_engine::MacroEngine;
@@ -23,6 +23,7 @@ use crate::virtual_pad::XState;
 use crate::xinput_sink::{self, PadError, SharedPad, VirtualPad};
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
@@ -34,7 +35,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
     /// A controller connected. Sent again, unchanged otherwise, whenever its
-    /// status `warnings` or the `connected` pads change.
+    /// status `warnings`, the `connected` pads or a `battery` reading change.
     ControllerConnected {
         name: String,
         transport: String,
@@ -44,6 +45,8 @@ pub enum EngineEvent {
         connected: Vec<ControllerKind>,
         /// Pads switched off for this session (`Handle::set_pad_off`).
         off_pads: Vec<ControllerKind>,
+        /// The battery of each connected pad that reports one (v3.8.0).
+        battery: BTreeMap<ControllerKind, Battery>,
     },
     ControllerDisconnected,
     ButtonDown { id: u32 },
@@ -78,6 +81,9 @@ pub struct ControllerStatus {
     pub connected: Vec<ControllerKind>,
     /// Pads switched off for this session (runtime only, `set_pad_off`).
     pub off_pads: Vec<ControllerKind>,
+    /// The battery of each connected pad that reports one, by slug (v3.8.0).
+    /// Display only: never part of the connection state (iron rule 11).
+    pub battery: BTreeMap<ControllerKind, Battery>,
 }
 
 // ─── ConfigWriteGuard — bumps generation on drop ─────────────────────────────
@@ -129,6 +135,10 @@ struct HandleInner {
     /// Test-only: sender for the fake gamepad source. `None` in production.
     #[doc(hidden)]
     fake_tx: Mutex<Option<crossbeam_channel::Sender<crate::gamepad::GamepadEvent>>>,
+    /// Test-only: sender for the second fake source (a pad that waits while
+    /// the first owns). `None` in production.
+    #[doc(hidden)]
+    fake_tx2: Mutex<Option<crossbeam_channel::Sender<crate::gamepad::GamepadEvent>>>,
     /// Test-only: commands the fake source received (routed by the hub to
     /// it as owner). `None` in production.
     #[doc(hidden)]
@@ -422,6 +432,18 @@ impl Handle {
         }
     }
 
+    /// Inject an event into the second fake source, polled after the first
+    /// (a pad that waits while the first owns the session). Works only when
+    /// spawned via `Engine::spawn_with_fake_gamepad*`; no-op otherwise.
+    #[doc(hidden)]
+    pub fn fake_event_second(&self, ev: crate::gamepad::GamepadEvent) {
+        if let Ok(guard) = self.inner.fake_tx2.lock() {
+            if let Some(ref tx) = *guard {
+                let _ = tx.send(ev);
+            }
+        }
+    }
+
     /// How many manual disconnects reached the fake source since the last
     /// call. Works only when spawned via `Engine::spawn_with_fake_gamepad`;
     /// 0 otherwise.
@@ -559,10 +581,11 @@ impl Engine {
             cfg.touchpad_midpoint_y,
         );
         let (fake_tx, fake_rx) = unbounded::<crate::gamepad::GamepadEvent>();
+        let (fake_tx2, fake_rx2) = unbounded::<crate::gamepad::GamepadEvent>();
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<HubCmd>(4);
         let (source_cmd_tx, source_cmd_rx) = unbounded::<SourceCmd>();
         let (cal, probe) = (StickCalTable::default(), StickProbe::default());
-        let src = GamepadSource::fake_with_disconnect(fake_rx, cmd_rx, source_cmd_tx).with_stick_cal(cal.clone(), probe.clone());
+        let src = GamepadSource::fake_with_disconnect(fake_rx, fake_rx2, cmd_rx, source_cmd_tx).with_stick_cal(cal.clone(), probe.clone());
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let engine = Self::spawn_inner(
             cfg, /*dry_run=*/true, src, cursor_params, LightbarLive::default(), cmd_tx, warn_rx, pad, cal, probe,
@@ -570,6 +593,7 @@ impl Engine {
         )?;
         // Install the sender into HandleInner.
         *engine.handle.inner.fake_tx.lock().unwrap() = Some(fake_tx);
+        *engine.handle.inner.fake_tx2.lock().unwrap() = Some(fake_tx2);
         *engine.handle.inner.fake_warn_tx.lock().unwrap() = Some(warn_tx);
         *engine.handle.inner.fake_cmd_rx.lock().unwrap() = Some(source_cmd_rx);
         Ok(engine)
@@ -615,6 +639,7 @@ impl Engine {
             event_rx,
             key_state: key_state.clone(),
             fake_tx: Mutex::new(None),
+            fake_tx2: Mutex::new(None),
             fake_cmd_rx: Mutex::new(None),
             fake_cmd_buf: Mutex::new(Vec::new()),
             current_status: RwLock::new(None),
@@ -699,8 +724,10 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     // Virtual Xbox pad (Xbox output mode) and the status warnings.
     let mut pad = PadLink::new(pad);
     let mut worker_warnings: Vec<String> = Vec::new();
-    // The connected pads last published in the status.
+    // The connected pads and their battery readings last published in the
+    // status.
     let mut last_connected: Vec<ControllerKind> = Vec::new();
+    let mut last_battery: BTreeMap<ControllerKind, Battery> = BTreeMap::new();
     // The `log_events` file (no folder until `Handle::set_log_dir`).
     let mut elog = EventLog::new(None);
     // HidHide inputs: the kinds wanted hidden (from the live config) and the
@@ -867,6 +894,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         pad.reset_session();
                         pad.sync(wants_pad(paused || pad_off, mode, current_kind));
                         last_connected = source.connected_kinds();
+                        last_battery = source.batteries();
                         let status = ControllerStatus {
                             name: kind.display_name().to_string(),
                             transport: "BT".to_string(),
@@ -874,6 +902,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                             warnings: status_warnings(&worker_warnings, &pad),
                             connected: last_connected.clone(),
                             off_pads: last_off_pads.clone(),
+                            battery: last_battery.clone(),
                         };
                         *h.current_status.write().unwrap() = Some(status.clone());
                         let _ = h.event_tx.send(connected_event(&status));
@@ -890,6 +919,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         current_kind = None;
                         pad_off = false;
                         last_connected.clear();
+                        last_battery.clear();
                         // The pad is gone: so is its virtual twin.
                         pad.sync(false);
                         pad.reset_session();
@@ -949,12 +979,19 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             }
         }
 
-        // ── Connected pads: re-publish the status when the list changes ─────
-        // (a second pad connects or leaves while the owner keeps the session).
+        // ── Connected pads / battery: re-publish the status on a change ─────
+        // (a second pad connects or leaves while the owner keeps the session,
+        // or a reading changes). One event carries both, so a pad that leaves
+        // takes its battery with it in the same status.
         let now_connected = source.connected_kinds();
-        if now_connected != last_connected {
+        let now_battery = source.batteries();
+        if now_connected != last_connected || now_battery != last_battery {
             last_connected = now_connected;
-            republish_status(&h, |s| s.connected = last_connected.clone());
+            last_battery = now_battery;
+            republish_status(&h, |s| {
+                s.connected = last_connected.clone();
+                s.battery = last_battery.clone();
+            });
         }
 
         // ── HidHide worker: send its inputs when they change ────────────────
@@ -1126,6 +1163,7 @@ fn connected_event(status: &ControllerStatus) -> EngineEvent {
         warnings: status.warnings.clone(),
         connected: status.connected.clone(),
         off_pads: status.off_pads.clone(),
+        battery: status.battery.clone(),
     }
 }
 

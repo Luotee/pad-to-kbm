@@ -27,4 +27,9 @@ pub enum GamepadEvent {
     /// quadrant change (dedupe-on-change). `quadrant = 255` is the
     /// sentinel for "finger lifted, clear UI hover".
     TouchpadHover { raw_x: u16, raw_y: u16, quadrant: u32 },
+    /// The pad's battery reading, sent when it changes (the first frame of
+    /// a session included). The hub keeps it per connected pad and never
+    /// passes it to the engine as an event; it never affects the
+    /// connection state (iron rule 11).
+    Battery(crate::gamepad::Battery),
 }

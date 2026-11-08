@@ -152,7 +152,9 @@ impl Mapper {
 
     pub fn handle(&mut self, ev: GamepadEvent) -> Vec<KeyAction> {
         match ev {
-            GamepadEvent::Connected(_) | GamepadEvent::Disconnected => Vec::new(),
+            GamepadEvent::Connected(_) | GamepadEvent::Disconnected | GamepadEvent::Battery(_) => {
+                Vec::new()
+            }
             GamepadEvent::ButtonDown(id) => match trigger_side(id) {
                 Some(side) => {
                     self.trigger_digital[side_index(side)] = true;

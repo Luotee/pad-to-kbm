@@ -1,7 +1,9 @@
 //! Controller kinds the mapper can drive. Standalone: no dependency on
 //! `config` so the gamepad layer stays self-contained.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ControllerKind {
     #[serde(rename = "dualsense")]
     DualSense,

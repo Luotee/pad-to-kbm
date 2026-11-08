@@ -169,8 +169,11 @@ hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
 present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
-(`connected` bool + `connected_pads` + `off_pads` + `warnings`; the pad
-slugs are `dualsense`, `ns_pro`, `ns2_pro`, `xbox_nano`),
+(`connected` bool + `connected_pads` + `off_pads` + `warnings` + `battery`
+`{ "<slug>": { pct, charging } }` for the connected pads that report one —
+DualSense, Switch Pro; re-sent when a reading changes, never part of the
+connection state; the pad slugs are `dualsense`, `ns_pro`, `ns2_pro`,
+`xbox_nano`; `get_controller_status` carries the same `battery`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
 `{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
 hider remembers a pad).

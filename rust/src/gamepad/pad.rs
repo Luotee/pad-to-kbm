@@ -92,6 +92,11 @@ pub(crate) fn emit_pad_diff(
         }
     }
     prev_buttons.copy_from_slice(&cur.buttons);
+    if let Some(b) = cur.battery {
+        if prev.map_or(true, |p| p.battery != Some(b)) {
+            let _ = tx.send(GamepadEvent::Battery(b));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -117,5 +122,33 @@ mod tests {
 
         emit_pad_diff(Some(&cur), &cur, &mut prev_buttons, &tx);
         assert_eq!(rx.try_iter().count(), 0, "identical frame emits nothing");
+    }
+
+    #[test]
+    fn emit_pad_diff_sends_battery_on_first_frame_and_on_change_only() {
+        use crate::gamepad::Battery;
+        let (tx, rx) = unbounded();
+        let mut prev_buttons = [false; BUTTON_SLOTS];
+        let mut cur = PadState::default();
+        cur.battery = Some(Battery { pct: 80, charging: false });
+
+        emit_pad_diff(None, &cur, &mut prev_buttons, &tx);
+        let batt = |evs: Vec<GamepadEvent>| -> Vec<GamepadEvent> {
+            evs.into_iter().filter(|e| matches!(e, GamepadEvent::Battery(_))).collect()
+        };
+        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(cur.battery.unwrap())]);
+
+        emit_pad_diff(Some(&cur), &cur, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().count(), 0, "same reading: nothing");
+
+        let mut next = cur.clone();
+        next.battery = Some(Battery { pct: 80, charging: true });
+        emit_pad_diff(Some(&cur), &next, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![GamepadEvent::Battery(next.battery.unwrap())]);
+
+        // A pad without a reading sends none.
+        let none = PadState::default();
+        emit_pad_diff(None, &none, &mut [false; BUTTON_SLOTS], &tx);
+        assert!(batt(rx.try_iter().collect()).is_empty());
     }
 }
