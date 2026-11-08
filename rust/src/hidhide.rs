@@ -141,10 +141,15 @@ pub fn kind_for(vid: u16, pid: u16) -> Option<ControllerKind> {
 pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
     use crate::gamepad::hid_source::is_candidate;
     let (vid, pid) = parse_vid_pid(id)?;
-    let lower = id.to_ascii_lowercase();
-    let bt = lower.contains("{00001124-") || lower.contains("{00001812-");
-    let bus = if bt { hidapi::BusType::Bluetooth } else { hidapi::BusType::Usb };
+    let bus = if is_bluetooth_instance(id) { hidapi::BusType::Bluetooth } else { hidapi::BusType::Usb };
     kind_for(vid, pid).filter(|&k| is_candidate(vid, pid, bus) == Some(k))
+}
+
+/// A Bluetooth HID instance id: it carries the HID (`00001124`) or HOGP
+/// (`00001812`) service UUID. Anything else is USB.
+pub fn is_bluetooth_instance(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    lower.contains("{00001124-") || lower.contains("{00001812-")
 }
 
 // ─── Bluetooth address ───────────────────────────────────────────────────────

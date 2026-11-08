@@ -98,7 +98,7 @@ function tauriMock({ config, version }) {
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).
-    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true, auto_off: false },
+    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true, auto_off: false, replug_usb: false },
     after: { vigem: 'installed', hidhide: 'installed' },
     // v3.6.0 ui prefs kept across a page.reload() (sessionStorage), as the config file would be.
     dismissed: false,
@@ -608,6 +608,17 @@ try {
     check('reconnect banner fits the board', fits);
     check('Xbox reconnect banner has no 這次不再提醒', (await page.locator('#board .obanner.rc [data-act="rcdismiss"]').count()) === 0);
     await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect.png') });
+    // A USB pad (`replug_usb`): only unplugging makes a game drop it, and the ⏻ would drop a
+    // Bluetooth pad of the same type: the banner says unplug, no ⏻.
+    await setXbox({ replug_usb: true });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await settle(page);
+    const u = await banner();
+    check('replug_usb: the reconnect banner says unplug the USB cable, no ⏻', u === '再連一次 DualSense，遊戲才看不到原本的手把：拔掉 USB 線再插回去' &&
+      (await page.locator('#board .obanner.rc svg').count()) === 0, u);
+    check('replug_usb: banner sits at the stage centre and fits', await bannerCentred(), JSON.stringify(await bannerBox()));
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect-usb.png') });
+    await setXbox({ replug_usb: false });
   }
   {
     await setXbox({ hidden: true });
@@ -1680,7 +1691,9 @@ try {
         if (rr.left < pr.left || rr.right > pr.right || rr.bottom > pr.bottom) bad.push('out ' + b.dataset.id);
         const sn = r.querySelector('.kns');
         return { x: rr.left, y: rr.top, w: rr.width, text: r.textContent, title: r.getAttribute('title'), id: b.dataset.id, btn: b.textContent.trim(), serial: sn ? sn.textContent : null,
-          used: Math.ceil(R(b).right - R(r.querySelector('.knn')).left), free: Math.floor((tag ? R(tag).left : br.left) - R(sn || r.querySelector('.knb')).right),
+          used: Math.ceil(R(b).right - R(r.querySelector('.knn')).left),
+          // Spare px in the row: the gap between the last text span and the tag / button, less the flex gap.
+          free: Math.floor((tag ? R(tag).left : br.left) - R(sn || r.querySelector('.knb')).right - parseFloat(getComputedStyle(r).columnGap)),
           tag: tag ? tag.textContent.trim() : null, dis: b.disabled, btitle: b.getAttribute('title') };
       });
       const all = pane.querySelector('[data-act="forgetall"]');
@@ -1734,7 +1747,9 @@ try {
     const many = [], here = [];
     for (let i = 0; i < 16; i++) {
       // Bluetooth rows carry an address (the last one is an old entry without); its last two bytes are the row's i.
-      const ad = 'A0B1C2D3' + (0x2300 + i).toString(16).toUpperCase().padStart(4, '0');
+      // Worst cases for width (Cubic 11 is proportional: A / D are the widest hex glyphs): row 2,
+      // Switch Pro 連線中, ends DD:DD; row 9, DualSense 連線中, ends AD:DA.
+      const ad = 'A0B1C2D3' + (i === 2 ? 'DDDD' : i === 9 ? 'ADDA' : (0x2300 + i).toString(16).toUpperCase().padStart(4, '0'));
       const k = i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0'), addr: ad }
         : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)), ...(i % 2 && i !== 15 ? { addr: i === 1 ? A_DS : ad } : {}) };
       many.push(k);
@@ -1745,15 +1760,18 @@ try {
     const left = m.rows.slice(0, 8), right = m.rows.slice(8);
     check('記住的手把 (16): two columns of eight, left first', m.rows.length === 16 && left.every(r => r.x === left[0].x) && right.every(r => r.x === right[0].x) &&
       right[0].x > left[0].x && left.every((r, i) => i === 0 || r.y > left[i - 1].y) && right.every((r, i) => r.y === left[i].y), J());
-    check('記住的手把 (16): DualSense 藍牙 23:D2 連線中 / Switch Pro 藍牙 23:02 連線中 rows carry the serial and the tag', m.rows.filter(r => r.tag === '連線中').length === 4 &&
-      /^DualSense\s*藍牙\s*23:D2\s*連線中\s*刪除$/.test(m.rows[1].text) && /^Switch Pro\s*藍牙\s*23:02\s*連線中\s*刪除$/.test(m.rows[2].text) &&
+    check('記住的手把 (16): DualSense 藍牙 23:D2 / AD:DA 連線中, Switch Pro 藍牙 DD:DD 連線中 rows carry the serial and the tag', m.rows.filter(r => r.tag === '連線中').length === 4 &&
+      /^DualSense\s*藍牙\s*23:D2\s*連線中\s*刪除$/.test(m.rows[1].text) && /^Switch Pro\s*藍牙\s*DD:DD\s*連線中\s*刪除$/.test(m.rows[2].text) &&
+      /^DualSense\s*藍牙\s*AD:DA\s*連線中\s*刪除$/.test(m.rows[9].text) &&
       /^Switch Pro\s*藍牙\s*23:0B\s*連線中/.test(m.rows[11].text), J());
     check('記住的手把 (16): a Bluetooth row without an address (an old entry) and the USB rows show no serial',
       m.rows[15].serial === null && /^DualSense\s*藍牙\s*刪除$/.test(m.rows[15].text) && m.rows[15].title === many[15].id &&
       m.rows.filter((r, i) => many[i].id.includes('MI_03')).every(r => r.serial === null), J());
     check('記住的手把 (16): pane does not scroll, whole pixels, text inside its box and centred', m.sh === m.ch && m.sw === m.cw && m.bad.length === 0, J());
     const tight = m.rows.reduce((a, r) => (r.free < a.free ? r : a));
-    console.log('  記住的手把 (16): row ' + tight.w + 'px; the tightest row "' + tight.text + '" uses ' + tight.used + 'px, ' + tight.free + 'px spare before its tag / button');
+    check('記住的手把 (16): every row keeps at least 2 px spare (the widest serials included)', m.rows.every(r => r.free >= 2),
+      'row ' + tight.w + 'px; tightest "' + tight.text + '": ' + tight.free + 'px spare');
+    console.log('  記住的手把 (16): row ' + tight.w + 'px; the tightest row "' + tight.text + '" has ' + tight.free + 'px spare');
     await page.screenshot({ path: path.join(outDir, 'web-known-16.png') });
     await setKnown([]);
     await page.click('#board [data-act="setclose"]');

@@ -82,9 +82,14 @@ pub struct KnownPad {
     /// Its Bluetooth address, 12 upper-case hex digits (`7C66EF8223D2`),
     /// read from the device tree when it was learned
     /// (`hidhide::bt_addr_of_instance`); the settings show its last four as
-    /// the pad's serial. `None`: USB, or not found.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// the pad's serial. `None`: USB, or not found. Read upper-cased (the
+    /// same address in either case); `validate` still wants 12 hex digits.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "upper_addr")]
     pub addr: Option<String>,
+}
+
+fn upper_addr<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.map(|a| a.to_ascii_uppercase()))
 }
 
 /// At most this many remembered pads; the oldest goes first.

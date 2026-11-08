@@ -386,6 +386,38 @@ fn a_power_off_that_dropped_no_link_keeps_the_reconnect_hint() {
     r.engine.shutdown();
 }
 
+fn replug_usb(h: &Handle) -> bool {
+    xbox_status_impl(h, "dualsense", "installed", "installed").unwrap().replug_usb
+}
+
+#[test]
+fn the_status_says_whether_the_pad_needing_the_replug_is_on_usb() {
+    // USB: only unplugging it makes a game drop it (the board says so).
+    let r = rig(test_helpers::load_example());
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("needs a replug", || hidden(&r.h) == Some(false));
+    eventually("on USB", || replug_usb(&r.h));
+    // Unplugged: nothing needs it any more.
+    set_present(&r, &[MOUSE]);
+    r.h.fake_event(GamepadEvent::Disconnected);
+    eventually("hidden", || hidden(&r.h) == Some(true));
+    assert!(!replug_usb(&r.h));
+    r.worker.stop();
+    r.engine.shutdown();
+    // Bluetooth (its power-off dropped no link, so it still needs one): not USB.
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, DS_BT], |_, _| Box::new(|_| {}));
+    r.h.set_fake_power_off_links(Some(0));
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("needs a replug", || hidden(&r.h) == Some(false));
+    let until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < until {
+        assert!(!replug_usb(&r.h), "Bluetooth");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
 #[test]
 fn a_usb_pad_has_no_address_and_is_not_powered_off() {
     let r = rig(test_helpers::load_example());
@@ -486,10 +518,10 @@ fn xbox_status_reports_hidden_from_the_worker() {
     let r = rig(xbox(ControllerKind::DualSense));
     eventually("first round", || hidden(&r.h) == Some(false));
     let st = xbox_status_impl(&r.h, "dualsense", "installed", "installed").unwrap();
-    assert_eq!(st, XboxStatus { vigem: "installed".into(), hidhide: "installed".into(), hidden: Some(false), auto_off: false });
+    assert_eq!(st, XboxStatus { vigem: "installed".into(), hidhide: "installed".into(), hidden: Some(false), auto_off: false, replug_usb: true });
     assert_eq!(
         serde_json::to_value(&st).unwrap(),
-        serde_json::json!({ "vigem": "installed", "hidhide": "installed", "hidden": false, "auto_off": false })
+        serde_json::json!({ "vigem": "installed", "hidhide": "installed", "hidden": false, "auto_off": false, "replug_usb": true })
     );
     // HidHide missing: hidden is not applicable.
     let st = xbox_status_impl(&r.h, "dualsense", "missing", "missing").unwrap();
@@ -512,7 +544,7 @@ fn xbox_status_without_a_worker_says_hidhide_is_unsupported() {
     let st = xbox_status_impl(&h, "dualsense", "installed", "installed").unwrap();
     assert_eq!(
         serde_json::to_value(&st).unwrap(),
-        serde_json::json!({ "vigem": "installed", "hidhide": "unsupported", "hidden": null, "auto_off": false })
+        serde_json::json!({ "vigem": "installed", "hidhide": "unsupported", "hidden": null, "auto_off": false, "replug_usb": false })
     );
     h.retry_hiding(); // no worker: a no-op
     // No worker, no replug: a connected pad is never powered off.

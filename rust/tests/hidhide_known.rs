@@ -85,6 +85,23 @@ fn validate_rejects_a_bad_address() {
 }
 
 #[test]
+fn a_lower_case_address_loads_upper_case_and_a_bad_one_is_still_rejected() {
+    let mut v = serde_json::to_value(test_helpers::load_example()).unwrap();
+    v["hidhide_known"] = serde_json::json!([{ "kind": "dualsense", "id": DS_BT, "addr": "7c66ef8223d2" }]);
+    let cfg = Config::load_from_str(&v.to_string()).expect("lower case is the same address");
+    assert_eq!(cfg.hidhide_known[0].addr.as_deref(), Some(ADDR));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("padtokbm.json");
+    std::fs::write(&path, v.to_string()).unwrap();
+    assert_eq!(ConfigDoc::load(&path).unwrap().typed().hidhide_known[0].addr.as_deref(), Some(ADDR), "the IPC's load too");
+    for bad in ["7c66ef8223", "7c66ef8223zz", "7C:66:EF:82:23:D2"] {
+        v["hidhide_known"][0]["addr"] = serde_json::json!(bad);
+        let err = Config::load_from_str(&v.to_string()).expect_err(bad);
+        assert!(format!("{err:#}").contains("addr"), "{bad}: {err:#}");
+    }
+}
+
+#[test]
 fn remember_fills_a_missing_address_and_keeps_a_known_one() {
     let list = vec![kp("dualsense", DS_BT), kpa("ns_pro", NSP_BT, "AABBCCDDEEFF")];
     // Learned again with its address (the start's look-up): filled in place.

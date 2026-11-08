@@ -1031,7 +1031,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                 known_sent = Some(hide_known.clone());
             }
             if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
-                link.update(hide_wanted.clone(), last_connected.clone());
+                link.update(hide_wanted.clone());
                 hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
             }
         }

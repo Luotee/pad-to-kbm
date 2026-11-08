@@ -80,6 +80,9 @@ pub struct HideStatus {
     /// The Bluetooth addresses of the `present` pads that have one, filled
     /// in by the worker: the engine sees a pad it powered off come back.
     pub present_addrs: Vec<(ControllerKind, u64)>,
+    /// Kinds with a pad on USB among those needing the replug: only
+    /// unplugging it makes a game drop it.
+    pub replug_usb: Vec<ControllerKind>,
 }
 
 impl HideStatus {
@@ -171,6 +174,12 @@ impl Hider {
             present: self.present.clone(),
             replug_addrs: Vec::new(),
             present_addrs: Vec::new(),
+            replug_usb: ControllerKind::ALL
+                .into_iter()
+                .filter(|k| {
+                    self.replug_ids.iter().any(|id| kind_of(id) == Some(*k) && !hidhide::is_bluetooth_instance(id))
+                })
+                .collect(),
         }
     }
 
@@ -415,11 +424,10 @@ pub struct HiderLink {
 }
 
 impl HiderLink {
-    /// The kinds wanted hidden or the engine's connected kinds changed: a
-    /// round runs. `connected` is not decided on: a pad that connected or
-    /// left is what the round finds present or not.
-    pub fn update(&self, wanted: Vec<ControllerKind>, connected: Vec<ControllerKind>) {
-        drop(connected);
+    /// Run a round with the kinds wanted hidden. The engine sends it when
+    /// they or its connected kinds change: a pad that connected or left is
+    /// what the round finds present or not.
+    pub fn update(&self, wanted: Vec<ControllerKind>) {
         let _ = self.tx.send(Msg::Update { wanted });
     }
 
@@ -444,6 +452,13 @@ impl HiderLink {
     pub fn replug_addrs(&self) -> Vec<(ControllerKind, u64)> {
         let st = self.status.read().unwrap_or_else(|p| p.into_inner());
         if st.supported && st.ok { st.replug_addrs.clone() } else { Vec::new() }
+    }
+
+    /// A pad of `kind` needing the replug is on USB ([`HideStatus::replug_usb`]),
+    /// after a round that fully succeeded.
+    pub fn replug_usb(&self, kind: ControllerKind) -> bool {
+        let st = self.status.read().unwrap_or_else(|p| p.into_inner());
+        st.supported && st.ok && st.replug_usb.contains(&kind)
     }
 
     /// The Bluetooth addresses of the pads present at the last round
@@ -1461,7 +1476,7 @@ mod tests {
 
     #[test]
     fn status_hidden_is_none_without_a_worker() {
-        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true, present: vec![], replug_addrs: vec![], present_addrs: vec![] };
+        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true, present: vec![], replug_addrs: vec![], present_addrs: vec![], replug_usb: vec![] };
         assert_eq!(st.hidden(DS), None);
     }
 
@@ -1543,13 +1558,13 @@ mod tests {
         let w = wrig(Fake::default(), &[DS_USB], None);
         let link = w.worker.link();
         assert_eq!(link.hidden(DS), None, "nothing wanted yet");
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("blacklisted", || w.ctl.f().black == s(&[DS_USB]));
         eventually("needs replug", || link.hidden(DS) == Some(false));
         assert!(w.changes.load(std::sync::atomic::Ordering::SeqCst) > 0, "on_change ran");
         // Unplugged: the round no longer finds it.
         w.present.lock().unwrap().clear();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("left: hidden", || link.hidden(DS) == Some(true));
     }
 
@@ -1560,7 +1575,7 @@ mod tests {
         link.set_known(s(&[DS_BT]));
         thread::sleep(Duration::from_millis(60));
         assert_eq!(w.ctl.f().opens, 0, "the remembered list alone starts nothing");
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("both hidden", || w.ctl.f().black == s(&[FOREIGN_DEV, DS_USB, DS_BT]));
         eventually("learned", || *w.learned.lock().unwrap() == vec![known("dualsense", DS_USB)]);
         // The config now has both; then the user forgets the absent one.
@@ -1578,7 +1593,7 @@ mod tests {
     fn worker_learns_a_pad_with_its_bluetooth_address() {
         let w = wrig(Fake::default(), &[DS_BT2, DS_USB], None);
         set_addrs(&w, &[(DS_BT2, ADDR_B)]);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("learned", || w.learned.lock().unwrap().len() == 2);
         let got = w.learned.lock().unwrap().clone();
         assert!(got.contains(&KnownPad { kind: "dualsense".into(), id: DS_BT2.into(), addr: Some(ADDR_B.into()) }), "{got:?}");
@@ -1593,12 +1608,12 @@ mod tests {
         set_addrs(&w, &[(DS_BT, ADDR_A)]);
         let link = w.worker.link();
         link.set_known(s(&[DS_BT, DS_USB]));
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("reported", || !w.learned.lock().unwrap().is_empty());
         thread::sleep(Duration::from_millis(60));
         assert_eq!(*w.learned.lock().unwrap(), vec![KnownPad { kind: "dualsense".into(), id: DS_BT.into(), addr: Some(ADDR_A.into()) }]);
         let n = w.lookups.load(std::sync::atomic::Ordering::SeqCst);
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         link.set_known(s(&[DS_BT]));
         eventually("rounds ran", || w.ctl.f().opens >= 2);
         thread::sleep(Duration::from_millis(60));
@@ -1612,13 +1627,13 @@ mod tests {
         let w = wrig(Fake { black: s(&[DS_BT]), active: true, ..Default::default() }, &[DS_BT, DS_BT2], None);
         set_addrs(&w, &[(DS_BT, ADDR_A), (DS_BT2, ADDR_B)]);
         let link = w.worker.link();
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("needs replug", || link.hidden(DS) == Some(false));
         assert_eq!(link.replug_addrs(), vec![(DS, 0xA0B1_C2D3_E4F5)], "B only");
         // A USB pad hidden while present: no address.
         let w = wrig(Fake::default(), &[DS_USB], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("needs replug", || link.hidden(DS) == Some(false));
         assert!(link.replug_addrs().is_empty());
     }
@@ -1629,7 +1644,7 @@ mod tests {
         // update comes (the connected kinds do not change).
         let w = wrig(Fake { black: s(&[DS_BT]), active: true, ..Default::default() }, &[DS_BT], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("first round", || w.ctl.f().opens == 1);
         eventually("A arrived hidden", || link.hidden(DS) == Some(true));
         thread::sleep(Duration::from_millis(150));
@@ -1650,7 +1665,7 @@ mod tests {
         let w = wrig(Fake::default(), &[DS_BT, DS_USB, MOUSE], None);
         set_addrs(&w, &[(DS_BT, ADDR_A)]);
         let link = w.worker.link();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("a round ran", || link.status().present.len() == 2);
         assert_eq!(link.status().present_addrs, vec![(DS, 0x7C66_EF82_23D2)], "USB: none");
     }
@@ -1662,7 +1677,7 @@ mod tests {
         let w = wrig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() }, &[], Some(st));
         thread::sleep(Duration::from_millis(100));
         assert_eq!(w.ctl.f().opens, 0);
-        w.worker.link().update(vec![DS], vec![]);
+        w.worker.link().update(vec![DS]);
         eventually("a round ran", || w.ctl.f().opens > 0);
         assert_eq!(w.ctl.f().black, s(&[DS_USB]), "still wanted: kept");
     }
@@ -1671,7 +1686,7 @@ mod tests {
     fn worker_retries_until_the_driver_answers() {
         let w = wrig(Fake { open_err: Some(OpenErr::Busy), ..Default::default() }, &[DS_USB], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("several attempts", || w.ctl.f().opens >= 3);
         assert_eq!(link.hidden(DS), Some(false));
         w.ctl.f().open_err = None;
@@ -1685,7 +1700,7 @@ mod tests {
     fn worker_retry_runs_a_round_for_a_new_device() {
         let w = wrig(Fake::default(), &[], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("first round", || w.ctl.f().opens == 1);
         w.present.lock().unwrap().push(DS_BT.into());
         link.retry();
@@ -1695,7 +1710,7 @@ mod tests {
     #[test]
     fn worker_stop_undoes_everything_and_ends() {
         let w = wrig(foreign(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || w.ctl.f().black.len() == 2);
         let t = Instant::now();
         assert!(w.worker.stop(), "confirmed");
@@ -1710,7 +1725,7 @@ mod tests {
     #[test]
     fn worker_stop_while_busy_gives_up_in_time_and_keeps_the_state() {
         let w = wrig(Fake::default(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || !w.ctl.f().black.is_empty());
         w.ctl.f().open_err = Some(OpenErr::Busy);
         let t = Instant::now();
@@ -1723,7 +1738,7 @@ mod tests {
     #[test]
     fn dropping_the_worker_stops_it() {
         let w = wrig(Fake::default(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || !w.ctl.f().black.is_empty());
         let WRig { ctl, worker, .. } = w;
         drop(worker);

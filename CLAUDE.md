@@ -162,7 +162,7 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `reset_stick_cal`, `set_ui_prefs` (it and `get_ui_prefs` also carry `hidhide_prompt_dismissed`,
 written to the config only once true); runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
-at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered a pad of that kind off for its reconnect and it is not back yet; the board shows that banner only while no pad of the kind is connected),
+at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered a pad of that kind off for its reconnect and it is not back yet; the board shows that banner only while no pad of the kind is connected; `replug_usb`: a pad of that kind needing the reconnect is on USB, so the reconnect banner says unplug it instead of ⏻ then PS),
 `get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
 (`hidhide_known` in the config; a Bluetooth entry carries `addr`, shown as its last four digits) `get_present_pad_ids` (pads present at the
 hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a

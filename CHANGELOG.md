@@ -36,7 +36,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Reconnect hint.** A controller that was already connected when it was
   hidden stays visible to games until it reconnects. A white banner says
   so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
-  PS 鍵連回來」. It goes away after the reconnect.
+  PS 鍵連回來」. On USB it says 「再連一次 DualSense，遊戲才看不到原本的手把：
+  拔掉 USB 線再插回去」 instead: only unplugging makes a game let go of it, and
+  the ⏻ would also turn off a Bluetooth controller of the same model. It goes
+  away once that controller has gone and come back.
 - **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
   a 「這次不再提醒」 button (per controller, until the next time the app is
   opened; nothing is written to the config). The Xbox banner is unchanged.
@@ -56,7 +59,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   white banner says 「已替你把 DualSense 關機，好讓遊戲看不到它。按 PS 鍵打開就能
   用了」 (HOME on the Switch Pro), with no 「這次不再提醒」; it goes when that
   controller is back on, already hidden. A USB controller cannot be turned
-  off: the 「再連一次」 banner shows as before, until it is unplugged.
+  off: the USB 「再連一次」 banner shows instead, until it is unplugged.
   `get_xbox_status` reports this as `auto_off`.
 - **Controllers are remembered for hiding.** A DualSense / Switch Pro that
   PadToKBM has hidden once is remembered, and from the next start it is
