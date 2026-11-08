@@ -65,6 +65,7 @@ pub fn absorb(config_path: &Path) -> Absorb {
     // start turned logging on; this start turns it off (v3.4.1). Once: the
     // old files go below, so a user who turns it back on keeps it.
     let pad = OLD_FILES.iter().find_map(|f| old_pad(&dir.join(f)));
+    let _file = crate::config_io::file_lock();
     let result = ConfigDoc::load(config_path).and_then(|mut doc| {
         let moved = match pad {
             Some(pad) if doc.typed().last_pad.is_none() => {

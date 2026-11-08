@@ -175,6 +175,8 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::install_vigem,
             crate::gui::commands::get_xbox_status,
             crate::gui::commands::install_hidhide,
+            crate::gui::commands::forget_hidden_pad,
+            crate::gui::commands::forget_all_hidden_pads,
             crate::gui::commands::pause_mapper,
             crate::gui::commands::open_config_in_editor,
             crate::gui::commands::open_config_folder,

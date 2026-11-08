@@ -59,6 +59,9 @@ pub enum EngineEvent {
     /// Diagnostic — emitted per HID frame on touchpad hover quadrant change.
     /// `quadrant = 255` is the sentinel for "finger lifted, clear UI hover".
     TouchpadHover { raw_x: u16, raw_y: u16, quadrant: u32 },
+    /// The config was written outside the IPC (the hider remembered a pad,
+    /// v3.6.0): the GUI emits `config-changed` (iron rule 10).
+    ConfigChanged { source: &'static str },
 }
 
 /// Snapshot of the controller's current connection state. Polled by the GUI
@@ -180,6 +183,16 @@ pub struct Handle {
     inner: Arc<HandleInner>,
 }
 
+/// [`Handle::downgrade`]: for workers that must not keep the engine alive.
+#[derive(Clone)]
+pub struct WeakHandle(std::sync::Weak<HandleInner>);
+
+impl WeakHandle {
+    pub fn upgrade(&self) -> Option<Handle> {
+        self.0.upgrade().map(|inner| Handle { inner })
+    }
+}
+
 impl Handle {
     /// Live touchpad cursor parameters. The HID worker reads through
     /// this every frame; `set_settings` writes through it on the
@@ -258,6 +271,17 @@ impl Handle {
         if let Some(link) = self.hider() {
             link.retry();
         }
+    }
+
+    /// Tell the GUI the config changed (`EngineEvent::ConfigChanged`), for
+    /// a write that did not come through an IPC command.
+    pub fn announce_config_change(&self, source: &'static str) {
+        let _ = self.inner.event_tx.send(EngineEvent::ConfigChanged { source });
+    }
+
+    /// A handle that does not keep the engine alive.
+    pub fn downgrade(&self) -> WeakHandle {
+        WeakHandle(Arc::downgrade(&self.inner))
     }
 
     /// A callback that re-sends the current controller status unchanged
@@ -596,6 +620,9 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     // connected kinds last sent to the worker (`None`: not sent yet).
     let mut hide_wanted = hide_wanted_kinds(&h.config.read().unwrap());
     let mut hider_sent: Option<(Vec<ControllerKind>, Vec<ControllerKind>)> = None;
+    // The remembered pads' ids (`hidhide_known`) and those last sent.
+    let mut hide_known = hide_known_ids(&h.config.read().unwrap());
+    let mut known_sent: Option<Vec<String>> = None;
 
     while !h.shutdown.load(Ordering::SeqCst) {
         if let Some(dir) = h.pending_log_dir.lock().unwrap_or_else(|p| p.into_inner()).take() {
@@ -637,6 +664,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             h.lightbar.set_config(cfg.lightbar);
             mapper.replace_config(cfg.clone());
             hide_wanted = hide_wanted_kinds(&cfg);
+            hide_known = hide_known_ids(&cfg);
             last_config_gen = current_gen;
         }
 
@@ -821,11 +849,17 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
 
         // ── HidHide worker: send its inputs when they change ────────────────
         // Unbounded channel: never blocks the tick.
+        // The remembered list goes first, so the first round already has it.
         if h.hider_fresh.swap(false, Ordering::SeqCst) {
             hider_sent = None;
+            known_sent = None;
         }
-        if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
-            if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            if known_sent.as_ref() != Some(&hide_known) {
+                link.set_known(hide_known.clone());
+                known_sent = Some(hide_known.clone());
+            }
+            if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
                 link.update(hide_wanted.clone(), last_connected.clone());
                 hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
             }
@@ -866,6 +900,12 @@ fn hide_wanted_kinds(cfg: &Config) -> Vec<ControllerKind> {
         .into_iter()
         .filter(|k| k.has_native_driver() && matches!(cfg.output_mode_for(*k), OutputMode::Kbm | OutputMode::Xbox))
         .collect()
+}
+
+/// The remembered pads' instance ids (`hidhide_known`): hidden while their
+/// kind is wanted, even when absent.
+fn hide_known_ids(cfg: &Config) -> Vec<String> {
+    cfg.hidhide_known.iter().map(|k| k.id.clone()).collect()
 }
 
 /// Whether the session owner `kind` is switched off.

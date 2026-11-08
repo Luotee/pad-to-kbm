@@ -64,6 +64,47 @@ pub struct Config {
     /// DualSense lightbar (v3.5.0); a missing key = the defaults.
     #[serde(default)]
     pub lightbar: crate::gamepad::lightbar::LightbarConfig,
+    /// v3.6.0: pads the hider has hidden, oldest first, at most
+    /// [`HIDHIDE_KNOWN_MAX`]. Hidden at start even when absent, so a pad
+    /// turned on later arrives hidden. Written by the hider
+    /// (`hider::remember_hidden_pads`), trimmed by the settings' 刪除.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidhide_known: Vec<KnownPad>,
+}
+
+/// A pad the hider has hidden (`Config::hidhide_known`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownPad {
+    /// `ControllerKind::slug()`, for the settings' list.
+    pub kind: String,
+    /// Its HID device instance id, as HidHide's blacklist holds it.
+    pub id: String,
+}
+
+/// At most this many remembered pads; the oldest goes first.
+pub const HIDHIDE_KNOWN_MAX: usize = 16;
+
+/// `list` with the pads of `found` it lacks appended (ids compare
+/// case-insensitively, as HidHide's), then cut to the newest
+/// [`HIDHIDE_KNOWN_MAX`].
+pub fn remember_known(list: &[KnownPad], found: &[KnownPad]) -> Vec<KnownPad> {
+    let mut out = list.to_vec();
+    for k in found {
+        if !out.iter().any(|x| x.id.eq_ignore_ascii_case(&k.id)) {
+            out.push(k.clone());
+        }
+    }
+    let excess = out.len().saturating_sub(HIDHIDE_KNOWN_MAX);
+    out.drain(..excess);
+    out
+}
+
+/// `list` without the pad `id` (case-insensitive); `None`: without any.
+pub fn forget_known(list: &[KnownPad], id: Option<&str>) -> Vec<KnownPad> {
+    match id {
+        Some(id) => list.iter().filter(|x| !x.id.eq_ignore_ascii_case(id)).cloned().collect(),
+        None => Vec::new(),
+    }
 }
 
 /// Where a pad's input goes.
@@ -383,6 +424,20 @@ impl Config {
                 bail!("stick_cal has unknown controller slug {slug:?}");
             }
             crate::gamepad::stick_cal::check(cal).map_err(|e| anyhow!("stick_cal.{slug}: {e}"))?;
+        }
+        if self.hidhide_known.len() > HIDHIDE_KNOWN_MAX {
+            bail!("hidhide_known lists {} pads; at most {HIDHIDE_KNOWN_MAX}", self.hidhide_known.len());
+        }
+        for (i, k) in self.hidhide_known.iter().enumerate() {
+            if ControllerKind::from_slug(&k.kind).is_none() {
+                bail!("hidhide_known[{i}] has unknown controller slug {:?}", k.kind);
+            }
+            if k.id.trim().is_empty() {
+                bail!("hidhide_known[{i}] has an empty id");
+            }
+            if self.hidhide_known[..i].iter().any(|x| x.id.eq_ignore_ascii_case(&k.id)) {
+                bail!("hidhide_known lists {:?} twice", k.id);
+            }
         }
         for k in ControllerKind::ALL {
             let slug = k.slug();
@@ -758,6 +813,7 @@ mod tests {
             last_pad: None,
             hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 
@@ -895,6 +951,7 @@ mod tests {
             last_pad: None,
             hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 

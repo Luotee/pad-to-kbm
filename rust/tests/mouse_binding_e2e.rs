@@ -53,6 +53,7 @@ fn cfg_with_touchpad_tl_left_click() -> Config {
         last_pad: None,
         hidhide_prompt_dismissed: false,
         lightbar: Default::default(),
+        hidhide_known: Vec::new(),
     }
 }
 

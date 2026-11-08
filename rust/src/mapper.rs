@@ -396,6 +396,7 @@ mod tests {
             last_pad: None,
             hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 

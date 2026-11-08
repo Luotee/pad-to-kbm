@@ -40,8 +40,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a gold 「!」 stays next to the gear until HidHide is in (it reopens the
   prompt; so does picking 鍵鼠 in the header). Nothing shows where HidHide is
   unsupported. The 「再連一次」 banner also shows in 鍵鼠.
-- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`;
-  `get_ui_prefs` / `set_ui_prefs` carry `hidhide_prompt_dismissed`.
+- **Controllers are remembered for hiding.** A DualSense / Switch Pro that
+  PadToKBM has hidden once is remembered, and from the next start it is
+  hidden as soon as the app opens, even while it is still off: turned on
+  later, it reaches the game already hidden, with no reconnect. The entries
+  still come out when the app exits. 設定 lists the remembered controllers
+  (「記住的手把」) with 刪除 and 全部刪除; at most 16 are kept, the oldest
+  goes first.
+- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`,
+  `forget_hidden_pad`, `forget_all_hidden_pads`; `get_ui_prefs` /
+  `set_ui_prefs` carry `hidhide_prompt_dismissed`.
 
 ### Changed
 
@@ -72,6 +80,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
 - Xbox output (ViGEmBus + HidHide) and hiding the pad in 鍵鼠 (HidHide) are Windows only; macOS is Phase 2 TBD.
+- New optional `hidhide_known` in `padtokbm.json`:
+  `[{ "kind": "dualsense", "id": "<HID instance id>" }, …]`, written by the
+  app when it hides a controller; absent while empty. Older configs read as
+  before.
 - With `--cli`, only closing the console window is sure to take the HidHide
   entries out on the way out: Windows does not send the logoff / shutdown
   events to a process that loads user32, so after a logoff or shutdown they

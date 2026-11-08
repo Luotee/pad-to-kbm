@@ -163,12 +163,15 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 written to the config only once true); runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
 at all: absent on a dry run / non-Windows, where no prompt shows),
-`get_vigem_status`, `install_vigem`, `install_hidhide`; fire-and-forget
+`get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
+(`hidhide_known` in the config) `forget_hidden_pad` (`id`) and
+`forget_all_hidden_pads`; fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
 (`connected` bool + `connected_pads` + `off_pads` + `warnings`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
-`{button}` / `{macro}`), `config-changed`.
+`{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
+hider remembers a pad).
 
 What a PASS requires, captured as evidence:
 - Every header / slot / palette / footer / editor / settings control
@@ -317,8 +320,10 @@ regresses real, observed bugs the codebase already fixed once:
    pad's own HID instance ids on the blacklist and our exe on the
    whitelist, merged with the user's existing lists, and undone when the
    pad leaves 鍵鼠 / Xbox, when the app exits, and at the next start after
-   a crash (the state file `padtokbm.hidhide.json`). Hooking and
-   injection stay forbidden.
+   a crash (the state file `padtokbm.hidhide.json`). A pad hidden once is
+   remembered (`hidhide_known`, at most 16) and hidden at start even while
+   it is off; that changes nothing about when the entries are undone.
+   Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window
    opens. That means:

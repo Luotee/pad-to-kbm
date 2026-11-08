@@ -14,7 +14,7 @@
 //! feature; the `*_impl` functions are always compiled.
 
 use crate::config::{Binding, ButtonEntry, Config, MacroDef, ADDED_IDS};
-use crate::config_io::{write_atomic, ConfigDoc};
+use crate::config_io::{file_lock, write_atomic, ConfigDoc};
 use crate::engine::Handle;
 use crate::gamepad::lightbar::LightbarConfig;
 use crate::gamepad::ControllerKind;
@@ -155,18 +155,31 @@ pub fn get_config_impl(engine: &Handle) -> Config {
 /// Load the on-disk config, patch it, validate, write it atomically, then
 /// replace the live engine config with the result (which bumps the
 /// generation the mapper watches). Any failure leaves disk and engine
-/// unchanged.
+/// unchanged. Under the config file lock (`config_io::file_lock`).
 fn mutate_config(
     engine: &Handle,
     config_path: &Path,
     patch: impl FnOnce(&mut ConfigDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    mutate_config_if(engine, config_path, |doc| patch(doc).map(|()| true)).map(|_| ())
+}
+
+/// [`mutate_config`] that writes only when `patch` returns `true` (it
+/// changed something). Returns whether it wrote.
+fn mutate_config_if(
+    engine: &Handle,
+    config_path: &Path,
+    patch: impl FnOnce(&mut ConfigDoc) -> anyhow::Result<bool>,
+) -> anyhow::Result<bool> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
-    patch(&mut doc)?;
+    if !patch(&mut doc)? {
+        return Ok(false);
+    }
     doc.validate()?;
     write_atomic(config_path, &doc)?;
     *engine.config_write() = doc.typed().clone();
-    Ok(())
+    Ok(true)
 }
 
 /// A quick page holds only `QUICK_IDS`; the base table any id `0..=32`.
@@ -339,6 +352,7 @@ pub fn set_macro_impl(
     name: String,
     def: MacroDef,
 ) -> anyhow::Result<()> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     let mut macros = doc.typed().macros.clone();
     macros.insert(name, def);
@@ -519,6 +533,7 @@ pub fn set_settings_impl(
     config_path: &Path,
     s: Settings,
 ) -> anyhow::Result<()> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     doc.set_deadzone(s.deadzone);
     doc.set_trigger_threshold(s.trigger_threshold);
@@ -623,6 +638,7 @@ pub fn set_output_mode_impl(
         .ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
     let m = crate::config::OutputMode::from_slug(mode)
         .ok_or_else(|| anyhow::anyhow!("unknown output mode '{mode}'"))?;
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     doc.set_output_mode(k, m);
     doc.validate()?;
@@ -631,6 +647,63 @@ pub fn set_output_mode_impl(
     live.output_mode.insert(k.slug().to_string(), m);
     live.mapping_enabled.remove(k.slug());
     Ok(())
+}
+
+// ─── forget_hidden_pad / forget_all_hidden_pads ──────────────────────────────
+
+/// Tauri command: the settings' 刪除 on one remembered HidHide pad (`id`,
+/// case-insensitive). The engine then sends the hider the shorter list: an
+/// absent pad leaves the blacklist; a present one in 鍵鼠 / Xbox stays hidden
+/// and is remembered again. `config-changed` only when something went.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn forget_hidden_pad(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+    id: String,
+) -> Result<(), String> {
+    if forget_hidden_pad_impl(&*engine, &config_path, &id).map_err(|e| format!("{e:#}"))? {
+        let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    }
+    Ok(())
+}
+
+/// Pure implementation of `forget_hidden_pad`: `true` when the config was
+/// written.
+pub fn forget_hidden_pad_impl(engine: &Handle, config_path: &Path, id: &str) -> anyhow::Result<bool> {
+    forget_hidden(engine, config_path, Some(id))
+}
+
+/// Tauri command: the settings' 全部刪除 (every remembered HidHide pad).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn forget_all_hidden_pads(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+) -> Result<(), String> {
+    if forget_all_hidden_pads_impl(&*engine, &config_path).map_err(|e| format!("{e:#}"))? {
+        let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    }
+    Ok(())
+}
+
+/// Pure implementation of `forget_all_hidden_pads`.
+pub fn forget_all_hidden_pads_impl(engine: &Handle, config_path: &Path) -> anyhow::Result<bool> {
+    forget_hidden(engine, config_path, None)
+}
+
+fn forget_hidden(engine: &Handle, config_path: &Path, id: Option<&str>) -> anyhow::Result<bool> {
+    mutate_config_if(engine, config_path, |doc| {
+        let before = &doc.typed().hidhide_known;
+        let next = crate::config::forget_known(before, id);
+        if next == *before {
+            return Ok(false);
+        }
+        doc.set_hidhide_known(next);
+        Ok(true)
+    })
 }
 
 // ─── set_pad_off ─────────────────────────────────────────────────────────────

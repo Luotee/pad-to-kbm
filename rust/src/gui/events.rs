@@ -56,6 +56,9 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
                         app.emit("touchpad-hover", serde_json::json!({
                             "raw_x": raw_x, "raw_y": raw_y, "quadrant": quadrant
                         })),
+                    // Not a settings change the user made (`ui`: no 設定已變更 row).
+                    EngineEvent::ConfigChanged { source } =>
+                        app.emit("config-changed", serde_json::json!({ "source": source, "ui": true })),
                 };
             }
             std::thread::sleep(std::time::Duration::from_millis(8));

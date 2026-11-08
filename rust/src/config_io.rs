@@ -150,6 +150,18 @@ impl ConfigDoc {
         self.raw["last_pad"] = Value::from(pad);
     }
 
+    /// The remembered HidHide pads; an empty list drops the key.
+    pub fn set_hidhide_known(&mut self, list: Vec<crate::config::KnownPad>) {
+        if list.is_empty() {
+            if let Some(obj) = self.raw.as_object_mut() {
+                obj.remove("hidhide_known");
+            }
+        } else {
+            self.raw["hidhide_known"] = serde_json::to_value(&list).expect("hidhide_known serializes");
+        }
+        self.typed.hidhide_known = list;
+    }
+
     pub fn set_hidhide_prompt_dismissed(&mut self, v: bool) {
         self.typed.hidhide_prompt_dismissed = v;
         self.raw["hidhide_prompt_dismissed"] = Value::from(v);
@@ -293,6 +305,16 @@ fn page_field(page: Page) -> &'static str {
         Page::QuickL => "quick_l",
         Page::QuickR => "quick_r",
     }
+}
+
+/// Held across every read-modify-write of the config file in this process
+/// (the IPC mutators and the hider's `remember_hidden_pads`), so two writers
+/// never load the same file and the second overwrites the first's change.
+/// Take it before `ConfigDoc::load`, keep it until the live config is
+/// updated. Not reentrant.
+pub fn file_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 pub fn write_atomic(target: &Path, doc: &ConfigDoc) -> Result<()> {

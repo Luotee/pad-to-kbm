@@ -14,17 +14,25 @@
 //! 1. whitelist += our exe's NT image path (unless the whitelist is
 //!    inverted); if that fails nothing is blacklisted, or the app would hide
 //!    the pad from itself;
-//! 2. blacklist += present instance ids of wanted kinds, −= the ids we added
-//!    for kinds no longer wanted. An id we add while its pad is present
-//!    marks that kind "needs replug": a game may already hold it open;
+//! 2. blacklist += present instance ids of wanted kinds and the remembered
+//!    ids (`hidhide_known`) of wanted kinds, present or not, −= the ids we
+//!    added for kinds no longer wanted and the ids no longer remembered that
+//!    are absent. An id we add while its pad is present marks that kind
+//!    "needs replug": a game may already hold it open; a remembered pad
+//!    hidden while absent arrives hidden when it is turned on;
 //! 3. Active on if we have entries and it is off (remembered, so it is
 //!    turned off again only if we turned it on and the blacklist is empty).
+//!
+//! A present pad of a wanted kind that we hid and that is not remembered yet
+//! is reported once ([`Hider::take_learned`]); the worker hands it to
+//! `on_learn`, which saves it to the config ([`remember_hidden_pads`]).
 //!
 //! Every change is recorded in `padtokbm.hidhide.json` beside the config
 //! (deleted when nothing is left to undo), so a crash is undone at the next
 //! start. Foreign entries are never dropped or reordered; compares are
 //! case-insensitive, as the driver's.
 
+use crate::config::KnownPad;
 use crate::engine::Handle;
 use crate::gamepad::ControllerKind;
 use crate::hidhide::{self, merge, unmerge, Control, Error, HideState};
@@ -78,6 +86,15 @@ pub struct Hider {
     wanted: Vec<ControllerKind>,
     connected: Vec<ControllerKind>,
     needs_replug: Vec<ControllerKind>,
+    /// The config's remembered ids (`hidhide_known`).
+    known: Vec<String>,
+    /// Learned this session, not in `known` yet (the config write is on its
+    /// way, or failed): treated as remembered.
+    pending: Vec<String>,
+    /// Ids that left `known` and are not yet out of the blacklist.
+    forgotten: Vec<String>,
+    /// Learned, not yet taken by [`Hider::take_learned`].
+    learned: Vec<KnownPad>,
     ok: bool,
     /// Last logged failure, so a failing retry loop logs once.
     last_err: Option<String>,
@@ -98,6 +115,10 @@ impl Hider {
             wanted: Vec::new(),
             connected: Vec::new(),
             needs_replug: Vec::new(),
+            known: Vec::new(),
+            pending: Vec::new(),
+            forgotten: Vec::new(),
+            learned: Vec::new(),
             ok: false,
             last_err: None,
             inverse_warned: false,
@@ -140,6 +161,22 @@ impl Hider {
         self.needs_replug.retain(|k| wanted.contains(k) && !(before.contains(k) && !connected.contains(k)));
         self.wanted = wanted;
         self.connected = connected.to_vec();
+    }
+
+    /// The config's remembered ids (`hidhide_known`). An id that left the
+    /// list is taken out of the blacklist at the next round unless its pad
+    /// is present and wanted.
+    pub fn set_known(&mut self, ids: &[String]) {
+        let gone: Vec<String> = self.known.iter().filter(|id| !contains_ci(ids, id)).cloned().collect();
+        self.forgotten = merge(&unmerge(&self.forgotten, ids), &gone);
+        self.pending.retain(|id| !contains_ci(ids, id));
+        self.known = ids.to_vec();
+    }
+
+    /// Pads learned since the last call: present, of a wanted kind, hidden
+    /// by us, not remembered yet. Each is reported once.
+    pub fn take_learned(&mut self) -> Vec<KnownPad> {
+        std::mem::take(&mut self.learned)
     }
 
     /// One round (module docs). `present`: HID instance ids present now;
@@ -221,14 +258,22 @@ impl Hider {
             }
         }
 
-        // 2. Blacklist: + present ids of wanted kinds, − ours of unwanted kinds.
+        // 2. Blacklist: + present and remembered ids of wanted kinds,
+        //    − ours of unwanted kinds and ours forgotten while absent.
         let black = ctl.blacklist()?;
         let wanted = &self.wanted;
-        let to_hide: Vec<String> =
-            present.iter().filter(|id| kind_of(id).is_some_and(|k| wanted.contains(&k))).cloned().collect();
-        let added: Vec<String> = merge(&[], &to_hide).into_iter().filter(|id| !contains_ci(&black, id)).collect();
-        let dropped: Vec<String> =
-            self.state.ids.iter().filter(|id| !kind_of(id).is_some_and(|k| wanted.contains(&k))).cloned().collect();
+        let is_wanted = |id: &String| kind_of(id).is_some_and(|k| wanted.contains(&k));
+        let present_wanted: Vec<String> = merge(&[], &present.iter().filter(|id| is_wanted(id)).cloned().collect::<Vec<_>>());
+        let remembered = merge(&self.known, &self.pending);
+        let to_hide = merge(&present_wanted, &remembered.iter().filter(|id| is_wanted(id)).cloned().collect::<Vec<_>>());
+        let added: Vec<String> = to_hide.iter().filter(|id| !contains_ci(&black, id)).cloned().collect();
+        let dropped: Vec<String> = self
+            .state
+            .ids
+            .iter()
+            .filter(|id| !is_wanted(id) || (contains_ci(&self.forgotten, id) && !contains_ci(&to_hide, id)))
+            .cloned()
+            .collect();
         let next = merge(&unmerge(&black, &dropped), &added);
         if next != black {
             ctl.set_blacklist(&next)?;
@@ -237,9 +282,20 @@ impl Hider {
             self.state.ids = merge(&unmerge(&self.state.ids, &dropped), &added);
             self.save();
         }
-        for kind in added.iter().filter_map(|id| kind_of(id)) {
+        self.forgotten.clear();
+        // Only a pad present when hidden may be held open by a game.
+        for kind in added.iter().filter(|id| contains_ci(present, id)).filter_map(|id| kind_of(id)) {
             if !self.needs_replug.contains(&kind) {
                 self.needs_replug.push(kind);
+            }
+        }
+        // Learn: present, ours, not remembered yet.
+        for id in &present_wanted {
+            if contains_ci(&self.state.ids, id) && !contains_ci(&remembered, id) {
+                if let Some(kind) = kind_of(id) {
+                    self.pending.push(id.clone());
+                    self.learned.push(KnownPad { kind: kind.slug().to_string(), id: id.clone() });
+                }
             }
         }
         // A kind none of whose ids is present any more has left.
@@ -305,6 +361,7 @@ pub trait Backend: Send + 'static {
 
 enum Msg {
     Update { wanted: Vec<ControllerKind>, connected: Vec<ControllerKind> },
+    Known(Vec<String>),
     Retry,
     Stop(Sender<()>),
 }
@@ -321,6 +378,12 @@ impl HiderLink {
     /// The kinds wanted hidden and the engine's connected kinds changed.
     pub fn update(&self, wanted: Vec<ControllerKind>, connected: Vec<ControllerKind>) {
         let _ = self.tx.send(Msg::Update { wanted, connected });
+    }
+
+    /// The config's remembered ids (`hidhide_known`) changed. Runs a round
+    /// once the first [`HiderLink::update`] has come.
+    pub fn set_known(&self, ids: Vec<String>) {
+        let _ = self.tx.send(Msg::Known(ids));
     }
 
     /// Run a round now (after HidHide was installed).
@@ -349,12 +412,14 @@ impl HiderWorker {
     /// Start the worker with the state file at `state_path`. It does nothing
     /// until the first [`HiderLink::update`]; after a round that did not
     /// fully succeed it retries every `retry_every`. `on_change` runs (on the
-    /// worker thread) whenever the status changes.
+    /// worker thread) whenever the status changes; `on_learn` with the pads
+    /// a round learned ([`Hider::take_learned`]).
     pub fn spawn<B: Backend>(
         state_path: PathBuf,
         backend: B,
         retry_every: Duration,
         on_change: Box<dyn Fn() + Send>,
+        on_learn: Box<dyn Fn(Vec<KnownPad>) + Send>,
     ) -> std::io::Result<HiderWorker> {
         let hider = Hider::new(state_path);
         let status = Arc::new(RwLock::new(hider.status()));
@@ -362,7 +427,7 @@ impl HiderWorker {
         let st = status.clone();
         let thread = thread::Builder::new()
             .name("hidhide".into())
-            .spawn(move || run_worker(hider, backend, rx, st, retry_every, on_change))?;
+            .spawn(move || run_worker(hider, backend, rx, st, retry_every, on_change, on_learn))?;
         Ok(HiderWorker { link: HiderLink { tx, status }, thread: Some(thread) })
     }
 
@@ -416,6 +481,7 @@ fn run_worker<B: Backend>(
     status: Arc<RwLock<HideStatus>>,
     retry_every: Duration,
     on_change: Box<dyn Fn() + Send>,
+    on_learn: Box<dyn Fn(Vec<KnownPad>) + Send>,
 ) {
     let publish = |st: HideStatus| {
         let mut cur = status.write().unwrap_or_else(|p| p.into_inner());
@@ -451,6 +517,10 @@ fn run_worker<B: Backend>(
                     started = true;
                     run = true;
                 }
+                Msg::Known(ids) => {
+                    hider.set_known(&ids);
+                    run = true;
+                }
                 Msg::Retry => run = true,
                 Msg::Stop(ack) => stop = Some(ack),
             }
@@ -465,6 +535,10 @@ fn run_worker<B: Backend>(
             let (present, own) =
                 if hider.wants_any() { (backend.present(), backend.own_path()) } else { (Vec::new(), None) };
             let _ = hider.round(|| backend.open(), &present, own.as_deref());
+            let learned = hider.take_learned();
+            if !learned.is_empty() {
+                on_learn(learned);
+            }
         }
         publish(hider.status());
     }
@@ -530,6 +604,44 @@ impl Backend for RealBackend {
     }
 }
 
+/// Save pads the hider learned to `hidhide_known` in the config at
+/// `config_path` and the live config, under the config file lock that every
+/// IPC mutator takes too (`config_io::file_lock`), so neither overwrites the
+/// other's change. At most [`crate::config::HIDHIDE_KNOWN_MAX`], the oldest
+/// dropped. Returns whether it wrote (`false`: all known already).
+pub fn remember_hidden_pads(engine: &Handle, config_path: &Path, found: &[KnownPad]) -> anyhow::Result<bool> {
+    let _file = crate::config_io::file_lock();
+    let mut doc = crate::config_io::ConfigDoc::load(config_path)?;
+    let before = &doc.typed().hidhide_known;
+    let next = crate::config::remember_known(before, found);
+    if next == *before {
+        return Ok(false);
+    }
+    doc.set_hidhide_known(next.clone());
+    crate::config_io::write_atomic(config_path, &doc)?;
+    engine.config_write().hidhide_known = next;
+    Ok(true)
+}
+
+/// The worker's `on_learn` for an engine whose config lives at
+/// `config_path`: [`remember_hidden_pads`], then `config-changed` through
+/// the engine's event bridge. Holds the engine weakly.
+pub fn learn_saver(engine: &Handle, config_path: &Path) -> Box<dyn Fn(Vec<KnownPad>) + Send> {
+    let weak = engine.downgrade();
+    let path = config_path.to_path_buf();
+    Box::new(move |found: Vec<KnownPad>| {
+        let Some(engine) = weak.upgrade() else { return };
+        match remember_hidden_pads(&engine, &path, &found) {
+            Ok(true) => {
+                tracing::info!(pads = found.len(), "HidHide: remembered for the next start");
+                engine.announce_config_change("hidhide");
+            }
+            Ok(false) => {}
+            Err(e) => tracing::warn!("HidHide: could not remember the hidden pad in {}: {e:#}", path.display()),
+        }
+    })
+}
+
 /// Start hiding for an engine whose config lives at `config_path` (state
 /// file beside it) and attach it to the engine, which then feeds it. `None`
 /// (nothing started, nothing touched) off Windows and on `--dry-run`.
@@ -539,7 +651,8 @@ pub fn start_for(engine: &Handle, config_path: &Path, dry_run: bool) -> Option<H
         return None;
     }
     let path = HideState::path_beside(config_path);
-    match HiderWorker::spawn(path, RealBackend::new(), RETRY_EVERY, Box::new(engine.status_notifier())) {
+    let learn = learn_saver(engine, config_path);
+    match HiderWorker::spawn(path, RealBackend::new(), RETRY_EVERY, Box::new(engine.status_notifier()), learn) {
         Ok(worker) => {
             engine.attach_hider(worker.link());
             Some(worker)
@@ -858,6 +971,128 @@ mod tests {
         assert_eq!(r.hider.state().ids, s(&[DS_USB]));
     }
 
+    // ── remembered pads (`hidhide_known`) ──
+
+    fn known(kind: &str, id: &str) -> KnownPad {
+        KnownPad { kind: kind.into(), id: id.into() }
+    }
+
+    #[test]
+    fn a_remembered_absent_pad_is_hidden_at_start_without_a_replug() {
+        let mut r = rig(foreign());
+        r.hider.set_known(&s(&[DS_BT]));
+        r.hider.set_inputs(&[DS], &[]);
+        round(&mut r, &[MOUSE]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT]), "hidden before it is turned on");
+        assert_eq!(r.hider.state().ids, s(&[DS_BT]), "recorded: undone like any other entry");
+        assert_eq!(r.hider.status().hidden(DS), Some(true), "not present when hidden: no replug");
+        assert!(r.hider.take_learned().is_empty(), "already remembered");
+        // Turned on later: it arrives hidden.
+        r.ctl.f().calls.clear();
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[MOUSE, DS_BT]).unwrap();
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+        assert!(!r.ctl.f().calls.contains(&"set_bl"), "nothing to change");
+        release(&mut r).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV]), "exit undoes it");
+    }
+
+    #[test]
+    fn a_present_pad_we_hide_is_learned_once() {
+        let mut r = rig(Fake::default());
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB, MOUSE]).unwrap();
+        assert_eq!(r.hider.take_learned(), vec![known("dualsense", DS_USB)]);
+        round(&mut r, &[DS_USB, MOUSE]).unwrap();
+        assert!(r.hider.take_learned().is_empty(), "reported once");
+        // Until the config has it, it counts as remembered: it stays hidden
+        // after it leaves.
+        round(&mut r, &[MOUSE]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[DS_USB]));
+        // The config caught up; it is no longer pending.
+        r.hider.set_known(&s(&[DS_USB]));
+        round(&mut r, &[MOUSE]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[DS_USB]));
+    }
+
+    #[test]
+    fn an_id_we_added_earlier_is_learned_but_a_users_entry_is_not() {
+        // Ours from a crashed run, present now: remembered.
+        let mut r = rig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() });
+        HideState { ids: s(&[DS_USB]), ..Default::default() }.save(&r.path).unwrap();
+        r.hider = Hider::new(r.path.clone());
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert_eq!(r.hider.take_learned(), vec![known("dualsense", DS_USB)]);
+        // The user's own entry: not ours, not remembered.
+        let mut r = rig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() });
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert!(r.hider.take_learned().is_empty());
+    }
+
+    #[test]
+    fn remembered_ids_of_a_kind_no_longer_wanted_are_removed() {
+        let mut r = rig(foreign());
+        r.hider.set_known(&s(&[DS_BT, NSP_BT]));
+        r.hider.set_inputs(&[DS, NSP], &[]);
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT, NSP_BT]));
+        r.hider.set_inputs(&[NSP], &[]); // DualSense on 手把
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, NSP_BT]));
+        assert_eq!(r.hider.state().ids, s(&[NSP_BT]));
+    }
+
+    #[test]
+    fn forgetting_an_absent_pad_removes_its_entry() {
+        let mut r = rig(foreign());
+        r.hider.set_known(&s(&[DS_BT, DS_USB]));
+        r.hider.set_inputs(&[DS], &[]);
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT, DS_USB]));
+        r.hider.set_known(&s(&[DS_USB]));
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_USB]));
+        assert_eq!(r.hider.state().ids, s(&[DS_USB]));
+        r.hider.set_known(&[]);
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV]));
+        assert!(r.hider.state().ids.is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_present_pad_keeps_it_hidden_and_learns_it_again() {
+        let mut r = rig(Fake::default());
+        r.hider.set_known(&s(&[DS_USB]));
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        r.hider.set_known(&[]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[DS_USB]), "present and wanted: still hidden");
+        assert_eq!(r.hider.take_learned(), vec![known("dualsense", DS_USB)], "and remembered again");
+    }
+
+    #[test]
+    fn remembered_ids_compare_case_insensitively() {
+        let mut r = rig(Fake::default());
+        r.hider.set_known(&s(&[&DS_USB.to_lowercase()]));
+        r.hider.set_inputs(&[DS], &[]);
+        round(&mut r, &[]).unwrap();
+        assert_eq!(r.ctl.f().black.len(), 1);
+        r.ctl.f().calls.clear();
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert_eq!(r.ctl.f().black.len(), 1, "no duplicate");
+        assert!(!r.ctl.f().calls.contains(&"set_bl"));
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+        assert!(r.hider.take_learned().is_empty(), "already remembered");
+        // Forgetting by another case removes it.
+        r.hider.set_known(&[]);
+        round(&mut r, &[]).unwrap();
+        assert!(r.ctl.f().black.is_empty());
+    }
+
     // ── mode changes and cleanup ──
 
     #[test]
@@ -1049,6 +1284,7 @@ mod tests {
         ctl: FakeCtl,
         present: Arc<Mutex<Vec<String>>>,
         changes: Arc<std::sync::atomic::AtomicUsize>,
+        learned: Arc<Mutex<Vec<KnownPad>>>,
         worker: HiderWorker,
     }
 
@@ -1062,6 +1298,8 @@ mod tests {
         let present = Arc::new(Mutex::new(s(present)));
         let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = changes.clone();
+        let learned = Arc::new(Mutex::new(Vec::new()));
+        let l = learned.clone();
         let worker = HiderWorker::spawn(
             path,
             FakeBackend { ctl: ctl.clone(), present: present.clone() },
@@ -1069,9 +1307,10 @@ mod tests {
             Box::new(move || {
                 c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }),
+            Box::new(move |found| l.lock().unwrap().extend(found)),
         )
         .unwrap();
-        WRig { dir, ctl, present, changes, worker }
+        WRig { dir, ctl, present, changes, learned, worker }
     }
 
     fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
@@ -1093,6 +1332,23 @@ mod tests {
         assert!(w.changes.load(std::sync::atomic::Ordering::SeqCst) > 0, "on_change ran");
         link.update(vec![DS], vec![]);
         eventually("left: hidden", || link.hidden(DS) == Some(true));
+    }
+
+    #[test]
+    fn worker_reports_learned_pads_and_applies_the_remembered_list() {
+        let w = wrig(foreign(), &[DS_USB], None);
+        let link = w.worker.link();
+        link.set_known(s(&[DS_BT]));
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(w.ctl.f().opens, 0, "the remembered list alone starts nothing");
+        link.update(vec![DS], vec![DS]);
+        eventually("both hidden", || w.ctl.f().black == s(&[FOREIGN_DEV, DS_USB, DS_BT]));
+        eventually("learned", || *w.learned.lock().unwrap() == vec![KnownPad { kind: "dualsense".into(), id: DS_USB.into() }]);
+        // The config now has both; then the user forgets the absent one.
+        link.set_known(s(&[DS_BT, DS_USB]));
+        link.set_known(s(&[DS_USB]));
+        eventually("forgotten: removed", || w.ctl.f().black == s(&[FOREIGN_DEV, DS_USB]));
+        assert_eq!(w.learned.lock().unwrap().len(), 1, "reported once");
     }
 
     #[test]
