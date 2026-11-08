@@ -42,9 +42,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opened; nothing is written to the config). The Xbox banner is unchanged.
 - **PadToKBM turns the controller off when it needs that reconnect.** A
   DualSense / Switch Pro that is on when it gets hidden (on when the app
-  opens, or connected for the first time) is turned off by the app itself,
-  once per controller each time the app is opened: the same Bluetooth
-  disconnect as the tab's ⏻, no administrator rights, no device restart.
+  opens, connected for the first time, or switched from 手把 to 鍵鼠 / Xbox
+  while on) is turned off by the app itself, at most once per controller
+  type (DualSense, Switch Pro) each time the app is opened: the same
+  Bluetooth disconnect as the tab's ⏻, no administrator rights, no device
+  restart.
   While it is off a white banner says 「已替你把 DualSense 關機，好讓遊戲看不到
   它。按 PS 鍵打開就能用了」 (HOME on the Switch Pro), with no 「這次不再提醒」;
   it goes when the controller is back on, already hidden. Where nothing could
