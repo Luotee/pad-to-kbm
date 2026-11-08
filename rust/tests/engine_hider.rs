@@ -572,13 +572,12 @@ const NANO_COL02: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02
 
 #[test]
 fn the_nano_over_bluetooth_le_is_hidden_in_kbm() {
-    // Default 鍵鼠: the Nano's HOGP collections are hidden like a DualSense.
+    // Default 鍵鼠: the Nano's gamepad collection is hidden like a DualSense;
+    // its keyboard collection (Share, read through Raw Input) is left alone.
     let r = rig_present(test_helpers::load_example(), &[MOUSE, NANO_COL01, NANO_COL02], |_, _| Box::new(|_| {}));
-    eventually("nano hidden", || {
-        let b = r.ctl.black();
-        b.contains(&NANO_COL01.to_string()) && b.contains(&NANO_COL02.to_string())
-    });
+    eventually("nano hidden", || r.ctl.black().contains(&NANO_COL01.to_string()));
     assert!(!r.ctl.black().contains(&MOUSE.to_string()));
+    assert!(!r.ctl.black().contains(&NANO_COL02.to_string()), "the keyboard collection stays visible");
     eventually("status", || r.h.hider().unwrap().hidden(ControllerKind::XboxNano).is_some());
 
     // 手把 releases it.

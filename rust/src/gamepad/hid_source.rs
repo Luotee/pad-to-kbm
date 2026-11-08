@@ -16,7 +16,7 @@ use super::cursor_params::CursorParams;
 use super::ds_protocol::{build_handshake_buffer, decode_31, REPORT_LEN_BT};
 use super::ns_handshake::{ns_handshake_counted, send_input_mode_full, send_turn_off};
 use super::ns_protocol::{decode_30, StickCal, NEUTRAL_RUMBLE};
-use super::raw_share::{NanoKey, RawShare, ShareKeys};
+use super::raw_share::{RawShare, ShareEvent, ShareKeys};
 use super::xbox_protocol::decode_xbox_bt;
 use super::pad::{emit_pad_diff, PadState, BUTTON_SLOTS};
 use super::rumble::{
@@ -502,6 +502,12 @@ const NS_DISCONNECT_AFTER: Duration = Duration::from_millis(1000);
 // deadline would release a button held still. Its session ends on a read
 // error (Windows removes the HID device when the Bluetooth LE link drops)
 // or a manual disconnect. See `Session::disconnect_after`.
+/// Xbox Nano: after this long without a report its HID device path is
+/// looked up (`HidIo::still_present`); gone → the session ends. Windows may
+/// keep the HID device of a dropped Bluetooth LE link for a while, and then
+/// reads only time out: without this, a key held when the link dropped
+/// would stay down. Present but silent keeps the session (no deadline).
+const NANO_PRESENCE_AFTER: Duration = Duration::from_millis(2000);
 /// Switch Pro simple-HID input report: the pad left full-report mode.
 const NS_REPORT_SIMPLE: u8 = 0x3F;
 /// At most one `0x03 0x30` re-init per this interval.
@@ -515,6 +521,56 @@ pub trait HidIo {
     /// Read-only GET_REPORT of input report `buf[0]` (default: unsupported).
     fn get_input_report(&self, _buf: &mut [u8]) -> Result<usize> {
         Err(anyhow!("GET_REPORT not supported"))
+    }
+    /// The device is still enumerated (default: yes). Asked only of a
+    /// silent Xbox Nano session (`NANO_PRESENCE_AFTER`).
+    fn still_present(&self) -> bool {
+        true
+    }
+}
+
+/// hidapi's C library keeps global state with no lock of its own: on
+/// Windows `hid_init`, which `hid_enumerate` and `hid_open_path` call
+/// first, frees and replaces `last_global_error_str`. Two HID workers (the
+/// DualSense / Switch Pro one and the Nano's) would race on it, a possible
+/// double free. Every call that reaches that state goes through here:
+/// `HidApi::new` (which enumerates), `refresh_devices` and `open_device`.
+/// Calls on an open device (read, write, reports) use per-device state.
+static HIDAPI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run `f` holding [`HIDAPI_LOCK`].
+pub(crate) fn with_hidapi<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = HIDAPI_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    f()
+}
+
+/// An open hidapi device and the path it was opened by, so a silent Nano
+/// session can check the device is still there.
+struct RealIo<'a> {
+    dev: &'a hidapi::HidDevice,
+    path: &'a std::ffi::CStr,
+}
+
+impl HidIo for RealIo<'_> {
+    fn write(&self, data: &[u8]) -> Result<usize> {
+        HidIo::write(self.dev, data)
+    }
+    fn read_timeout(&self, buf: &mut [u8], ms: i32) -> Result<usize> {
+        HidIo::read_timeout(self.dev, buf, ms)
+    }
+    fn get_input_report(&self, buf: &mut [u8]) -> Result<usize> {
+        HidIo::get_input_report(self.dev, buf)
+    }
+    fn still_present(&self) -> bool {
+        // A fresh enumeration, under the lock. If hidapi cannot enumerate,
+        // keep the session: only a device seen gone ends it.
+        match with_hidapi(hidapi::HidApi::new) {
+            Ok(api) => api.device_list().any(|i| i.path() == self.path),
+            Err(e) => {
+                tracing::warn!(error = %e, "hidapi: presence check failed");
+                true
+            }
+        }
     }
 }
 
@@ -864,10 +920,10 @@ fn worker_real(
     lightbar: LightbarLive,
     cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
     pads: HidPads,
-    share_rx: Receiver<NanoKey>,
+    share_rx: Receiver<ShareEvent>,
     share: Option<&RawShare>,
 ) {
-    let mut api = match hidapi::HidApi::new() {
+    let mut api = match with_hidapi(hidapi::HidApi::new) {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %e, "hidapi init failed");
@@ -878,15 +934,18 @@ fn worker_real(
         // device_list() returns a cached snapshot — must refresh
         // explicitly each iteration or a pad turned on after app
         // startup is invisible forever.
-        if let Err(e) = api.refresh_devices() {
+        if let Err(e) = with_hidapi(|| api.refresh_devices()) {
             tracing::warn!(error = %e, "hidapi refresh_devices failed");
         }
         let device = first_candidate(api.device_list(), |info| {
             (info.vendor_id(), info.product_id(), info.bus_type(), info.usage_page(), info.usage())
         }, pads)
-        .and_then(|(info, kind)| info.open_device(&api).ok().map(|d| (d, kind)));
+        .and_then(|(info, kind)| {
+            let d = with_hidapi(|| info.open_device(&api)).ok()?;
+            Some((d, kind, info.path().to_owned()))
+        });
         match device {
-            Some((d, kind)) => {
+            Some((d, kind, path)) => {
                 tracing::info!("{} opened, attempting handshake", kind.display_name());
                 // A Rumble or Disconnect queued for an earlier session must
                 // not act on this one; nor a Nano key from before it.
@@ -919,8 +978,9 @@ fn worker_real(
                 let mut prev_buttons = [false; BUTTON_SLOTS];
                 let mut last_state: Option<PadState> = None;
                 let mut touchpad = TouchpadState::default();
+                let io = RealIo { dev: &d, path: &path };
                 let outcome = read_loop(
-                    &d, &mut session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
+                    &io, &mut session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
                     &params, &stop, &cmd_rx, &share_rx,
                 );
                 if let Some(sh) = share {
@@ -996,7 +1056,7 @@ fn read_loop(
     params: &CursorParams,
     stop: &Arc<AtomicBool>,
     cmd_rx: &crossbeam_channel::Receiver<SourceCmd>,
-    share_rx: &Receiver<NanoKey>,
+    share_rx: &Receiver<ShareEvent>,
 ) -> &'static str {
     let mut buf = [0u8; REPORT_LEN_BT];
     let disconnect_after = session.disconnect_after();
@@ -1004,6 +1064,8 @@ fn read_loop(
     let mut deadline = disconnect_after.map(|d| Instant::now() + d);
     let mut emitted_connected = false;
     let mut plan: Option<RumblePlan> = None;
+    // Xbox Nano only: when to look up whether its device is still there.
+    let mut look_at = (session.kind == ControllerKind::XboxNano).then(|| Instant::now() + NANO_PRESENCE_AFTER);
     if session.kind == ControllerKind::XboxNano {
         nano_initial_report(
             d, session, &mut emitted_connected, last_state, prev_buttons, touchpad, params, tx,
@@ -1030,16 +1092,24 @@ fn read_loop(
         }
         // The Nano's keyboard keys are its Share (button 29); any other
         // session drops them.
-        while let Ok(k) = share_rx.try_recv() {
+        // A re-claimed Raw Input registration releases Share (a key up may
+        // have been lost meanwhile).
+        while let Ok(ev) = share_rx.try_recv() {
             if session.kind != ControllerKind::XboxNano {
                 continue;
             }
-            if !session.share_seen.contains(&k.key) {
-                // Which keys the Nano's Share sends (once per key per session).
-                session.share_seen.push(k.key);
-                tracing::info!(key = format!("{:#05x}", k.key), down = k.down, "Xbox Nano keyboard key (Share)");
-            }
-            if let Some(pressed) = session.share.key(k) {
+            let change = match ev {
+                ShareEvent::Key(k) => {
+                    if !session.share_seen.contains(&k.key) {
+                        // Which keys the Nano's Share sends (once per key per session).
+                        session.share_seen.push(k.key);
+                        tracing::info!(key = format!("{:#05x}", k.key), down = k.down, "Xbox Nano keyboard key (Share)");
+                    }
+                    session.share.key(k)
+                }
+                ShareEvent::Reclaimed => session.share.reset(),
+            };
+            if let Some(pressed) = change {
                 apply_share(session, pressed, &mut emitted_connected, last_state, prev_buttons, tx);
             }
         }
@@ -1057,6 +1127,9 @@ fn read_loop(
                     touchpad, params, tx,
                 ) {
                     deadline = disconnect_after.map(|d| Instant::now() + d);
+                    if look_at.is_some() {
+                        look_at = Some(Instant::now() + NANO_PRESENCE_AFTER);
+                    }
                 }
             }
             Err(e) => {
@@ -1066,6 +1139,13 @@ fn read_loop(
         }
         if deadline.is_some_and(|t| Instant::now() >= t) {
             return "timeout";
+        }
+        if look_at.is_some_and(|t| Instant::now() >= t) {
+            if !d.still_present() {
+                tracing::info!("Xbox Nano: no report for 2 s and its HID device is gone; session ends");
+                return "device-gone";
+            }
+            look_at = Some(Instant::now() + NANO_PRESENCE_AFTER);
         }
     }
     stop_rumble(d, session, &mut plan);
@@ -1605,14 +1685,18 @@ mod read_loop_tests {
         cmd_tx: Mutex<Option<Sender<SourceCmd>>>,
         /// Nano keyboard events sent on the loop's share channel when the
         /// Nth read (1-based) happens.
-        share_inject: Vec<(usize, NanoKey)>,
-        share_tx: Mutex<Option<Sender<NanoKey>>>,
+        share_inject: Vec<(usize, ShareEvent)>,
+        share_tx: Mutex<Option<Sender<ShareEvent>>>,
         /// What a GET_REPORT returns (`None`: an error, i.e. unsupported),
         /// and the report ids asked for.
         input_report: Option<Vec<u8>>,
         input_asked: Mutex<Vec<u8>>,
         stop_at: Option<usize>,
         stop: Mutex<Option<Arc<AtomicBool>>>,
+        /// What each presence check answers, in order (`true` once it runs
+        /// out), and how many were asked.
+        present: Mutex<VecDeque<bool>>,
+        present_asked: Mutex<usize>,
     }
 
     impl ScriptIo {
@@ -1632,11 +1716,18 @@ mod read_loop_tests {
                 input_asked: Mutex::new(Vec::new()),
                 stop_at: None,
                 stop: Mutex::new(None),
+                present: Mutex::new(VecDeque::new()),
+                present_asked: Mutex::new(0),
             }
         }
     }
 
     impl HidIo for ScriptIo {
+        fn still_present(&self) -> bool {
+            *self.present_asked.lock().unwrap() += 1;
+            self.present.lock().unwrap().pop_front().unwrap_or(true)
+        }
+
         fn get_input_report(&self, buf: &mut [u8]) -> Result<usize> {
             self.input_asked.lock().unwrap().push(buf[0]);
             match &self.input_report {
@@ -1746,7 +1837,7 @@ mod read_loop_tests {
             dtx.send(c).unwrap();
         }
         *io.cmd_tx.lock().unwrap() = Some(dtx.clone());
-        let (share_tx, share_rx) = unbounded::<NanoKey>();
+        let (share_tx, share_rx) = unbounded::<ShareEvent>();
         *io.share_tx.lock().unwrap() = Some(share_tx);
         let stop = Arc::new(AtomicBool::new(false));
         *io.stop.lock().unwrap() = Some(stop.clone());
@@ -1866,8 +1957,89 @@ mod read_loop_tests {
         assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
     }
 
-    fn share_key(key: u16, down: bool) -> NanoKey {
-        NanoKey { key, down }
+    fn share_key(key: u16, down: bool) -> ShareEvent {
+        ShareEvent::Key(super::super::raw_share::NanoKey { key, down })
+    }
+
+    #[test]
+    fn nano_share_is_released_when_raw_input_is_reclaimed() {
+        // A key up lost while another window held the keyboard Raw Input
+        // must not strand Share: the re-claim releases it.
+        let mut io = ScriptIo::new(vec![Step::Frame(nano_frame(false)), Step::Idle(5), Step::Idle(5), Step::Idle(5), Step::Error]);
+        io.share_inject = vec![(2, share_key(0x137, true)), (3, ShareEvent::Reclaimed), (4, share_key(0x137, false))];
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (_, _, evs) = run(&io, &mut s);
+        assert_eq!(button_events(&evs, 29), vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)], "{evs:?}");
+        assert!(!s.share.pressed());
+    }
+
+    #[test]
+    fn a_silent_nano_whose_device_vanished_ends_its_session() {
+        // Windows may keep the HID device after a Bluetooth LE drop: reads
+        // only time out. After 2 s without a report the device path is
+        // looked up; gone → the session ends (the worker then sends
+        // Disconnected and the engine releases every held key).
+        let io = ScriptIo::new(vec![Step::Frame(nano_frame(true)), Step::Idle(2100), Step::Idle(2100), Step::Error]);
+        *io.present.lock().unwrap() = VecDeque::from([false]);
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (outcome, elapsed, evs) = run(&io, &mut s);
+        assert_eq!(outcome, "device-gone");
+        assert!(evs.contains(&GamepadEvent::ButtonDown(0)), "{evs:?}");
+        assert_eq!(*io.present_asked.lock().unwrap(), 1);
+        assert!(elapsed >= NANO_PRESENCE_AFTER && elapsed < Duration::from_millis(3500), "{elapsed:?}");
+    }
+
+    #[test]
+    fn a_silent_nano_still_present_keeps_its_session() {
+        // Present but silent: a button held still stays held; it is looked
+        // up again every 2 s.
+        let io = ScriptIo::new(vec![Step::Frame(nano_frame(true)), Step::Idle(2100), Step::Idle(2100), Step::Error]);
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (outcome, _, evs) = run(&io, &mut s);
+        assert_eq!(outcome, "read-error");
+        assert_eq!(*io.present_asked.lock().unwrap(), 2);
+        assert!(!evs.contains(&GamepadEvent::ButtonUp(0)), "{evs:?}");
+        // Reports keep it from being looked up at all.
+        let io = ScriptIo::new(vec![
+            Step::Frame(nano_frame(true)), Step::Idle(1500), Step::Frame(nano_frame(false)), Step::Idle(1500), Step::Error,
+        ]);
+        let mut s = Session::new(ControllerKind::XboxNano);
+        run(&io, &mut s);
+        assert_eq!(*io.present_asked.lock().unwrap(), 0);
+        // Other pads have their deadline; they are never looked up.
+        let io = ScriptIo::new(vec![Step::Frame(ds_frame()), Step::Idle(2100), Step::Error]);
+        let mut s = Session::new(ControllerKind::DualSense);
+        run(&io, &mut s);
+        assert_eq!(*io.present_asked.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn hidapi_calls_are_serialised() {
+        // The two HID workers share hidapi's unlocked global state
+        // (hid_init / hid_enumerate / hid_open_path): with_hidapi runs one
+        // at a time.
+        use std::sync::atomic::AtomicUsize;
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let most = Arc::new(AtomicUsize::new(0));
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let (inflight, most) = (inflight.clone(), most.clone());
+                thread::spawn(move || {
+                    for _ in 0..5 {
+                        with_hidapi(|| {
+                            let n = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                            most.fetch_max(n, Ordering::SeqCst);
+                            thread::sleep(Duration::from_millis(3));
+                            inflight.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(most.load(Ordering::SeqCst), 1);
     }
 
     fn button_events(evs: &[GamepadEvent], id: u32) -> Vec<GamepadEvent> {

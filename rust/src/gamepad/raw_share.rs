@@ -27,6 +27,17 @@ pub struct NanoKey {
     pub down: bool,
 }
 
+/// What the Raw Input reader sends the HID worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareEvent {
+    /// A key event from the Nano's keyboard collection.
+    Key(NanoKey),
+    /// Another window had taken the process's keyboard Raw Input and the
+    /// reader registered again: key events in between are lost, so the
+    /// worker treats Share as released (`ShareKeys::reset`).
+    Reclaimed,
+}
+
 /// Whether a Raw Input device name (`RIDI_DEVICENAME`) is the Nano's:
 /// Bluetooth LE names carry `VID&02045E_PID&0B4F`, USB names
 /// `VID_045E&PID_0B4F` (case-insensitive).
@@ -65,6 +76,15 @@ impl ShareKeys {
     pub fn pressed(&self) -> bool {
         !self.held.is_empty()
     }
+
+    /// Forget every held key (the keyboard Raw Input was re-claimed; a key
+    /// up may have been lost). `Some(false)`: Share was pressed and is now
+    /// released; `None`: nothing was held.
+    pub fn reset(&mut self) -> Option<bool> {
+        let was = self.pressed();
+        self.held.clear();
+        was.then_some(false)
+    }
 }
 
 /// The running Raw Input reader. It listens only while active; dropping
@@ -92,7 +112,7 @@ impl RawShare {
 /// Start the Raw Input reader and return the receiver of the Nano's key
 /// events. Off Windows (and if the reader cannot start) nothing is started
 /// and the receiver never yields.
-pub fn start() -> (crossbeam_channel::Receiver<NanoKey>, Option<RawShare>) {
+pub fn start() -> (crossbeam_channel::Receiver<ShareEvent>, Option<RawShare>) {
     #[cfg(windows)]
     {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -115,7 +135,7 @@ impl Drop for RawShare {
 
 #[cfg(windows)]
 mod win {
-    use super::{is_nano_keyboard, NanoKey};
+    use super::{is_nano_keyboard, NanoKey, ShareEvent};
     use crossbeam_channel::Sender;
     use std::mem::{size_of, zeroed};
     use std::ptr::{null, null_mut};
@@ -147,7 +167,7 @@ mod win {
 
     /// Start the reader thread; returns its thread id once its window is
     /// up. It registers nothing until `WM_SET_ACTIVE`.
-    pub(super) fn spawn(tx: Sender<NanoKey>) -> anyhow::Result<u32> {
+    pub(super) fn spawn(tx: Sender<ShareEvent>) -> anyhow::Result<u32> {
         let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<u32, String>>(1);
         std::thread::Builder::new()
             .name("nano-share-rawinput".into())
@@ -162,7 +182,7 @@ mod win {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    fn run(tx: Sender<NanoKey>, ready: Sender<Result<u32, String>>) {
+    fn run(tx: Sender<ShareEvent>, ready: Sender<Result<u32, String>>) {
         // SAFETY: plain Win32 calls on this thread's own message-only
         // window; every pointer passed points at a live local.
         unsafe {
@@ -203,12 +223,14 @@ mod win {
                     }
                     WM_INPUT if active => {
                         if let Some(k) = nano_key(msg.lParam as _) {
-                            let _ = tx.send(k);
+                            let _ = tx.send(ShareEvent::Key(k));
                         }
                     }
                     WM_TIMER if active && !registered_to(hwnd) => {
                         tracing::info!("Nano Share: keyboard Raw Input taken over; registering again");
                         register(hwnd);
+                        // A key up may have gone to the other window: Share is released.
+                        let _ = tx.send(ShareEvent::Reclaimed);
                     }
                     _ => {}
                 }
@@ -369,6 +391,20 @@ mod tests {
         assert_eq!(s.key(k(0x5B, false)), None, "other key up");
         assert_eq!(s.key(k(0x37, false)), Some(false));
         assert_eq!(s.key(k(0x37, false)), None);
+    }
+
+    #[test]
+    fn reset_releases_a_held_share() {
+        // The Raw Input registration was taken over and re-claimed: a key up
+        // may have been lost, so Share is released.
+        let mut s = ShareKeys::default();
+        assert_eq!(s.reset(), None, "nothing held: no change");
+        s.key(k(0x37, true));
+        s.key(k(0x5B, true));
+        assert_eq!(s.reset(), Some(false));
+        assert!(!s.pressed());
+        assert_eq!(s.key(k(0x37, false)), None, "the lost key's late release changes nothing");
+        assert_eq!(s.key(k(0x37, true)), Some(true), "pressed again works");
     }
 
     #[test]

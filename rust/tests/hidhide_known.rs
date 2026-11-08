@@ -101,6 +101,36 @@ fn a_lower_case_address_loads_upper_case_and_a_bad_one_is_still_rejected() {
     }
 }
 
+/// The Xbox Nano's four collections; only Col01 (the gamepad) is the Nano's.
+fn nano_col(n: u8) -> String {
+    format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col0{n}\8&113d3dd1&0&000{}", n - 1)
+}
+
+#[test]
+fn stray_nano_collections_remembered_by_the_test_build_are_dropped_on_load() {
+    // The v3.7.0 test build remembered every Nano collection (Col02 is the
+    // keyboard Share comes from); a config carrying them loads with only
+    // Col01, through both load paths, and the next write drops them.
+    let mut v = serde_json::to_value(test_helpers::load_example()).unwrap();
+    v["hidhide_known"] = serde_json::json!([
+        { "kind": "dualsense", "id": DS_BT, "addr": ADDR },
+        { "kind": "xbox_nano", "id": nano_col(1), "addr": "FB3A7C7DF9A8" },
+        { "kind": "xbox_nano", "id": nano_col(2), "addr": "FB3A7C7DF9A8" },
+        { "kind": "xbox_nano", "id": nano_col(3), "addr": "FB3A7C7DF9A8" },
+        { "kind": "xbox_nano", "id": nano_col(4), "addr": "FB3A7C7DF9A8" },
+    ]);
+    let want = vec![DS_BT.to_string(), nano_col(1)];
+    assert_eq!(ids(&Config::load_from_str(&v.to_string()).unwrap().hidhide_known), want);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("padtokbm.json");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let doc = ConfigDoc::load(&path).unwrap();
+    assert_eq!(ids(&doc.typed().hidhide_known), want, "the IPC's load too");
+    dualsense_mapper::config_io::write_atomic(&path, &doc).unwrap();
+    let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["hidhide_known"].as_array().unwrap().len(), 2, "written back without them");
+}
+
 #[test]
 fn remember_fills_a_missing_address_and_keeps_a_known_one() {
     let list = vec![kp("dualsense", DS_BT), kpa("ns_pro", NSP_BT, "AABBCCDDEEFF")];

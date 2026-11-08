@@ -27,8 +27,19 @@ impl ConfigDoc {
         let mut typed: Config = serde_json::from_value(raw.clone())
             .with_context(|| format!("typed-parsing {}", path.display()))?;
         migrate_touchpad_ids(&mut typed, &mut raw);
-        typed.validate()?;
-        Ok(Self { raw, typed })
+        let mut doc = Self { raw, typed };
+        doc.drop_stray_known();
+        doc.typed.validate()?;
+        Ok(doc)
+    }
+
+    /// [`Config::drop_stray_known`] on both views, so the next write
+    /// leaves them out of the file.
+    fn drop_stray_known(&mut self) {
+        if self.typed.drop_stray_known() {
+            let list = self.typed.hidhide_known.clone();
+            self.set_hidhide_known(list);
+        }
     }
 
     /// Build a `ConfigDoc` from an already-typed value tree. Used by tests
@@ -38,8 +49,10 @@ impl ConfigDoc {
         let mut typed: Config =
             serde_json::from_value(raw.clone()).context("typed-parsing in-memory config")?;
         migrate_touchpad_ids(&mut typed, &mut raw);
-        typed.validate()?;
-        Ok(Self { raw, typed })
+        let mut doc = Self { raw, typed };
+        doc.drop_stray_known();
+        doc.typed.validate()?;
+        Ok(doc)
     }
 
     pub fn typed(&self) -> &Config {

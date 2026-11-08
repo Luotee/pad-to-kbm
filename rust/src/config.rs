@@ -291,8 +291,21 @@ impl Config {
             .context("parsing config")?;
         cfg.fill_missing_pads();
         cfg.fill_added_id_defaults();
+        cfg.drop_stray_known();
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Drop remembered Xbox Nano entries that are not its gamepad
+    /// collection (`&Col01`): the v3.7.0 test build remembered all four,
+    /// the keyboard Share comes from among them. The hider no longer hides
+    /// them, and takes ours out of HidHide at its next round. Returns
+    /// whether any went.
+    pub fn drop_stray_known(&mut self) -> bool {
+        let before = self.hidhide_known.len();
+        self.hidhide_known
+            .retain(|k| k.kind != ControllerKind::XboxNano.slug() || crate::hidhide::is_gamepad_collection(&k.id));
+        self.hidhide_known.len() != before
     }
 
     /// Give every controller slug without a table the default table.

@@ -982,6 +982,33 @@ mod tests {
     }
 
     #[test]
+    fn stray_nano_collections_hidden_by_the_test_build_are_unhidden() {
+        // The v3.7.0 test build hid every Nano collection, the keyboard (Share)
+        // included. Ours in the state file, they come out at the next round;
+        // only the gamepad collection stays hidden and remembered.
+        let col = |n: u8| format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col0{n}\8&113d3dd1&0&000{}", n - 1);
+        let all: Vec<String> = (1..=4).map(col).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = HideState::path_beside(&dir.path().join("padtokbm.json"));
+        HideState { ids: all.clone(), activated_by_us: true, whitelisted: Some(OWN.into()) }.save(&path).unwrap();
+        let mut black = s(&[FOREIGN_DEV]);
+        black.extend(all.iter().cloned());
+        let mut r = Rig {
+            _dir: dir,
+            path: path.clone(),
+            ctl: FakeCtl::new(Fake { black, white: s(&[FOREIGN_APP, OWN]), active: true, ..Default::default() }),
+            hider: Hider::new(path),
+        };
+        r.hider.set_known(&all);
+        r.hider.set_inputs(&[XN]);
+        let present: Vec<&str> = all.iter().map(|x| x.as_str()).collect();
+        round(&mut r, &present).unwrap();
+        assert_eq!(r.ctl.f().black, vec![FOREIGN_DEV.to_string(), col(1)]);
+        assert_eq!(r.hider.state().ids, vec![col(1)]);
+        assert!(r.hider.take_learned().is_empty(), "nothing new to remember");
+    }
+
+    #[test]
     fn rounds_are_idempotent() {
         let mut r = rig(foreign());
         r.hider.set_inputs(&[DS]);

@@ -137,12 +137,24 @@ pub fn kind_for(vid: u16, pid: u16) -> Option<ControllerKind> {
 /// `kind_for` a HID instance id, limited to the buses the HID source drives
 /// (`hid_source::is_candidate`): a USB Switch Pro is never driven, so hiding
 /// it would leave the game with no pad at all. Bluetooth HID ids carry the
-/// HID (`00001124`) or HOGP (`00001812`) service UUID.
+/// HID (`00001124`) or HOGP (`00001812`) service UUID. The Xbox Nano lists
+/// four collections under one VID / PID; only its gamepad collection
+/// (`&Col01`, the one the HID source reads) is the Nano's to hide and
+/// remember. Its keyboard collection (Col02) carries Share, which the app
+/// reads through Raw Input, and stays visible.
 pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
     use crate::gamepad::hid_source::is_candidate;
     let (vid, pid) = parse_vid_pid(id)?;
     let bus = if is_bluetooth_instance(id) { hidapi::BusType::Bluetooth } else { hidapi::BusType::Usb };
-    kind_for(vid, pid).filter(|&k| is_candidate(vid, pid, bus) == Some(k))
+    kind_for(vid, pid)
+        .filter(|&k| is_candidate(vid, pid, bus) == Some(k))
+        .filter(|&k| k != ControllerKind::XboxNano || is_gamepad_collection(id))
+}
+
+/// The device-id part of `id` (between the first and second backslash)
+/// ends in `&Col01`, any case: the Xbox Nano's gamepad collection.
+pub fn is_gamepad_collection(id: &str) -> bool {
+    id.split('\\').nth(1).is_some_and(|d| d.to_ascii_lowercase().ends_with("&col01"))
 }
 
 /// A Bluetooth HID instance id: it carries the HID (`00001124`) or HOGP
@@ -814,12 +826,21 @@ mod tests {
         assert_eq!(kind_for_instance(ns_bt), Some(ControllerKind::NsPro));
         assert_eq!(kind_for_instance(r"HID\VID_057E&PID_2009\7&3&0&0000"), None);
         assert_eq!(kind_for_instance(r"HID\VID_046D&PID_C52B\7&3&0&0000"), None);
-        // Xbox Nano: Bluetooth LE (HOGP) only, every collection (the HID
-        // source reads Col01; Col02 is the keyboard Share comes from).
-        for col in ["Col01", "Col02"] {
-            let nano = format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&{col}\8&113d3dd1&0&0000");
-            assert_eq!(kind_for_instance(&nano), Some(ControllerKind::XboxNano), "{nano}");
+        // Xbox Nano: Bluetooth LE (HOGP) only, and only its gamepad
+        // collection, Col01 (the one the HID source reads).
+        let nano = |col: &str| format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&{col}\8&113d3dd1&0&0000");
+        assert_eq!(kind_for_instance(&nano("Col01")), Some(ControllerKind::XboxNano));
+        assert_eq!(kind_for_instance(&nano("col01").to_uppercase()), Some(ControllerKind::XboxNano), "any case");
+        // Keyboard (Share comes from it, through Raw Input), mouse and vendor
+        // collections are not the Nano's to hide or remember.
+        for col in ["Col02", "Col03", "Col04"] {
+            assert_eq!(kind_for_instance(&nano(col)), None, "{col}");
         }
+        assert_eq!(
+            kind_for_instance(r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8\8&1&0&0000"),
+            None,
+            "no collection"
+        );
         assert_eq!(kind_for_instance(r"HID\VID_045E&PID_0B4F\7&3&0&0000"), None, "USB Nano");
     }
 

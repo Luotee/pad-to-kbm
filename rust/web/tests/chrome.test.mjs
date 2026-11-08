@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chromeHTML, BTN, FRAME, fitWindow } from '../chrome.js';
+import { chromeHTML, BTN, FRAME, fitWindow, titleText } from '../chrome.js';
 
 // Reskin Q19/Q20: the app draws the MapleStory window: steel frame, white title bar "PAD TO KBM",
 // minimise + close in the reference's 12x12 checker style.
+// v3.7.0: the drawn title carries the app version once it is known.
+test('title_text_adds_the_version', () => {
+  assert.equal(titleText('3.7.0'), 'PAD TO KBM v3.7.0');
+  assert.equal(titleText(''), 'PAD TO KBM');
+  assert.equal(titleText(undefined), 'PAD TO KBM');
+});
+
 test('title_bar_has_title_minimise_close', () => {
   const h = chromeHTML();
   assert.match(h, /<div id="wtbar"><span class="wt">PAD TO KBM<\/span>/);

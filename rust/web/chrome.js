@@ -5,6 +5,11 @@
 
 export const W = 994, H = 669;          // the whole window at 1x: board 980x640 at (7, 22)
 export const TITLE = 'PAD TO KBM';
+// The drawn title with the app version (v3.7.0), once get_app_version has answered: `PAD TO KBM v3.7.0`.
+// Silkscreen has every glyph (printable ASCII; scripts/verify/font-coverage.py). The OS title stays PadToKBM.
+export function titleText(version) {
+  return version ? TITLE + ' v' + version : TITLE;
+}
 
 // Reference close key, 12x12: black edge with cut corners, ten blue bands, and 2x2 blocks on a 3x3 grid
 // (pale corners + centre read as an X, dark edges between). Minimise = a pale bottom bar. size: drawn

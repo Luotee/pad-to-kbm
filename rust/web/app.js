@@ -11,7 +11,7 @@ import { startCalibration } from './board/calibration.js';
 import { startVigem, maybeProbe } from './board/vigem.js';
 import { startLightbar } from './board/lightbar.js';
 import { fitKeyLabels } from './board/palette.js';
-import { chromeHTML, fitWindow } from './chrome.js';
+import { chromeHTML, fitWindow, titleText } from './chrome.js';
 import { appWindow } from './ipc.js';
 
 const board = document.getElementById('board');
@@ -57,6 +57,7 @@ function paint() {
 
 onRender(paint);
 await init();
+tbar.querySelector('.wt').textContent = titleText(state.version);
 wire(board);
 await startLive();
 startMacros(board);
