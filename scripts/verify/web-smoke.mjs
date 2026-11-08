@@ -100,7 +100,13 @@ function tauriMock({ config, version }) {
     // installer leaves behind (install_vigem / install_hidhide reply).
     xbox: { vigem: 'installed', hidhide: 'installed', hidden: true },
     after: { vigem: 'installed', hidhide: 'installed' },
+    // v3.6.0 ui prefs kept across a page.reload() (sessionStorage), as the config file would be.
+    dismissed: false,
   };
+  try {
+    const keep = JSON.parse(sessionStorage.getItem('__keep') || 'null');
+    if (keep) { Object.assign(state.xbox, keep.xbox || {}); state.dismissed = !!keep.dismissed; }
+  } catch (e) { /* no storage */ }
   window.__mock = state;
   window.__mockCalls = [];
   window.__mockErrors = [];
@@ -143,8 +149,9 @@ function tauriMock({ config, version }) {
     switch (cmd) {
       case 'get_controller_status': return clone(state.status);
       case 'get_config': return clone(c);
-      case 'get_ui_prefs': return { last_pad: c.last_pad ?? null };
+      case 'get_ui_prefs': return { last_pad: c.last_pad ?? null, hidhide_prompt_dismissed: state.dismissed };
       case 'set_ui_prefs':   // v3.4.0: last_pad is a config field; a change emits config-changed marked ui
+        if (a.prefs.hidhide_prompt_dismissed !== undefined) state.dismissed = !!a.prefs.hidhide_prompt_dismissed;
         if (a.prefs.last_pad && a.prefs.last_pad !== c.last_pad) {
           c.last_pad = a.prefs.last_pad;
           setTimeout(() => emit('config-changed', { source: 'ipc', ui: true }), 0);
@@ -440,6 +447,7 @@ try {
   // Not 鍵鼠 → the board is locked (v3.2.1): nothing below the header edits.
   check('關 banner sits at the stage centre (490, 228 on the board)', await bannerCentred(), JSON.stringify(await bannerBox()));
   await expectLocked('關');
+  const xs0 = await countCalls(page, 'get_xbox_status');   // 鍵鼠 on a native pad already looked once at load (v3.6.0)
   await page.click('#board .omode [data-mode="pad"]');
   await settle(page);
   const offBack = await lastCall(page, 'set_pad_off'), me = await lastCall(page, 'set_output_mode');
@@ -448,7 +456,8 @@ try {
   check('手把 shows the white banner', (await banner()) === '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用' && (await page.locator('#board .obanner.white').count()) === 1, await banner());
   check('手把 dims the board', (await dimmed()) && (await modeOf()) === 'pad');
   check('手把 banner sits at the stage centre', await bannerCentred(), JSON.stringify(await bannerBox()));
-  check('手把 asks nothing about Xbox drivers', (await countCalls(page, 'get_xbox_status')) === 0);
+  // (the transient 鍵鼠 paint between 關 and 手把 may refresh the status quietly; it must not prompt or install)
+  check('手把 asks nothing about Xbox drivers', (await page.locator('#board .vgpop, #board .vgbang').count()) === 0 && (await calls(page)).every(c => !/^install_/.test(c.cmd)), `${xs0} → ${await countCalls(page, 'get_xbox_status')}`);
   await expectLocked('手把');
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
@@ -689,6 +698,92 @@ try {
   await page.click('#board [data-pad="ns2_pro"]');
   await page.click('#board .omode [data-mode="kbm"]');
   await settle(page);
+
+  // ── v3.6.0: 鍵鼠 hides a native pad too (HidHide prompt once, !, reconnect banner) ──
+  {
+    const reloadWith = async (xbox, dismissed) => {
+      await page.evaluate(([x, d]) => sessionStorage.setItem('__keep', JSON.stringify({ xbox: x, dismissed: d })), [xbox, dismissed]);
+      await page.reload({ waitUntil: 'load' });
+      await page.locator('#board .hdr').waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => document.querySelectorAll('#board .slot').length > 20, null, { timeout: 10000 });
+      await settle(page);
+    };
+    const MISS = { vigem: 'missing', hidhide: 'missing', hidden: null };
+    await reloadWith(MISS, false);
+    check('kbm-prompt-once: DualSense in 鍵鼠 → mode is 鍵鼠', (await modeOf()) === 'kbm');
+    {
+      const t = ((await pop().textContent().catch(() => '')) || '');
+      check('kbm-prompt-once: popover opens by itself with the 鍵鼠 title', (await pop().count()) === 1 && t.includes('要讓遊戲看不到 DualSense、只收到鍵鼠，需要：') &&
+        t.includes('官方安裝程式，約 1 分鐘，會要求系統管理員權限。沒裝也能用鍵鼠，只是遊戲會同時讀到手把。'), t);
+      check('kbm-prompt-once: one row, HidHide only', JSON.stringify(await popRows()) === '["HidHide:未安裝"]', JSON.stringify(await popRows()));
+      check('kbm-prompt-once: buttons 稍後 / 安裝 HidHide', JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '安裝 HidHide']), JSON.stringify(await popBtns()));
+      check('kbm-hidhide-missing-still-sends: board not locked, no 不送東西 banner', (await page.locator('#board .obanner').count()) === 0 &&
+        (await page.locator('#board [data-act="reset"]:disabled').count()) === 0);
+    }
+    await page.click('#board [data-act="vglater"]');
+    await settle(page);
+    {
+      const sp = (await calls(page)).filter(c => c.cmd === 'set_ui_prefs').pop();
+      check('kbm-prompt-once: 稍後 stores hidhide_prompt_dismissed=true', sp?.args?.prefs?.hidhide_prompt_dismissed === true, JSON.stringify(sp?.args));
+      check('kbm-prompt-once: popover gone, ! stays', (await pop().count()) === 0 && (await bang().count()) === 1);
+    }
+    await reloadWith(MISS, true);
+    check('kbm-dismissed: no popover, the ! is there', (await pop().count()) === 0 && (await bang().count()) === 1);
+    await bang().click();
+    await settle(page);
+    check('kbm-dismissed: clicking the ! opens it', (await pop().count()) === 1 && JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '安裝 HidHide']));
+    await page.click('#board [data-act="vglater"]');
+    await settle(page);
+    await page.click('#board .omode [data-mode="off"]');
+    await settle(page);
+    check('kbm-manual-pick: 關 shows no popover', (await modeOf()) === 'off' && (await pop().count()) === 0);
+    await page.click('#board .omode [data-mode="kbm"]');
+    await settle(page);
+    check('kbm-manual-pick: picking 鍵鼠 opens it although dismissed', (await modeOf()) === 'kbm' && (await pop().count()) === 1);
+    await page.click('#board [data-act="vglater"]');
+    await settle(page);
+    // Reconnect banner: HidHide in, pad not yet hidden.
+    await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: false });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await settle(page);
+    {
+      const t = await banner();
+      check('kbm-reconnect: DualSense banner with the ⏻', t === '再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的  斷開，再按 PS 鍵連回來' &&
+        (await page.locator('#board .obanner.rc svg').count()) === 1 && (await bang().count()) === 0 && (await pop().count()) === 0, t);
+      check('kbm-reconnect: banner sits at the stage centre and fits', await bannerCentred(), JSON.stringify(await bannerBox()));
+      await page.screenshot({ path: path.join(outDir, 'web-kbm-reconnect.png') });
+    }
+    await page.click('#board [data-pad="ns_pro"]');
+    await settle(page);
+    await page.evaluate(() => { window.__mock.xbox.hidden = false; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    check('kbm-reconnect: Switch Pro banner says HOME', ((await banner()) || '').endsWith('再按 HOME 鍵連回來'), await banner());
+    await setXbox({ hidden: true });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'ns_pro', connected_pads: ['ns_pro'], warnings: [], off_pads: [] }));
+    await settle(page);
+    check('kbm-reconnect: hidden:true clears it', (await page.locator('#board .obanner.rc').count()) === 0);
+    // Switch 2 Pro: Windows cannot read it, nothing to hide.
+    await setXbox(MISS);
+    await page.click('#board [data-pad="ns2_pro"]');
+    await settle(page);
+    await page.evaluate(() => { window.__mock.config.output_mode.ns2_pro = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    check('ns2-kbm: no popover, no !', (await modeOf()) === 'kbm' && (await pop().count()) === 0 && (await bang().count()) === 0);
+    await page.click('#board .omode [data-mode="off"]');
+    await settle(page);
+    await page.click('#board [data-pad="ns2_pro"]');   // the mock's status event moves the tab to the owner pad
+    await settle(page);
+    await page.click('#board .omode [data-mode="kbm"]');
+    await settle(page);
+    check('ns2-kbm: picking 鍵鼠 again still shows neither', (await pop().count()) === 0 && (await bang().count()) === 0, `${await modeOf()} pop=${await pop().count()} bang=${await bang().count()} `);
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+    // Leave the drivers installed: the ! moves the header controls (later layout checks assume none).
+    await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
+    await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
+    await settle(page);
+    check('drivers installed again → no ! in 鍵鼠', (await bang().count()) === 0 && (await pop().count()) === 0);
+  }
 
   check('header fits 980 px (no overflow)', await page.evaluate(() => { const h = document.querySelector('#board .hdr'); return h.scrollWidth <= h.clientWidth; }));
   await page.click('#board [data-pad="dualsense"]');

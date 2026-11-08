@@ -100,7 +100,7 @@ export function render(st) {
   h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
-  else if (om === 'xbox' && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span></div>';
+  else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span></div>';
   else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {

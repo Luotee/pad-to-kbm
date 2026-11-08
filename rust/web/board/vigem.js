@@ -1,6 +1,7 @@
 // Xbox output prompt (v3.6.0): ViGEmBus for every pad, plus HidHide for a pad
 // Windows can read itself (DualSense / Switch Pro), so the game does not see it
-// twice. Display + IPC only: Rust probes, downloads, verifies and runs the
+// twice. 鍵鼠 hides such a pad too (HidHide only, no ViGEmBus): asked once on its
+// own, then only the gold ! and a manual pick of 鍵鼠. Display + IPC only: Rust probes, downloads, verifies and runs the
 // official installers and hides the pad (iron rules 7 and 9).
 
 import { invoke, listen } from '../ipc.js';
@@ -12,25 +13,32 @@ import { ICON } from './icons.js';
 
 // status: the selected pad's get_xbox_status reply { vigem, hidhide, hidden }, null until asked.
 // stale: a controller-status / config-changed came in, so `hidden` may have changed.
-export const VG = { status: null, probing: false, again: false, stale: false, pop: false, busy: false, err: '' };
+export const VG = { status: null, probing: false, again: false, quiet: false, stale: false, pop: false, busy: false, err: '' };
 const NAME = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
 const DRIVER = { vigem: { name: 'ViGEmBus', cmd: 'install_vigem' }, hidhide: { name: 'HidHide', cmd: 'install_hidhide' } };
 
-const xbox = () => outputMode(state, state.pad) === 'xbox';
-// What this pad still needs: ViGEmBus always, HidHide only when Windows can read the pad itself.
-function missing() {
+// Which hiding the selected tab needs: Xbox mode, 鍵鼠 on a pad Windows can read itself, or none.
+function hideMode() {
+  const m = outputMode(state, state.pad);
+  if (m === 'xbox') return 'xbox';
+  if (m === 'kbm' && hasNative(state.pad)) return 'kbm';
+  return null;
+}
+// What this pad still needs: Xbox = ViGEmBus always, plus HidHide when Windows can read the pad
+// itself; 鍵鼠 = HidHide only. `mode` is passed by a caller whose config may not have caught up yet.
+function missing(mode = hideMode()) {
   const s = VG.status;
-  if (!s) return [];
+  if (!s || !mode) return [];
   const m = [];
-  if (s.vigem !== 'installed') m.push('vigem');
+  if (mode === 'xbox' && s.vigem !== 'installed') m.push('vigem');
   if (hasNative(state.pad) && s.hidhide !== 'installed') m.push('hidhide');
   return m;
 }
 
-// Ask Rust about the selected pad. `open`: a pick of Xbox or the first look at a pad in Xbox
-// mode, where anything missing opens the popover; otherwise only the status is refreshed (the
-// reconnect banner) and a popover the user closed stays closed.
-export async function probe({ open = true } = {}) {
+// Ask Rust about the selected pad. `open`: a pick of Xbox / 鍵鼠 or the first look at a pad in
+// one of them, where anything missing opens the popover; otherwise only the status is refreshed
+// (the reconnect banner) and a popover the user closed stays closed.
+export async function probe({ open = true, mode = null } = {}) {
   // One probe at a time; a pick of Xbox during one asks again when it returns.
   if (VG.probing) { if (open) VG.again = true; return; }
   VG.probing = true;
@@ -39,19 +47,21 @@ export async function probe({ open = true } = {}) {
   let s = null;
   try { s = await invoke('get_xbox_status', { kind }); } catch (e) { if (open) s = { vigem: 'missing', hidhide: 'missing', hidden: null }; }
   VG.probing = false;
-  if (VG.again) { VG.again = false; return probe(); }
+  if (VG.again) { VG.again = false; return probe({ mode }); }
   if (state.pad !== kind) { VG.stale = true; rerender(); return; }   // the answer is for a pad no longer shown
   if (s) VG.status = s;
-  if (open) { VG.pop = missing().length > 0; VG.err = ''; }
-  else if (!missing().length) VG.pop = false;
+  const need = missing(mode || hideMode());
+  if (open) { VG.pop = need.length > 0; VG.err = ''; }
+  else if (!need.length) VG.pop = false;
   rerender();
 }
 
 // Header extras: the gold ! (popover closed, something missing or the live
 // `vigem_missing` warning) and the popover itself.
 export function bangHTML() {
-  if (!xbox() || VG.pop) return '';
-  const live = (state.warnings || []).includes('vigem_missing');
+  const mode = hideMode();
+  if (!mode || VG.pop) return '';
+  const live = mode === 'xbox' && (state.warnings || []).includes('vigem_missing');
   if (!missing().length && !live) return '';
   return '<button type="button" class="vgbang" data-act="vgopen" aria-label="需要安裝" title="需要安裝">!</button>';
 }
@@ -62,8 +72,16 @@ function row(id, what) {
 }
 
 export function popHTML() {
-  if (!xbox() || !VG.pop) return '';
+  const mode = hideMode();
+  if (!mode || !VG.pop) return '';
   const nat = hasNative(state.pad), need = missing(), pad = NAME[state.pad];
+  if (mode === 'kbm') return '<div class="vgpop" role="dialog" aria-label="需要安裝">' +
+    '<div><b>要讓遊戲看不到 ' + pad + '、只收到鍵鼠，需要：</b></div>' +
+    '<ul class="vgl">' + row('hidhide', '把原本的 ' + pad + ' 對遊戲藏起來') + '</ul>' +
+    '<div class="vgnote">官方安裝程式，約 1 分鐘，會要求系統管理員權限。沒裝也能用鍵鼠，只是遊戲會同時讀到手把。</div>' +
+    (VG.err ? '<div class="vgerr">' + VG.err + '</div>' : '') +
+    '<div class="vgbtns"><button type="button" class="mini" data-act="vglater"' + (VG.busy ? ' disabled' : '') + '>稍後</button>' +
+    '<button type="button" class="mini go" data-act="vginstall"' + (VG.busy ? ' disabled' : '') + '>' + (VG.busy ? '安裝中…' : '安裝 HidHide') + '</button></div></div>';
   const go = VG.busy ? '安裝中…' : need.length > 1 ? '安裝這兩個' : '安裝 ' + DRIVER[need[0] || 'vigem'].name;
   return '<div class="vgpop" role="dialog" aria-label="需要安裝">' +
     '<div><b>要讓遊戲把 ' + pad + ' 當成 Xbox 手把，需要' + (nat ? '這兩個' : '') + '：</b></div>' +
@@ -79,12 +97,12 @@ export function popHTML() {
 // The banner under the header is hidden while something is known missing:
 // the popover / ! says what is wrong instead.
 export function vigemBlocksBanner() {
-  return xbox() && (missing().length > 0 || (state.warnings || []).includes('vigem_missing'));
+  return hideMode() === 'xbox' && (missing().length > 0 || (state.warnings || []).includes('vigem_missing'));
 }
 
 // HidHide hides a pad only from the next time it connects (`hidden: false` = not yet).
 export function reconnectBanner() {
-  if (!xbox() || !hasNative(state.pad) || missing().length || !VG.status || VG.status.hidden !== false) return '';
+  if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || VG.status.hidden !== false) return '';
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵連回來';
 }
 
@@ -111,10 +129,22 @@ async function install() {
   rerender();
 }
 
+// 稍後 in 鍵鼠: never open by itself again (the ! stays while HidHide is missing).
+async function dismissPrompt() {
+  if (state.prefs.hidhide_prompt_dismissed) return;
+  state.prefs = { ...state.prefs, hidhide_prompt_dismissed: true };
+  try { await invoke('set_ui_prefs', { prefs: { hidhide_prompt_dismissed: true } }); } catch (e) { console.warn('set_ui_prefs failed', e); }
+}
+
 export async function startVigem() {
   // A pick of Xbox re-probes; so does opening the board on a pad in Xbox mode
   // (first paint with no answer yet, maybeProbe).
-  act.onModeChange((pad, mode) => { if (mode === 'xbox') { VG.status = null; probe(); } else VG.pop = false; });
+  // A manual pick of 鍵鼠 on a pad Windows can read opens it too, dismissed or not.
+  act.onModeChange((pad, mode) => {
+    // 改回鍵鼠 (the user just declined the installs) re-probes quietly: only the !.
+    const quiet = VG.quiet; VG.quiet = false;
+    if (mode === 'xbox' || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode, open: !quiet }); } else VG.pop = false;
+  });
   // Another tab: the drivers are the same, `hidden` is per pad (refreshed on the next paint).
   onPadChange(() => {
     VG.pop = false; VG.err = '';
@@ -130,17 +160,19 @@ export async function startVigem() {
     if (!el) return false;
     const a = el.dataset.act;
     if (a === 'vgopen') { VG.pop = true; VG.err = ''; rerender(); return true; }
-    if (a === 'vglater') { VG.pop = false; rerender(); return true; }
-    if (a === 'vgkbm') { VG.pop = false; act.setMode('kbm'); return true; }
+    if (a === 'vglater') { VG.pop = false; if (hideMode() === 'kbm') dismissPrompt(); rerender(); return true; }
+    if (a === 'vgkbm') { VG.pop = false; VG.quiet = true; act.setMode('kbm'); return true; }
     if (a === 'vginstall') { if (!VG.busy) install(); return true; }
     return false;
   });
 }
 
-// Called on every paint: the first look at a pad in Xbox mode, or a refresh after an event.
+// Called on every paint: the first look at a pad in Xbox / 鍵鼠 mode, or a refresh after an event.
+// The first look opens the popover in 鍵鼠 only until 稍後 was pressed once.
 // One probe at a time; none while installing (install re-probes itself).
 export function maybeProbe() {
-  if (!xbox() || VG.probing || VG.busy) return;
-  if (VG.status === null) probe();
+  const mode = hideMode();
+  if (!mode || VG.probing || VG.busy) return;
+  if (VG.status === null) probe({ open: mode === 'xbox' || !state.prefs.hidhide_prompt_dismissed });
   else if (VG.stale) probe({ open: false });
 }
