@@ -73,7 +73,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - How HidHide hiding acts on a Nano read through XInput (Microsoft's Xbox
   driver) has not been tried on hardware yet.
 
-## [3.6.0] - 2026-11-08
+## [3.6.0] - 2026-11-09
 
 ### Added
 
