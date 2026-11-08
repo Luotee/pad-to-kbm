@@ -720,6 +720,18 @@ try {
       check('kbm-hidhide-missing-still-sends: board not locked, no 不送東西 banner', (await page.locator('#board .obanner').count()) === 0 &&
         (await page.locator('#board [data-act="reset"]:disabled').count()) === 0);
     }
+    {
+      const pt = await page.evaluate(() => {
+        const p = document.querySelector('#board .vgpop'), x = document.querySelector('#board .omode [data-mode="kbm"]');
+        const pr = p.getBoundingClientRect(), xr = x.getBoundingClientRect(), b = document.getElementById('board').getBoundingClientRect();
+        const cs = getComputedStyle(p), bs = getComputedStyle(p, '::before');
+        const w = parseFloat(bs.width) + parseFloat(bs.borderLeftWidth) + parseFloat(bs.borderRightWidth);
+        const apex = pr.right - parseFloat(cs.borderRightWidth) - parseFloat(bs.right) - w / 2;
+        return { apex: Math.round(apex - b.left), seg: Math.round((xr.left + xr.right) / 2 - b.left), l: Math.round(xr.left - b.left), r: Math.round(xr.right - b.left) };
+      });
+      check('kbm-prompt-once: popover pointer aims at the 鍵鼠 segment', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
+      await page.screenshot({ path: path.join(outDir, 'web-kbm-hidhide.png') });
+    }
     await page.click('#board [data-act="vglater"]');
     await settle(page);
     {
@@ -727,6 +739,13 @@ try {
       check('kbm-prompt-once: 稍後 stores hidhide_prompt_dismissed=true', sp?.args?.prefs?.hidhide_prompt_dismissed === true, JSON.stringify(sp?.args));
       check('kbm-prompt-once: popover gone, ! stays', (await pop().count()) === 0 && (await bang().count()) === 1);
     }
+    // No hider to install (dry run, not Windows): no prompt, no !, no reconnect banner in 鍵鼠.
+    await reloadWith({ vigem: 'unsupported', hidhide: 'unsupported', hidden: null }, false);
+    check('kbm-unsupported: no popover, no !', (await modeOf()) === 'kbm' && (await pop().count()) === 0 && (await bang().count()) === 0);
+    await setXbox({ hidden: false });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await settle(page);
+    check('kbm-unsupported: no reconnect banner either', (await page.locator('#board .obanner').count()) === 0 && (await pop().count()) === 0 && (await bang().count()) === 0);
     await reloadWith(MISS, true);
     check('kbm-dismissed: no popover, the ! is there', (await pop().count()) === 0 && (await bang().count()) === 1);
     await bang().click();

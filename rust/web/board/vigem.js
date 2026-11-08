@@ -31,7 +31,8 @@ function missing(mode = hideMode()) {
   if (!s || !mode) return [];
   const m = [];
   if (mode === 'xbox' && s.vigem !== 'installed') m.push('vigem');
-  if (hasNative(state.pad) && s.hidhide !== 'installed') m.push('hidhide');
+  // 鍵鼠 asks only when HidHide is really missing: 'unsupported' (dry run, not Windows) has no hider to install.
+  if (hasNative(state.pad) && (mode === 'kbm' ? s.hidhide === 'missing' : s.hidhide !== 'installed')) m.push('hidhide');
   return m;
 }
 
@@ -75,7 +76,7 @@ export function popHTML() {
   const mode = hideMode();
   if (!mode || !VG.pop) return '';
   const nat = hasNative(state.pad), need = missing(), pad = NAME[state.pad];
-  if (mode === 'kbm') return '<div class="vgpop" role="dialog" aria-label="需要安裝">' +
+  if (mode === 'kbm') return '<div class="vgpop kbm" role="dialog" aria-label="需要安裝">' +
     '<div><b>要讓遊戲看不到 ' + pad + '、只收到鍵鼠，需要：</b></div>' +
     '<ul class="vgl">' + row('hidhide', '把原本的 ' + pad + ' 對遊戲藏起來') + '</ul>' +
     '<div class="vgnote">官方安裝程式，約 1 分鐘，會要求系統管理員權限。沒裝也能用鍵鼠，只是遊戲會同時讀到手把。</div>' +
@@ -102,6 +103,7 @@ export function vigemBlocksBanner() {
 
 // HidHide hides a pad only from the next time it connects (`hidden: false` = not yet).
 export function reconnectBanner() {
+  if (hideMode() === 'kbm' && VG.status && VG.status.hidhide !== 'installed') return '';   // nothing hides the pad here
   if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || VG.status.hidden !== false) return '';
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵連回來';
 }
