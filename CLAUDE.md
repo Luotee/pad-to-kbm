@@ -171,7 +171,7 @@ present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `open_config_folder`. Events the board listens for: `controller-status`
 (`connected` bool + `connected_pads` + `off_pads` + `warnings` + `battery`
 `{ "<slug>": { pct, charging } }` for the connected pads that report one —
-DualSense, Switch Pro; re-sent when a reading changes, never part of the
+DualSense, Switch Pro, Xbox Nano (over GATT, never `charging`); re-sent when a reading changes, never part of the
 connection state; the pad slugs are `dualsense`, `ns_pro`, `ns2_pro`,
 `xbox_nano`; `get_controller_status` carries the same `battery`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
@@ -413,7 +413,10 @@ regresses real, observed bugs the codebase already fixed once:
     link presence is observed directly via report stream
     presence/absence. The worker that owns the session may also write
     rumble and lightbar output reports to its pad (on connect and while
-    streaming); these writes never affect connection state.
+    streaming); these writes never affect connection state. The Xbox
+    Nano's battery is read over Bluetooth GATT (Battery Level 0x2A19,
+    `gamepad/nano_battery.rs`) on its own thread per session, display
+    only: a reading or a failed read never opens or ends a session.
 
 ## Anti-cheat self-discipline
 

@@ -92,7 +92,9 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 function tauriMock({ config, version, nanoId }) {
   const listeners = {};
   let nextId = 1;
-  const status = { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense', 'ns2_pro', 'xbox_nano'], off_pads: [] };
+  // v3.8.0: the DualSense and the Nano show their battery; the Switch 2 Pro (no reading) keeps the green lamp.
+  const status = { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense', 'ns2_pro', 'xbox_nano'], off_pads: [],
+    battery: { dualsense: { pct: 80, charging: false }, xbox_nano: { pct: 70, charging: false } } };
   window.__emit = (name, payload) => {
     for (const l of (listeners[name] || []).slice()) l.cb({ event: name, id: l.id, payload });
   };
@@ -144,6 +146,11 @@ try {
   const emit = (name, payload) => page.evaluate(([n, p]) => window.__emit(n, p), [name, payload]);
   // The pad-art light strips animate (彩虹 by default): hold them at their first frame so reruns give the same pictures.
   await page.addStyleTag({ content: '#board .lbar{animation-play-state:paused!important;animation-delay:0s!important}' });
+
+  // 0. Battery (v3.8.0): the pad tabs, the DualSense's battery hovered (its plate says 80%). Cropped to the header.
+  await page.hover('#board [data-pad="dualsense"]');
+  await shot('battery.png', { x: 7, y: 34, width: 404, height: 72 });
+  await page.mouse.move(980, 650);
 
   // 1. The board, DualSense shown, Cross held: slot, line and tile light up.
   await emit('button-down', { id: 0 });

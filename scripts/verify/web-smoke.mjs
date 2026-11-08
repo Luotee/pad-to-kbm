@@ -94,7 +94,9 @@ function tauriMock({ config, version }) {
   const defaults = clone(config.pads);   // the example's pads = the default tables
   const state = {
     config: clone(config),
-    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [] },
+    // `battery` as the engine sends it (v3.8.0): empty here so the first-load lamp / header checks see the green
+    // lamp; the battery checks below send readings.
+    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [], battery: {} },
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).

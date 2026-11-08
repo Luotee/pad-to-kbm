@@ -72,6 +72,9 @@ The first run writes a config file `padtokbm.json` next to the exe; the whole fo
   </tr>
 </table>
 
+<p><img src="docs/images/readme/battery.png" width="404" alt="The pad tabs: DualSense and Xbox Nano show a three-bar green battery, the Switch 2 Pro a green lamp; hovering the DualSense shows a grey plate reading 80%"></p>
+<p><sub><b>Battery.</b> A connected DualSense, Switch Pro or Xbox Nano shows its battery in its tab (green / yellow / red), a breathing bolt while it charges, and the percentage on hover; the Xbox Nano never shows charging.</sub></p>
+
 <sub>Screenshots use a demo config and can be regenerated with <code>scripts/readme-shots.mjs</code>.</sub>
 
 ---

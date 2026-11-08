@@ -3,7 +3,41 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.7.0] - 2026-11-08
+## [3.8.0] - 2026-11-09
+
+This release also carries v3.6.0 and v3.7.0 (below), which were not
+released on their own.
+
+### Added
+
+- **Pad battery in the tabs.** Each connected DualSense, Switch Pro and Xbox
+  Nano shows a small pixel battery in place of its green lamp: three green
+  bars above 66 %, two yellow at 34–66 %, one red at 11–33 %, none at 10 %
+  or less. While a pad charges a bolt breathes over the battery (still when
+  Windows asks for less motion). Hovering the tab shows a grey plate with
+  the battery doubled and the percentage (`80%`, `60% 充電中`). The Switch
+  Pro reports in quarters (0 / 25 / 50 / 75 / 100 %). A DualSense full and
+  still plugged in shows three green bars, no bolt.
+- **The Xbox Nano's battery comes over Bluetooth GATT** (Battery Service,
+  Battery Level), read when its session starts and every 60 seconds, on its
+  own thread; it works with and without Microsoft's Xbox driver. Battery
+  Level carries no charging state, so **the Nano never shows the bolt**.
+- `controller-status` and `get_controller_status` carry `battery`
+  (`{ "<slug>": { pct, charging } }`, connected pads that report one); the
+  status is re-sent only when a reading changes. A battery reading never
+  connects or disconnects a pad.
+- `examples/nano_battery_probe.rs`: a read-only one-shot check of the
+  Nano's battery on a given Bluetooth address.
+
+### Notes
+
+- A pad with no reading keeps the green lamp: the Switch 2 Pro (its report
+  has no battery we decode yet), and a DualSense reporting a battery error
+  (its tab goes back to the lamp mid-session too).
+- macOS: Phase 2 TBD for the battery display (the Nano's GATT read uses
+  WinRT, Windows only).
+
+## [3.7.0] - 2026-11-09
 
 ### Added
 

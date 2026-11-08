@@ -87,6 +87,9 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
   </tr>
 </table>
 
+<p><img src="docs/images/readme/battery.png" width="404" alt="手把分頁：DualSense 和 Xbox Nano 顯示三格綠色電池，Switch 2 Pro 是綠燈；滑鼠移到 DualSense 上，灰色說明牌寫 80%"></p>
+<p><sub><b>電量。</b>連上的 DualSense、Switch Pro、Xbox Nano 在分頁上顯示電池（綠／黃／紅），充電時閃電一明一暗，滑鼠移上去看百分比；Xbox Nano 不會顯示充電中。</sub></p>
+
 <sub>截圖用的是示範設定，可用 <code>scripts/readme-shots.mjs</code> 重新產生。</sub>
 
 ---
