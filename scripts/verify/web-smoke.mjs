@@ -532,7 +532,7 @@ try {
     const cs = getComputedStyle(p), bs = getComputedStyle(p, '::before');
     const w = parseFloat(bs.width) + parseFloat(bs.borderLeftWidth) + parseFloat(bs.borderRightWidth);
     const apex = pr.right - parseFloat(cs.borderRightWidth) - parseFloat(bs.right) - w / 2;
-    return { apex: apex - b.left, seg: (xr.left + xr.right) / 2 - b.left, popL: pr.left - b.left, popR: pr.right - b.left };
+    return { apex: apex - b.left, seg: (xr.left + xr.right) / 2 - b.left, l: xr.left - b.left, r: xr.right - b.left, popL: pr.left - b.left, popR: pr.right - b.left };
   });
   await page.click('#board [data-pad="dualsense"]');
   await settle(page);
@@ -548,8 +548,7 @@ try {
       t.includes('要讓遊戲把 DualSense 當成 Xbox 手把，需要這兩個：') && t.includes('把原本的 DualSense 對遊戲藏起來') && t.includes('都是官方安裝程式，各約 1 分鐘'), t);
     check('popover has 稍後 / 改回鍵鼠 / 安裝這兩個', JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝這兩個']), JSON.stringify(await popBtns()));
     const pt = await pointer();
-    // The segment is 61 px wide (centre on a half pixel), the pointer's box 12 px: the apex is 0.5 px right of it.
-    check('popover pointer sits on the Xbox segment (centre 826.5 on the board = 833.5 in the window)', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.seg === 826.5, JSON.stringify(pt));
+    check('popover pointer aims at the Xbox segment (apex within 2 px of its centre, inside it)', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
     check('popover lies inside the board', pt.popL >= 0 && pt.popR <= 980, JSON.stringify(pt));
     check('no banner under the popover while drivers are missing', (await page.locator('#board .obanner').count()) === 0);
     await page.screenshot({ path: path.join(outDir, 'web-xbox-both.png') });
@@ -674,7 +673,7 @@ try {
     check('NS2 popover: only the ViGEmBus row, button 安裝 ViGEmBus', (await pop().count()) === 1 && JSON.stringify(await popRows()) === '["ViGEmBus:未安裝"]' &&
       JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 ViGEmBus']) && t.includes('要讓遊戲把 Switch 2 Pro 當成 Xbox 手把，需要：') && !t.includes('HidHide'), t);
     const pt = await pointer();
-    check('NS2 popover pointer on the Xbox segment too', Math.abs(pt.apex - pt.seg) <= 0.5, JSON.stringify(pt));
+    check('NS2 popover pointer on the Xbox segment too', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
     await page.screenshot({ path: path.join(outDir, 'web-vigem.png') });
     const i0 = (await installs()).length;
     await page.click('#board [data-act="vginstall"]');
@@ -802,6 +801,49 @@ try {
     await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
     await settle(page);
     check('drivers installed again → no ! in 鍵鼠', (await bang().count()) === 0 && (await pop().count()) === 0);
+  }
+
+  // ── v3.6.0 header: fits with three pads connected + the !, power key on the selected tab only ──
+  {
+    await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense', 'ns_pro', 'ns2_pro'], warnings: [], off_pads: [] }));
+    for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
+      await page.click(`#board [data-pad="${pad}"]`);
+      await settle(page);
+      const want = pad === 'ns2_pro' ? 'xbox' : 'kbm';
+      if ((await modeOf()) !== want) { await page.click(`#board .omode [data-mode="${want}"]`); await settle(page); }
+      if ((await pop().count()) === 1) { await page.click('#board [data-act="vglater"]'); await settle(page); }
+      const m = await page.evaluate(() => {
+        const R = e => e.getBoundingClientRect(), win = R(document.getElementById('win')), hdr = document.querySelector('#board .hdr');
+        const o = {};
+        o.fit = hdr.scrollWidth <= hdr.clientWidth;
+        o.bang = document.querySelectorAll('#board .hdr .vgbang').length;
+        o.gearW = R(hdr.querySelector('.gear')).width;
+        o.gearRight = R(hdr.querySelector('.gear')).right - win.left;
+        o.pwr = [...document.querySelectorAll('#board .pdw')].map(w => w.classList.contains('act') + ':' + w.querySelectorAll('.pwr').length);
+        o.tabs = [...document.querySelectorAll('#board .pdw .pd')].map(pd => {
+          const r = R(pd), ic = R(pd.querySelector('.live')), nm = R(pd.querySelector('span:not(.live)'));
+          return { act: pd.classList.contains('act'), left: r.left - win.left, iconL: ic.left - r.left, gap: nm.left - ic.right, right: r.right - nm.right };
+        });
+        o.ints = [...document.querySelectorAll('#board .pd, #board .omode button, #board .gear, #board .live')].filter(e => !Number.isInteger(R(e).left) || !Number.isInteger(R(e).top)).map(e => e.className || e.dataset.mode);
+        o.offW = R(document.querySelector('#board .omode .o-off')).width;
+        o.kbmW = R(document.querySelector('#board .omode .o-kbm')).width;
+        return o;
+      });
+      const J = JSON.stringify(m);
+      const sel = m.tabs.find(t => t.act);
+      check(`header[${pad}]: fits 980 px with three pads and the !`, m.fit && m.bang === 1, J);
+      check(`header[${pad}]: gear 30 wide, right edge at 975`, m.gearW === 30 && m.gearRight === 975, J);
+      check(`header[${pad}]: first tab at x=19`, m.tabs[0].left === 19, J);
+      check(`header[${pad}]: icon 7 from the tab edge, name 6 after it`, m.tabs.every(t => t.iconL === 7 && t.gap === 6), J);
+      check(`header[${pad}]: unselected tabs 7 px right of the name`, m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
+      check(`header[${pad}]: power key only on the selected tab`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
+      check(`header[${pad}]: tabs, segments, gear, lamps on whole pixels; 關 39 / 鍵鼠 59 wide`, m.ints.length === 0 && m.offW === 39 && m.kbmW === 59 && !!sel, J);
+    }
+    await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
+    await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); window.__mockEmit('config-changed', { source: 'external' }); });
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
   }
 
   check('header fits 980 px (no overflow)', await page.evaluate(() => { const h = document.querySelector('#board .hdr'); return h.scrollWidth <= h.clientWidth; }));

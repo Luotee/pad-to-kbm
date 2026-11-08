@@ -234,12 +234,13 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .obanner.gold{height:34px;padding:0 16px;background:var(--gold);border:2px solid #7a5c00;color:#3a2a00;font-size:14px}
 .mock .obanner.white{height:30px;padding:0 14px;background:var(--white);border:2px solid var(--navy2);color:var(--ink);font-size:12px}
 
-/* Xbox output prompt (mockup output-mode card B). The pointer sits on the Xbox segment, whose centre
-   is 88+6 px in from the popover's right edge. */
+/* Xbox output prompt (mockup output-mode card B). The pointer sits on the segment the prompt is about: the Xbox
+   segment by default (right:80px), the 鍵鼠 segment on .vgpop.kbm (right:142px). Both offsets are measured against the
+   header layout by web-smoke (apex within 2 px of the segment centre and inside it); retune them when it moves. */
 .mock .vgbang{display:flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border-radius:50%;background:var(--gold);border:2px solid #7a5c00;color:#3a2a00;font:inherit;font-size:11px;line-height:1;cursor:pointer;flex:none;margin-left:-6px}
 .mock .vgpop{position:absolute;right:58px;top:50px;width:372px;z-index:9;background:var(--white);border:3px solid var(--navy2);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.3);padding:8px 10px;font-size:11px;line-height:1.55;color:var(--ink)}
-.mock .vgpop::before{content:'';position:absolute;top:-9px;right:88px;width:12px;height:12px;background:var(--white);border-left:3px solid var(--navy2);border-top:3px solid var(--navy2);transform:rotate(45deg)}
-.mock .vgpop.kbm::before{right:150px}
+.mock .vgpop::before{content:'';position:absolute;top:-9px;right:80px;width:12px;height:12px;background:var(--white);border-left:3px solid var(--navy2);border-top:3px solid var(--navy2);transform:rotate(45deg)}
+.mock .vgpop.kbm::before{right:142px}
 .mock .vgpop b{font-weight:400;color:var(--pinkhi)}
 .mock .vgpop .vgerr{margin-top:4px;color:var(--red)}
 .mock .vgpop .vgbtns{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
@@ -418,6 +419,18 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .pwr,.mock .pdw.act .pwr{position:absolute;right:6px;bottom:7px;width:16px;height:16px;padding:0;border:1px solid #0e0000;border-radius:2px;background:linear-gradient(#de7b21,#fa9a52);color:#fff;box-shadow:inset 1px 1px 0 #ffd2a8}
 .mock .pwr svg{display:block}.mock .pwr:hover,.mock .pdw.act .pwr:hover{background:linear-gradient(#c8650f,#e8822f);color:#fff}
 /* bottom area: three cards */
+/* v3.6.0 header, all at 1x: lamp 7 px from the tab edge, 6 to the name, 7 right of the name on a tab without the power key
+   (1 border + 6 padding); header gap 8, side padding 12 (tabs start at window x=19, gear ends at 975); switch label to
+   switch 4; 關 / 鍵鼠 fixed 39 / 59 wide so the text width never moves them off whole pixels. The power key is drawn
+   on the selected tab only (view.js), which is what lets three connected pads plus the ! fit in 980 px. */
+.mock .hdr{gap:8px;padding-left:12px;padding-right:12px}
+.mock .hdr .sw{gap:4px}
+.mock .pd{padding-left:6px}
+.mock .pdw:not(.c) .pd,.mock .pdw.c:not(.act) .pd{padding-right:6px}
+.mock .pdw.c.act .pd{padding-right:26px}
+.mock .pdw:not(.act) .pd{padding-top:1px}
+.mock .omode .o-off{width:39px;justify-content:center;padding:0}
+.mock .omode .o-kbm{width:59px;justify-content:center;padding:0}
 .mock .pal{background:none;border:0;padding:0;gap:8px;justify-content:flex-start;align-items:stretch}
       .mock .pal>.kbd,.mock .pal>.m3s,.mock .pal>.macros{box-sizing:border-box;height:182px;background:linear-gradient(#cbd9e6,#c5cad2);border:1px solid #929eaa;border-radius:0;display:flex;align-items:flex-start}
       .mock .kbd .tile{font-family:'Silk',var(--font);font-size:8px;line-height:8px}

@@ -90,7 +90,7 @@ export function render(st) {
     h += '<span class="pdw' + (act ? ' act' : '') + (c ? ' c' : '') + '"><button type="button" class="pd' + (act ? ' act' : '') + '" data-pad="' + p +
       '" aria-pressed="' + act + '" aria-label="' + PAD_NAMES[p] + (c ? '（已連線）' : '（未連線）') + '"><span class="live' + (c ? '' : ' idle') + '"></span><span>' +
       PAD_NAMES[p] + '</span></button>' +
-      (c ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
+      (c && act ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
   }
   // The DualSense touchpad-cursor switch sits left of 連線震動 (reskin Q18), so the other controls keep
   // their place when it comes and goes; it locks with the board outside 鍵鼠 (events.js LOCKED).
