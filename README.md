@@ -78,11 +78,11 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
     <td><sub><b>自訂顏色。</b>點「＋」，拖色相和飽和兩條色帶，或直接打色碼。</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/readme/xbox-nano.png" alt="Xbox Nano 分頁：按住 Share，Share 格子和鍵盤的 F12 亮起"></td>
+    <td><img src="docs/images/readme/xbox-nano.png" alt="Xbox Nano 分頁：按住 Xbox 鍵，Xbox 格子和鍵盤的 F12 亮起；Share 格子是灰的"></td>
     <td><img src="docs/images/readme/known-pads.png" alt="設定的記住的手把分頁：DualSense 藍牙 23:D2，Xbox Nano 藍牙 F9:A8 連線中"></td>
   </tr>
   <tr>
-    <td><sub><b>Xbox Nano。</b>每顆鍵都能綁，Share 也可以（這裡送 F12）。四支手把的圖都照實物描的。</sub></td>
+    <td><sub><b>Xbox Nano。</b>Xbox 鍵也能綁（這裡送 F12）；Share 鍵不會送給電腦，格子是灰的。四支手把的圖都照實物描的。</sub></td>
     <td><sub><b>記住的手把。</b>藏過的手把會留在這裡，藍牙手把附上位址末四碼；連線中的不能刪。</sub></td>
   </tr>
 </table>
@@ -127,7 +127,7 @@ Xbox Nano 不需要這些：它本來就是 Xbox 手把，選「Xbox」或「手
 ### Xbox Nano 按 Xbox 鍵會跳出 Xbox Game Bar？
 
 那是 Windows 自己的功能，不是 PadToKBM 送的。不想要的話，到 Windows「設定 → 遊戲 → Game Bar」把「允許您的控制器開啟 Game Bar」關掉（Windows 10 叫「使用控制器上的這個按鈕開啟 Xbox Game Bar」）。
-Xbox 鍵和 Share 鍵在 PadToKBM 裡一樣可以綁鍵；Share 是從 Windows 的鍵盤輸入讀到的（Raw Input，只讀不攔）。
+Xbox 鍵在 PadToKBM 裡一樣可以綁鍵；Share 鍵目前不會送給電腦，所以它的格子是灰的、不能綁。裝了微軟的 Xbox 無線驅動程式時，PadToKBM 改從 XInput 讀 Nano（自動判斷，不用設定）。
 
 ### 設定檔在哪？可以直接改嗎？
 

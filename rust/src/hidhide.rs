@@ -140,8 +140,7 @@ pub fn kind_for(vid: u16, pid: u16) -> Option<ControllerKind> {
 /// HID (`00001124`) or HOGP (`00001812`) service UUID. The Xbox Nano lists
 /// four collections under one VID / PID; only its gamepad collection
 /// (`&Col01`, the one the HID source reads) is the Nano's to hide and
-/// remember. Its keyboard collection (Col02) carries Share, which the app
-/// reads through Raw Input, and stays visible.
+/// remember, in both id formats (`is_gamepad_collection`).
 pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
     use crate::gamepad::hid_source::is_candidate;
     let (vid, pid) = parse_vid_pid(id)?;
@@ -151,10 +150,13 @@ pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
         .filter(|&k| k != ControllerKind::XboxNano || is_gamepad_collection(id))
 }
 
-/// The device-id part of `id` (between the first and second backslash)
-/// ends in `&Col01`, any case: the Xbox Nano's gamepad collection.
+/// The device-id part of `id` (between the first and second backslash) has
+/// a `&`-field `Col01`, any case: the Xbox Nano's gamepad collection. It
+/// ends the device id without Microsoft's Xbox driver
+/// (`…_REV&0609_<address>&Col01`) and is followed by `&IG_00` with it
+/// (`…&REV_0619&<address>&COL01&IG_00`).
 pub fn is_gamepad_collection(id: &str) -> bool {
-    id.split('\\').nth(1).is_some_and(|d| d.to_ascii_lowercase().ends_with("&col01"))
+    id.split('\\').nth(1).is_some_and(|d| d.split('&').any(|f| f.eq_ignore_ascii_case("col01")))
 }
 
 /// A Bluetooth HID instance id: it carries the HID (`00001124`) or HOGP
@@ -173,18 +175,39 @@ pub fn is_bluetooth_instance(id: &str) -> bool {
 /// the address is the last `&` field up to its `_`. The parent of a Bluetooth
 /// LE (HID-over-GATT) pad, the Xbox Nano, is its BTHLEDEVICE service device,
 /// `BTHLEDEVICE\{00001812-…}_Dev_VID&02045e_PID&0b4f_REV&0609_FB3A7C7DF9A8\8&…`:
-/// the address is the last `_` field of the middle part. Anything else (a USB
-/// parent, `USB\VID_…\…`) has none.
+/// the address is the 12-hex-digit field of the middle part
+/// (`ble_addr_in`). Anything else (a USB parent, `USB\VID_…\…`) has none.
 pub fn bt_addr_from_parent(parent: &str) -> Option<String> {
-    let addr = if parent.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("BTHENUM\\")) {
-        parent.rsplit('&').next()?.split('_').next()?
+    if parent.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("BTHENUM\\")) {
+        let addr = parent.rsplit('&').next()?.split('_').next()?.to_ascii_uppercase();
+        is_bt_addr(&addr).then_some(addr)
     } else if parent.get(..12).is_some_and(|p| p.eq_ignore_ascii_case("BTHLEDEVICE\\")) {
-        parent.split('\\').nth(1)?.rsplit('_').next()?
+        ble_addr_in(parent.split('\\').nth(1)?)
     } else {
+        None
+    }
+}
+
+/// The Bluetooth address in a Bluetooth LE (HID-over-GATT) HID instance id
+/// itself, the Xbox Nano's: the 12-hex-digit field of its device id, in
+/// both formats, `…_REV&0609_FB3A7C7DF9A8&Col01` and (with Microsoft's Xbox
+/// driver) `…&REV_0619&FB3A7C7DF9A8&COL01&IG_00`. Classic Bluetooth and USB
+/// ids carry none (`bt_addr_from_parent` reads the parent's).
+pub fn bt_addr_from_instance(id: &str) -> Option<String> {
+    if !is_ble_instance(id) {
         return None;
-    };
-    let addr = addr.to_ascii_uppercase();
-    is_bt_addr(&addr).then_some(addr)
+    }
+    ble_addr_in(id.split('\\').nth(1)?)
+}
+
+/// The first field of a Bluetooth LE device id, split at `&` and `_`, that
+/// is 12 hex digits (the service UUID in braces is one field and never
+/// matches), upper-cased.
+fn ble_addr_in(device_id: &str) -> Option<String> {
+    device_id
+        .split(['&', '_'])
+        .find(|f| f.len() == 12 && f.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|f| f.to_ascii_uppercase())
 }
 
 /// `id` is a Bluetooth LE (HID-over-GATT) HID device, the Xbox Nano or the
@@ -598,8 +621,10 @@ mod imp {
 
     /// The Bluetooth address of the pad whose HID device instance id is `id`
     /// ([`super::bt_addr_from_parent`] of its parent's id), present or not:
-    /// the devnode of a pad that is off stays. Read-only cfgmgr32 calls, no
-    /// admin rights. `None`: not Bluetooth, or the devnode is gone.
+    /// the devnode of a pad that is off stays. A Bluetooth LE id carries the
+    /// address itself ([`super::bt_addr_from_instance`]), read when the
+    /// parent gives none. Read-only cfgmgr32 calls, no admin rights. `None`:
+    /// not Bluetooth, or a classic Bluetooth devnode that is gone.
     pub fn bt_addr_of_instance(id: &str) -> Option<String> {
         use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
             CM_Get_Device_IDW, CM_Get_Parent, CM_Locate_DevNodeW, CM_LOCATE_DEVNODE_PHANTOM, CR_SUCCESS,
@@ -615,10 +640,11 @@ mod imp {
                 || CM_Get_Parent(&mut parent, node, 0) != CR_SUCCESS
                 || CM_Get_Device_IDW(parent, buf.as_mut_ptr(), buf.len() as u32, 0) != CR_SUCCESS
             {
-                return None;
+                return super::bt_addr_from_instance(id);
             }
         }
-        super::bt_addr_from_parent(&from_wide(&buf))
+        // The parent's id; a Bluetooth LE id also carries the address itself.
+        super::bt_addr_from_parent(&from_wide(&buf)).or_else(|| super::bt_addr_from_instance(id))
     }
 
     fn from_wide(buf: &[u16]) -> String {
@@ -831,8 +857,8 @@ mod tests {
         let nano = |col: &str| format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&{col}\8&113d3dd1&0&0000");
         assert_eq!(kind_for_instance(&nano("Col01")), Some(ControllerKind::XboxNano));
         assert_eq!(kind_for_instance(&nano("col01").to_uppercase()), Some(ControllerKind::XboxNano), "any case");
-        // Keyboard (Share comes from it, through Raw Input), mouse and vendor
-        // collections are not the Nano's to hide or remember.
+        // Keyboard, mouse and vendor collections are not the Nano's to hide
+        // or remember.
         for col in ["Col02", "Col03", "Col04"] {
             assert_eq!(kind_for_instance(&nano(col)), None, "{col}");
         }
@@ -1078,6 +1104,52 @@ mod tests {
         assert!(is_ble_instance(r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\8&1&0&0000"));
         assert!(!is_ble_instance(DS_BT_REAL), "classic Bluetooth");
         assert!(!is_ble_instance(r"HID\VID_054C&PID_0CE6&MI_03\7&1a2b&0&0000"), "USB");
+    }
+
+    /// The maintainer's Nano after Microsoft's Xbox driver was installed and
+    /// it was paired again (2026-11-09): firmware REV 0619, a new id format
+    /// (`&DEV&VID_…&<address>&COL01&IG_00`).
+    const NANO_OFFICIAL: &str =
+        r"HID\{00001812-0000-1000-8000-00805F9B34FB}&DEV&VID_045E&PID_0B4F&REV_0619&FB3A7C7DF9A8&COL01&IG_00\8&4ca2c2&0&0000";
+    /// The same Nano without that driver (firmware REV 0609).
+    const NANO_PLAIN: &str =
+        r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\8&113d3dd1&0&0000";
+
+    #[test]
+    fn the_nano_is_known_in_both_id_formats() {
+        assert_eq!(parse_vid_pid(NANO_OFFICIAL), Some((0x045E, 0x0B4F)));
+        for id in [NANO_OFFICIAL, NANO_PLAIN] {
+            assert_eq!(kind_for_instance(id), Some(ControllerKind::XboxNano), "{id}");
+            assert_eq!(kind_for_instance(&id.to_ascii_lowercase()), Some(ControllerKind::XboxNano), "any case: {id}");
+            assert!(is_gamepad_collection(id), "{id}");
+            assert!(is_ble_instance(id) && is_bluetooth_instance(id), "{id}");
+        }
+        // Only the gamepad collection, in the new format too (every collection
+        // carries `&IG_00` there: `…&COL02&IG_00`, read on the same PC).
+        for col in ["COL02", "COL03", "COL04"] {
+            let other = NANO_OFFICIAL.replace("COL01", col);
+            assert_eq!(kind_for_instance(&other), None, "{other}");
+            assert!(!is_gamepad_collection(&other), "{other}");
+        }
+        let no_col = NANO_OFFICIAL.replace("&COL01&IG_00", "");
+        assert_eq!(kind_for_instance(&no_col), None, "no collection");
+        // `&COL01` inside a longer field is not collection 1.
+        assert!(!is_gamepad_collection(&NANO_OFFICIAL.replace("COL01", "COL012")));
+    }
+
+    #[test]
+    fn the_bluetooth_le_address_is_read_from_the_nano_id_itself() {
+        assert_eq!(bt_addr_from_instance(NANO_OFFICIAL).as_deref(), Some("FB3A7C7DF9A8"));
+        assert_eq!(bt_addr_from_instance(NANO_PLAIN).as_deref(), Some("FB3A7C7DF9A8"), "old format, upper-cased");
+        assert_eq!(bt_addr_from_instance(&NANO_OFFICIAL.replace("COL01", "COL02")).as_deref(), Some("FB3A7C7DF9A8"));
+        // Classic Bluetooth and USB ids carry no address (their parent does).
+        assert_eq!(bt_addr_from_instance(DS_BT_REAL), None);
+        assert_eq!(bt_addr_from_instance(r"HID\VID_054C&PID_0CE6&MI_03\7&1a2b&0&0000"), None);
+        assert_eq!(bt_addr_from_instance(&NANO_OFFICIAL.replace("FB3A7C7DF9A8&", "")), None, "no address field");
+        assert_eq!(bt_addr_from_instance(""), None);
+        // A BTHLEDEVICE parent in the new format reads the same way.
+        let parent = r"BTHLEDEVICE\{00001812-0000-1000-8000-00805F9B34FB}&DEV&VID_045E&PID_0B4F&REV_0619&FB3A7C7DF9A8\8&1&0&0000";
+        assert_eq!(bt_addr_from_parent(parent).as_deref(), Some("FB3A7C7DF9A8"));
     }
 
     #[test]

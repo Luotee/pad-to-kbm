@@ -5,7 +5,7 @@ import { layoutFor, slotsOf, groupSlots, routeHTML } from './layout.js';
 import { padSvg } from './padart.js';
 import { esc, tagSvg, TAGTXT, switchHTML } from './tags.js';
 import { LABEL } from './keys.js';
-import { boardBinds, PADS, PAD_NAMES } from './model.js';
+import { boardBinds, PADS, PAD_NAMES, slotOff } from './model.js';
 import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
 import { ICON } from './icons.js';
 import { editorHTML } from './macros.js';
@@ -81,10 +81,12 @@ export function disp(k) {
 }
 
 function slotBtn(st, key, tag, x, y, b) {
-  const k = b[key] || '', mac = k.startsWith('M:'), wait = st.sel === key;
+  const k = b[key] || '', mac = k.startsWith('M:'), wait = st.sel === key, off = slotOff(st.pad, key);
+  // A slot the pad never sends (the Nano's Share) is greyed out and disabled; events.js ignores it too.
   return '<button type="button" class="slot' + (k ? ' on' : '') + (mac ? ' mac' : '') + (st.held[key] ? ' hit' : '') + (wait ? ' wait sel' : '') +
-    '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k ? 'true' : 'false') + '" aria-label="' +
-    esc((TAGTXT[tag] || tag) + (k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
+    '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k && !off ? 'true' : 'false') + '"' +
+    (off ? ' disabled title="' + esc(off) + '"' : '') + ' aria-label="' +
+    esc((TAGTXT[tag] || tag) + (off ? '：無法使用' : k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
     '<span class="val">' + esc(disp(k)) + '</span></button>';
 }
 

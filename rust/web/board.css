@@ -600,3 +600,5 @@ html,body,#app{background:transparent !important}
 .mock .obanner.rc span{display:flex;align-items:center;gap:3px}
 /* 鍵鼠 reconnect hint: the 這次不再提醒 button sits in the banner and takes clicks. */
 .mock .obanner.rc .mini{pointer-events:auto;height:20px;padding:0 8px;display:inline-flex;align-items:center;margin-left:4px;font-size:12px}
+/* A slot the pad never sends (the Xbox Nano's Share, model.js slotOff): greyed out like the Nano's power key */
+.slot:disabled,.slot:disabled:hover,.mock .slot:disabled{opacity:.45;cursor:default}

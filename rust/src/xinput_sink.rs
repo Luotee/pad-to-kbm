@@ -22,7 +22,9 @@
 //! 2026-10-11: a pad leaked with `mem::forget` + `process::exit` was gone
 //! from XInput right after).
 
+use crate::gamepad::xinput_source::OwnPad;
 use crate::virtual_pad::XState;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, Weak};
 
 /// Why a plug failed.
@@ -105,6 +107,34 @@ pub fn emergency_unplug() {
     }
 }
 
+// ─── Where our virtual pad is in XInput ──────────────────────────────────────
+
+/// `OWN_SLOT` values besides a slot number.
+const OWN_NONE: u32 = u32::MAX;
+const OWN_UNKNOWN: u32 = u32::MAX - 1;
+/// The XInput slot our plugged virtual pad holds, for the Xbox Nano's XInput
+/// reader (`gamepad::xinput_source`), which must never read it as the Nano.
+static OWN_SLOT: AtomicU32 = AtomicU32::new(OWN_NONE);
+
+/// Where our own virtual Xbox 360 pad is in XInput right now.
+pub fn own_slot() -> OwnPad {
+    match OWN_SLOT.load(Ordering::SeqCst) {
+        OWN_NONE => OwnPad::None,
+        OWN_UNKNOWN => OwnPad::Unknown,
+        n => OwnPad::Slot(n),
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn set_own_slot(own: OwnPad) {
+    let v = match own {
+        OwnPad::None => OWN_NONE,
+        OwnPad::Unknown => OWN_UNKNOWN,
+        OwnPad::Slot(n) => n,
+    };
+    OWN_SLOT.store(v, Ordering::SeqCst);
+}
+
 // ─── Windows: ViGEmBus ───────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -112,7 +142,7 @@ pub use vigem::VigemPad;
 
 #[cfg(windows)]
 mod vigem {
-    use super::{PadError, VirtualPad};
+    use super::{set_own_slot, OwnPad, PadError, VirtualPad};
     use crate::virtual_pad::XState;
     use std::time::Duration;
     use vigem_client::{Client, Error, TargetId, XButtons, XGamepad, Xbox360Wired};
@@ -190,7 +220,13 @@ mod vigem {
             t.wait_ready().map_err(|e| other("wait_ready", e))?;
             let tries = submit_when_ready(&mut t, &probe())?
                 + submit_when_ready(&mut t, &XGamepad::default())?;
-            tracing::info!(retries = tries, "virtual Xbox pad plugged");
+            // Its XInput slot, so the Xbox Nano's XInput reader never takes it.
+            let own = match t.get_user_index() {
+                Ok(i) => OwnPad::Slot(i),
+                Err(_) => OwnPad::Unknown,
+            };
+            set_own_slot(own);
+            tracing::info!(retries = tries, ?own, "virtual Xbox pad plugged");
             self.plug_retries = tries;
             self.target = Some(t);
             self.update_failed = false;
@@ -217,6 +253,7 @@ mod vigem {
 
         fn unplug(&mut self) {
             if let Some(mut t) = self.target.take() {
+                set_own_slot(OwnPad::None);
                 if let Err(e) = t.unplug() {
                     tracing::warn!(error = %e, "virtual pad unplug failed");
                 }

@@ -14,8 +14,8 @@
 //! | 15      | View 0x04, Menu 0x08, Xbox 0x10, LS 0x20, RS 0x40      |
 //!
 //! The pad sends a report only when something changes. Share is not in
-//! this report: it arrives as a keystroke on the keyboard collection,
-//! which Windows owns. Battery is not in any HID report.
+//! this report (nor in XInput, `xinput_source.rs`, the reader used when
+//! Microsoft's Xbox driver owns the pad). Battery is not in any HID report.
 
 use super::pad::PadState;
 

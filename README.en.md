@@ -114,7 +114,7 @@ Yes, click the power button next to the controller's name. The pairing is kept; 
 ### The Xbox Nano's Xbox button opens the Xbox Game Bar?
 
 That is Windows, not PadToKBM. To stop it, turn off "Allow your controller to open Game Bar" in Windows Settings → Gaming → Game Bar (Windows 10: "Open Xbox Game Bar using this button on a controller").
-The Xbox and Share buttons can still be bound in PadToKBM; Share is read from Windows' keyboard input (Raw Input, read only, never blocked).
+The Xbox button can still be bound in PadToKBM. Share never reaches the computer, so its slot is greyed out and cannot be bound. With Microsoft's Xbox Wireless driver installed, PadToKBM reads the Nano through XInput instead (detected automatically, nothing to set).
 To let the game use the controller directly (no key mapping) pick 手把; to stop it sending anything for a while pick 關.
 
 ### USB, DualSense Edge, other Xbox controllers or macOS?

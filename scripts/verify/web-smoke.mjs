@@ -1131,6 +1131,42 @@ try {
       await page.evaluate(() => { const y = k => document.querySelector(`#board .slot[data-slot="${k}"]`).getBoundingClientRect().top, pad = document.querySelector('#board svg.pad').getBoundingClientRect(); return y('29') > pad.top + 150 && [4, 5, 6].every(k => y(k) < pad.top); }), JSON.stringify(tags));
     check('Nano face slots read Y／X／B／A', tags['3'] === 'Y' && tags['2'] === 'X' && tags['1'] === 'B' && tags['0'] === 'A', JSON.stringify(tags));
     check('Nano has no touchpad / GL / GR / C slots', (await page.locator('#board .slot[data-slot="25"], #board .slot[data-slot="30"], #board .slot[data-slot="31"], #board .slot[data-slot="32"]').count()) === 0);
+    // Share never reaches the computer (not in the XInput state, nor the HID report): its slot is greyed out and
+    // cannot be bound — no click, double click, tile drop or swap sends anything.
+    const share = slot(page, '29');
+    check('Nano Share slot: disabled, exact title, not draggable',
+      await share.isDisabled() && (await share.getAttribute('title')) === 'Xbox Nano 的 Share 鍵目前不會送給電腦' &&
+      (await share.getAttribute('draggable')) === 'false', String(await share.getAttribute('title')));
+    const shareCalls = async () => (await countCalls(page, 'set_binding')) + (await countCalls(page, 'swap_bindings'));
+    const sb0 = await shareCalls(), cap0 = await countCalls(page, 'set_capture_active');
+    await share.click({ force: true });
+    await settle(page);
+    check('Nano Share slot: a click never selects it for capture', await page.evaluate(() => !document.querySelector('#board .slot.sel')) &&
+      (await countCalls(page, 'set_capture_active')) === cap0);
+    await page.click('#board [data-tile="Q"]');
+    await share.click({ force: true });
+    await settle(page);
+    await share.dblclick({ force: true });
+    await settle(page);
+    await page.evaluate(() => { const d = new DataTransfer(); const s = document.querySelector('#board .slot[data-slot="29"]');
+      document.querySelector('#board [data-tile="W"]').dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: d }));
+      document.querySelector('#board [data-tile="W"]').dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: d })); });
+    // A bound slot (the first one lit) dragged onto Share: no swap, and it is not cleared as dragged out.
+    const boundKey = await page.evaluate(() => document.querySelector('#board .slot.on:not([data-slot="29"])')?.dataset.slot);
+    const boundText = boundKey ? await slotText(page, boundKey) : '';
+    await page.evaluate(k => { const d = new DataTransfer(); const s = document.querySelector('#board .slot[data-slot="29"]'), a = document.querySelector(`#board .slot[data-slot="${k}"]`);
+      a.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: d }));
+      s.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: d }));
+      a.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: d })); }, boundKey);
+    await settle(page);
+    check('Nano Share slot: click, double click, tile drop and slot swap send no set_binding / swap_bindings', (await shareCalls()) === sb0,
+      JSON.stringify((await calls(page)).slice(-4)));
+    if (await page.locator('#board .tile.picked').count()) await page.click('#board .tile.picked');
+    check('Nano: a bound slot dropped on Share keeps its own key', !!boundText && (await slotText(page, boundKey)) === boundText,
+      boundKey + ' ' + boundText + ' → ' + (boundKey && await slotText(page, boundKey)));
+    await settle(page);
     await page.click('#board .qcap [data-qs="L"][data-mode="single"]');
     await settle(page);
     check('Nano 單鍵 folds LT into one slot tagged LT', (await tagOf('23')) === 'LT', String(await tagOf('23')));

@@ -10,18 +10,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Xbox Nano support** (Bluetooth, VID 045E / PID 0B4F). A fourth tab, Xbox
   Nano, with its own bindings: A / B / X / Y, LB / RB, LT / RT (analog, with
   快捷頁 / 單鍵 like the other triggers), View / Xbox / Menu, both sticks and
-  their clicks, the D-pad, and Share (slot 29). The keys are named as on the
-  pad (LT／RT, LB／RB, View／Xbox／Menu, Share).
-- **Share on the Xbox Nano.** The Nano sends Share as a key press on its own
-  keyboard device, which Windows keeps for itself; PadToKBM reads it through
-  Raw Input while a Nano is connected (read only: nothing is blocked or
-  hooked) and treats it as the Share button.
+  their clicks and the D-pad. The keys are named as on the pad (LT／RT,
+  LB／RB, View／Xbox／Menu, Share).
+- **The Xbox Nano under Microsoft's Xbox driver is read through XInput.**
+  With Microsoft's Xbox Wireless driver installed, Windows owns the Nano's
+  gamepad device and sends it no reports; its input goes to XInput instead.
+  PadToKBM sees this on the device id (`&IG_`) and then reads the Nano's
+  XInput slot (the one that says 045E:0B4F, never its own virtual Xbox pad),
+  Xbox key included. It is connected while XInput says so. Without that
+  driver it keeps reading the Nano's Bluetooth reports.
+- **Share on the Xbox Nano is greyed out** (title 「Xbox Nano 的 Share
+  鍵目前不會送給電腦」): Share is in neither the Bluetooth report nor XInput,
+  so it cannot be bound.
 - The Nano has its own HID reader, so it can be connected together with a
   DualSense or a Switch Pro, in either order; one of them is in use at a
   time, as before. A Nano that is on but idle shows as connected at once when
   it answers the read of its current state, otherwise on its first input.
 - **鍵鼠 hides the Xbox Nano** with HidHide, like the DualSense / Switch Pro:
-  its gamepad device only, so its keyboard device (Share) stays readable.
+  its gamepad device only, under both device ids (with Microsoft's Xbox driver
+  the id reads `…&DEV&VID_045E&PID_0B4F&REV_…&<address>&COL01&IG_00`; both
+  forms may be remembered for one Nano).
   記住的手把 lists it as `Xbox Nano 藍牙 F9:A8` (its Bluetooth address's last
   four digits; the row's tooltip has the whole address).
 - A Nano that drops off without a read error (Windows keeps its device for a
@@ -60,8 +68,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Nano's HID devices in `hidhide_known`; the extra ones (keyboard, mouse,
   vendor) are dropped on load and the next write leaves them out, and the
   next HidHide round takes them out of HidHide.
-- macOS: Phase 2 TBD for the Xbox Nano. It is Windows only, Share included
-  (Raw Input is Windows only).
+- macOS: Phase 2 TBD for the Xbox Nano. It is Windows only (XInput is
+  Windows only).
+- How HidHide hiding acts on a Nano read through XInput (Microsoft's Xbox
+  driver) has not been tried on hardware yet.
 
 ## [3.6.0] - 2026-11-08
 

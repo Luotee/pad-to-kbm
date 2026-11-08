@@ -16,8 +16,8 @@ use super::cursor_params::CursorParams;
 use super::ds_protocol::{build_handshake_buffer, decode_31, REPORT_LEN_BT};
 use super::ns_handshake::{ns_handshake_counted, send_input_mode_full, send_turn_off};
 use super::ns_protocol::{decode_30, StickCal, NEUTRAL_RUMBLE};
-use super::raw_share::{RawShare, ShareEvent, ShareKeys};
 use super::xbox_protocol::decode_xbox_bt;
+use super::xinput_source::{self, OwnPad, XInputApi};
 use super::pad::{emit_pad_diff, PadState, BUTTON_SLOTS};
 use super::rumble::{
     ds_firmware_is_v2, ds_report, ns_rumble_report, RumblePlan, Step as RumbleStep,
@@ -51,8 +51,6 @@ const QUAD_TL: u32 = 25;
 const QUAD_TR: u32 = 26;
 const QUAD_BL: u32 = 27;
 const QUAD_BR: u32 = 28;
-/// Button id 29: the Xbox Nano's Share (Capture on the Switch pads).
-const SHARE_ID: usize = 29;
 /// Sentinel value emitted in `GamepadEvent::TouchpadHover.quadrant`
 /// when the finger lifts. Out of band — valid quadrant ids are 25..=28.
 const HOVER_QUADRANT_NONE: u32 = 255;
@@ -607,11 +605,6 @@ struct Session {
     lightbar: Option<(LightbarLive, LightbarPlayer)>,
     /// A lightbar write failure was already logged this session.
     lightbar_warned: bool,
-    /// Xbox Nano only: the keys of its keyboard collection held now
-    /// (Share, button 29, read through Raw Input).
-    share: ShareKeys,
-    /// Xbox Nano only: the key codes already logged this session.
-    share_seen: Vec<u16>,
 }
 
 impl Session {
@@ -625,8 +618,6 @@ impl Session {
             last_write: None,
             lightbar: None,
             lightbar_warned: false,
-            share: ShareKeys::default(),
-            share_seen: Vec::new(),
         }
     }
 
@@ -816,11 +807,6 @@ impl HidSource {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = stop.clone();
         let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
-        // Only the Nano worker reads Raw Input (its Share).
-        let (share_rx, share) = match pads {
-            HidPads::Nano => super::raw_share::start(),
-            HidPads::Classic => (crossbeam_channel::never(), None),
-        };
         let name = match pads {
             HidPads::Classic => "dualsense-hid",
             HidPads::Nano => "nano-hid",
@@ -828,11 +814,7 @@ impl HidSource {
         thread::Builder::new()
             .name(name.into())
             .spawn(move || {
-                worker_real(
-                    tx, stop_for_thread, params, lightbar, cmd_rx, pads, share_rx, share.as_ref(),
-                );
-                // `share` (the Raw Input reader) ends with the worker.
-                drop(share);
+                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx, pads);
                 let _ = done_tx.send(());
             })
             .map_err(|e| anyhow!("spawning HID worker thread: {e}"))?;
@@ -920,8 +902,6 @@ fn worker_real(
     lightbar: LightbarLive,
     cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
     pads: HidPads,
-    share_rx: Receiver<ShareEvent>,
-    share: Option<&RawShare>,
 ) {
     let mut api = match with_hidapi(hidapi::HidApi::new) {
         Ok(a) => a,
@@ -930,6 +910,9 @@ fn worker_real(
             return;
         }
     };
+    // The Nano on Microsoft's Xbox driver: its "waiting for an XInput slot"
+    // was logged since its last session.
+    let mut xinput_waiting_said = false;
     while !stop.load(Ordering::SeqCst) {
         // device_list() returns a cached snapshot — must refresh
         // explicitly each iteration or a pad turned on after app
@@ -940,7 +923,14 @@ fn worker_real(
         let device = first_candidate(api.device_list(), |info| {
             (info.vendor_id(), info.product_id(), info.bus_type(), info.usage_page(), info.usage())
         }, pads)
-        .and_then(|(info, kind)| {
+        .map(|(info, kind)| (info, kind, route(kind, &info.path().to_string_lossy())));
+        // Microsoft's Xbox driver owns the Nano: read it through XInput; its
+        // HID collection (which sends nothing then) is not opened.
+        if let Some((_, _, Route::XInput)) = device {
+            nano_via_xinput(&tx, &stop, &cmd_rx, &mut xinput_waiting_said);
+            continue;
+        }
+        let device = device.and_then(|(info, kind, _)| {
             let d = with_hidapi(|| info.open_device(&api)).ok()?;
             Some((d, kind, info.path().to_owned()))
         });
@@ -948,9 +938,8 @@ fn worker_real(
             Some((d, kind, path)) => {
                 tracing::info!("{} opened, attempting handshake", kind.display_name());
                 // A Rumble or Disconnect queued for an earlier session must
-                // not act on this one; nor a Nano key from before it.
+                // not act on this one.
                 drain_commands(&cmd_rx);
-                while share_rx.try_recv().is_ok() {}
                 let mut session = Session::new(kind);
                 match kind {
                     ControllerKind::DualSense => {
@@ -970,22 +959,14 @@ fn worker_real(
                     ControllerKind::Ns2Pro | ControllerKind::XboxNano => {}
                 }
                 session.attach_lightbar(&lightbar);
-                // Keyboard Raw Input only while a Nano session is open.
-                let share = share.filter(|_| kind == ControllerKind::XboxNano);
-                if let Some(sh) = share {
-                    sh.set_active(true);
-                }
                 let mut prev_buttons = [false; BUTTON_SLOTS];
                 let mut last_state: Option<PadState> = None;
                 let mut touchpad = TouchpadState::default();
                 let io = RealIo { dev: &d, path: &path };
                 let outcome = read_loop(
                     &io, &mut session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
-                    &params, &stop, &cmd_rx, &share_rx,
+                    &params, &stop, &cmd_rx,
                 );
-                if let Some(sh) = share {
-                    sh.set_active(false);
-                }
                 // Switch Pro: ask the pad to sleep while the handle is still
                 // open, then drop it below.
                 if outcome == "manual-disconnect" && kind == ControllerKind::NsPro {
@@ -1000,16 +981,13 @@ fn worker_real(
                 // has no HID power-off command; the Switch Pro got its
                 // subcmd 0x06 above and the link drop makes it certain.
                 if outcome == "manual-disconnect" {
-                    match crate::platform::power_off_connected(kind) {
-                        Ok(n) => tracing::info!(removed = n, "controller power-off requested"),
-                        Err(e) => tracing::warn!(error = %e, "controller power-off failed"),
-                    }
+                    power_off(kind);
                 }
                 tracing::info!(?outcome, "read loop exited; back to Searching");
                 let _ = tx.send(GamepadEvent::Disconnected);
                 // `last_state` is set exactly when `Connected` was emitted: by
                 // the first decoded report (the Nano's initial report
-                // included) or the Nano's first Share key.
+                // included).
                 if let Some(t) = backoff_after(outcome, last_state.is_some()) {
                     tracing::info!("{} never streamed; backing off", kind.display_name());
                     thread::sleep(t);
@@ -1022,6 +1000,93 @@ fn worker_real(
                 drain_commands(&cmd_rx);
                 thread::sleep(ENUM_RETRY_INTERVAL);
             }
+        }
+    }
+}
+
+/// Ask the platform to drop a pad's link (manual disconnect).
+fn power_off(kind: ControllerKind) {
+    match crate::platform::power_off_connected(kind) {
+        Ok(n) => tracing::info!(removed = n, "controller power-off requested"),
+        Err(e) => tracing::warn!(error = %e, "controller power-off failed"),
+    }
+}
+
+/// How the worker reads a found pad.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    /// hidapi reports (every pad without Microsoft's Xbox driver).
+    Hid,
+    /// XInput: the Xbox Nano when Microsoft's Xbox driver owns it (its HID
+    /// path carries `&IG_`, `xinput_source::uses_xinput`).
+    XInput,
+}
+
+fn route(kind: ControllerKind, path: &str) -> Route {
+    if kind == ControllerKind::XboxNano && xinput_source::uses_xinput(path) {
+        Route::XInput
+    } else {
+        Route::Hid
+    }
+}
+
+/// One Nano round through XInput: find its slot and read it until it is
+/// gone (then `Disconnected`, which releases everything, iron rule 3).
+/// `None`: no slot holds the Nano now.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn nano_xinput_round(
+    api: &dyn XInputApi,
+    own: OwnPad,
+    tx: &Sender<GamepadEvent>,
+    stop: &AtomicBool,
+    cmd_rx: &Receiver<SourceCmd>,
+    poll: Duration,
+) -> Option<(&'static str, bool)> {
+    let slot = xinput_source::find_slot(api, own)?;
+    tracing::info!(slot, "Xbox Nano on Microsoft's Xbox driver: reading XInput slot");
+    // Nothing queued for an earlier session acts on this one.
+    drain_commands(cmd_rx);
+    let (outcome, connected) = xinput_source::run_session(api, slot, tx, stop, cmd_rx, poll);
+    if outcome == "manual-disconnect" {
+        power_off(ControllerKind::XboxNano);
+    }
+    tracing::info!(?outcome, "Xbox Nano XInput session ended; back to Searching");
+    let _ = tx.send(GamepadEvent::Disconnected);
+    Some((outcome, connected))
+}
+
+/// The worker's XInput turn for a Nano on Microsoft's Xbox driver (Windows;
+/// elsewhere no HID path carries `&IG_`). Waits a retry interval when no
+/// slot holds it, or after a session that never connected.
+fn nano_via_xinput(
+    tx: &Sender<GamepadEvent>,
+    stop: &AtomicBool,
+    cmd_rx: &Receiver<SourceCmd>,
+    waiting_said: &mut bool,
+) {
+    #[cfg(windows)]
+    let round = xinput_source::RealXInput::get().map(|api| {
+        nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL)
+    });
+    #[cfg(not(windows))]
+    let round: Option<Option<(&'static str, bool)>> = {
+        let _ = (tx, stop);
+        None
+    };
+    match round {
+        Some(Some((_, connected))) => {
+            *waiting_said = false;
+            if !connected {
+                thread::sleep(ENUM_RETRY_INTERVAL);
+            }
+        }
+        _ => {
+            if !*waiting_said {
+                tracing::info!("Xbox Nano on Microsoft's Xbox driver: no XInput slot holds it yet");
+                *waiting_said = true;
+            }
+            drain_commands(cmd_rx);
+            thread::sleep(ENUM_RETRY_INTERVAL);
         }
     }
 }
@@ -1056,7 +1121,6 @@ fn read_loop(
     params: &CursorParams,
     stop: &Arc<AtomicBool>,
     cmd_rx: &crossbeam_channel::Receiver<SourceCmd>,
-    share_rx: &Receiver<ShareEvent>,
 ) -> &'static str {
     let mut buf = [0u8; REPORT_LEN_BT];
     let disconnect_after = session.disconnect_after();
@@ -1088,29 +1152,6 @@ fn read_loop(
                     });
                     tracing::info!(kind = ?session.kind, "rumble: start");
                 }
-            }
-        }
-        // The Nano's keyboard keys are its Share (button 29); any other
-        // session drops them.
-        // A re-claimed Raw Input registration releases Share (a key up may
-        // have been lost meanwhile).
-        while let Ok(ev) = share_rx.try_recv() {
-            if session.kind != ControllerKind::XboxNano {
-                continue;
-            }
-            let change = match ev {
-                ShareEvent::Key(k) => {
-                    if !session.share_seen.contains(&k.key) {
-                        // Which keys the Nano's Share sends (once per key per session).
-                        session.share_seen.push(k.key);
-                        tracing::info!(key = format!("{:#05x}", k.key), down = k.down, "Xbox Nano keyboard key (Share)");
-                    }
-                    session.share.key(k)
-                }
-                ShareEvent::Reclaimed => session.share.reset(),
-            };
-            if let Some(pressed) = change {
-                apply_share(session, pressed, &mut emitted_connected, last_state, prev_buttons, tx);
             }
         }
         let wrote_rumble = play_rumble(d, session, &mut plan);
@@ -1167,13 +1208,9 @@ fn handle_frame(
     params: &CursorParams,
     tx: &Sender<GamepadEvent>,
 ) -> bool {
-    let Some(mut s) = session.decode(frame) else {
+    let Some(s) = session.decode(frame) else {
         return false;
     };
-    if session.kind == ControllerKind::XboxNano {
-        // Share is not in the report; keep what Raw Input says.
-        s.buttons[SHARE_ID] = session.share.pressed();
-    }
     if !*emitted_connected {
         let _ = tx.send(GamepadEvent::Connected(session.kind));
         *emitted_connected = true;
@@ -1214,28 +1251,6 @@ fn nano_initial_report(
         Ok(n) => tracing::info!(len = n, "Xbox Nano: initial report not decodable; connected on first input"),
         Err(e) => tracing::info!(error = %e, "Xbox Nano: no initial report; connected on first input"),
     }
-}
-
-/// The Nano's Share changed: emit it as a change of the last state (from
-/// the neutral state if no report came yet; the Nano reports only on
-/// change). A key event from the pad proves the link, so the first one
-/// connects the session like a first report.
-fn apply_share(
-    session: &Session,
-    pressed: bool,
-    emitted_connected: &mut bool,
-    last_state: &mut Option<PadState>,
-    prev_buttons: &mut [bool; BUTTON_SLOTS],
-    tx: &Sender<GamepadEvent>,
-) {
-    let mut s = last_state.clone().unwrap_or_default();
-    s.buttons[SHARE_ID] = pressed;
-    if !*emitted_connected {
-        let _ = tx.send(GamepadEvent::Connected(session.kind));
-        *emitted_connected = true;
-    }
-    emit_pad_diff(last_state.as_ref(), &s, prev_buttons, tx);
-    *last_state = Some(s);
 }
 
 fn worker_byte_stream(
@@ -1683,10 +1698,6 @@ mod read_loop_tests {
         reads: Mutex<usize>,
         inject: Option<(usize, Vec<SourceCmd>)>,
         cmd_tx: Mutex<Option<Sender<SourceCmd>>>,
-        /// Nano keyboard events sent on the loop's share channel when the
-        /// Nth read (1-based) happens.
-        share_inject: Vec<(usize, ShareEvent)>,
-        share_tx: Mutex<Option<Sender<ShareEvent>>>,
         /// What a GET_REPORT returns (`None`: an error, i.e. unsupported),
         /// and the report ids asked for.
         input_report: Option<Vec<u8>>,
@@ -1710,8 +1721,6 @@ mod read_loop_tests {
                 reads: Mutex::new(0),
                 inject: None,
                 cmd_tx: Mutex::new(None),
-                share_inject: Vec::new(),
-                share_tx: Mutex::new(None),
                 input_report: None,
                 input_asked: Mutex::new(Vec::new()),
                 stop_at: None,
@@ -1763,13 +1772,6 @@ mod read_loop_tests {
                 if *at == n_read {
                     if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
                         cmds.iter().for_each(|&c| tx.send(c).unwrap());
-                    }
-                }
-            }
-            for (at, key) in &self.share_inject {
-                if *at == n_read {
-                    if let Some(tx) = self.share_tx.lock().unwrap().as_ref() {
-                        tx.send(*key).unwrap();
                     }
                 }
             }
@@ -1837,8 +1839,6 @@ mod read_loop_tests {
             dtx.send(c).unwrap();
         }
         *io.cmd_tx.lock().unwrap() = Some(dtx.clone());
-        let (share_tx, share_rx) = unbounded::<ShareEvent>();
-        *io.share_tx.lock().unwrap() = Some(share_tx);
         let stop = Arc::new(AtomicBool::new(false));
         *io.stop.lock().unwrap() = Some(stop.clone());
         let mut last_state = None;
@@ -1848,7 +1848,7 @@ mod read_loop_tests {
         let t0 = Instant::now();
         let outcome = read_loop(
             io, session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
-            &params, &stop, &drx, &share_rx,
+            &params, &stop, &drx,
         );
         let elapsed = t0.elapsed();
         (outcome, elapsed, rx.try_iter().collect())
@@ -1957,22 +1957,6 @@ mod read_loop_tests {
         assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
     }
 
-    fn share_key(key: u16, down: bool) -> ShareEvent {
-        ShareEvent::Key(super::super::raw_share::NanoKey { key, down })
-    }
-
-    #[test]
-    fn nano_share_is_released_when_raw_input_is_reclaimed() {
-        // A key up lost while another window held the keyboard Raw Input
-        // must not strand Share: the re-claim releases it.
-        let mut io = ScriptIo::new(vec![Step::Frame(nano_frame(false)), Step::Idle(5), Step::Idle(5), Step::Idle(5), Step::Error]);
-        io.share_inject = vec![(2, share_key(0x137, true)), (3, ShareEvent::Reclaimed), (4, share_key(0x137, false))];
-        let mut s = Session::new(ControllerKind::XboxNano);
-        let (_, _, evs) = run(&io, &mut s);
-        assert_eq!(button_events(&evs, 29), vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)], "{evs:?}");
-        assert!(!s.share.pressed());
-    }
-
     #[test]
     fn a_silent_nano_whose_device_vanished_ends_its_session() {
         // Windows may keep the HID device after a Bluetooth LE drop: reads
@@ -2042,63 +2026,6 @@ mod read_loop_tests {
         assert_eq!(most.load(Ordering::SeqCst), 1);
     }
 
-    fn button_events(evs: &[GamepadEvent], id: u32) -> Vec<GamepadEvent> {
-        evs.iter()
-            .filter(|e| matches!(e, GamepadEvent::ButtonDown(i) | GamepadEvent::ButtonUp(i) if *i == id))
-            .cloned()
-            .collect()
-    }
-
-    #[test]
-    fn nano_share_keys_press_and_release_id_29_once() {
-        // Two keys from the Nano's keyboard collection, interleaved, with
-        // gamepad reports in between: one press, one release, and a report
-        // while Share is held does not release it.
-        let mut io = ScriptIo::new(vec![
-            Step::Frame(nano_frame(false)),
-            Step::Idle(5),
-            Step::Frame(nano_frame(true)),
-            Step::Idle(5),
-            Step::Frame(nano_frame(false)),
-            Step::Idle(5),
-            Step::Idle(5),
-            Step::Error,
-        ]);
-        io.share_inject = vec![
-            (2, share_key(0x15B, true)),
-            (2, share_key(0x137, true)),
-            (4, share_key(0x15B, false)),
-            (6, share_key(0x15B, true)), // pressed again and let go while 0x137 is held
-            (6, share_key(0x15B, false)),
-            (7, share_key(0x137, false)),
-        ];
-        let mut s = Session::new(ControllerKind::XboxNano);
-        let (outcome, _, evs) = run(&io, &mut s);
-        assert_eq!(outcome, "read-error");
-        assert_eq!(
-            button_events(&evs, 29),
-            vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)],
-            "{evs:?}"
-        );
-        let down = evs.iter().position(|e| *e == GamepadEvent::ButtonDown(29)).unwrap();
-        let up = evs.iter().position(|e| *e == GamepadEvent::ButtonUp(29)).unwrap();
-        let a_up = evs.iter().position(|e| *e == GamepadEvent::ButtonUp(0)).unwrap();
-        assert!(down < a_up && a_up < up, "Share held across the A report: {evs:?}");
-        assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
-    }
-
-    #[test]
-    fn nano_share_before_any_report_connects_the_session() {
-        // Share is often the first thing touched; the Nano sends no gamepad
-        // report until something on it changes.
-        let mut io = ScriptIo::new(vec![Step::Idle(5), Step::Idle(5), Step::Error]);
-        io.share_inject = vec![(1, share_key(0x137, true)), (2, share_key(0x137, false))];
-        let mut s = Session::new(ControllerKind::XboxNano);
-        let (_, _, evs) = run(&io, &mut s);
-        assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
-        assert_eq!(button_events(&evs, 29), vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)]);
-    }
-
     #[test]
     fn nano_initial_report_connects_with_the_current_state() {
         // The Nano sends nothing until something changes; a GET_REPORT at
@@ -2141,14 +2068,56 @@ mod read_loop_tests {
     }
 
     #[test]
-    fn share_keys_reach_only_a_nano_session() {
-        // While another pad's session is open, the Nano's keyboard events
-        // are dropped (the Nano is not the pad being read).
-        let mut io = ScriptIo::new(vec![Step::Frame(ds_frame()), Step::Idle(5), Step::Idle(5), Step::Error]);
-        io.share_inject = vec![(2, share_key(0x137, true)), (3, share_key(0x137, false))];
-        let mut s = Session::new(ControllerKind::DualSense);
-        let (_, _, evs) = run(&io, &mut s);
-        assert!(button_events(&evs, 29).is_empty(), "{evs:?}");
+    fn the_nano_worker_picks_xinput_when_the_path_carries_ig() {
+        // hidapi paths on the maintainer's PC (2026-11-09): with Microsoft's
+        // Xbox driver the gamepad collection carries `&IG_00` and sends no
+        // report; without it the HID report path stays.
+        let official = r"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}&Dev&VID_045e&PID_0b4f&REV_0619&fb3a7c7df9a8&Col01&IG_00#8&4ca2c2&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        let plain = r"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01#8&113d3dd1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(route(ControllerKind::XboxNano, official), Route::XInput);
+        assert_eq!(route(ControllerKind::XboxNano, plain), Route::Hid);
+        // The DualSense and Switch Pro keep the HID path, whatever the path says.
+        assert_eq!(route(ControllerKind::DualSense, official), Route::Hid);
+        assert_eq!(route(ControllerKind::NsPro, official), Route::Hid);
+    }
+
+    /// A fake XInput: the Nano at `slot`, reads scripted (`None`: gone).
+    struct FakeX {
+        nano_slot: Option<u32>,
+        reads: Mutex<VecDeque<Option<xinput_source::XRead>>>,
+    }
+    impl XInputApi for FakeX {
+        fn slot_info(&self, slot: u32) -> xinput_source::SlotInfo {
+            match self.nano_slot {
+                Some(n) if n == slot => xinput_source::SlotInfo::Ids(0x045e, 0x0b4f),
+                _ if slot == 0 => xinput_source::SlotInfo::Ids(0x045e, 0x028e),
+                _ => xinput_source::SlotInfo::Empty,
+            }
+        }
+        fn state(&self, _slot: u32) -> Option<xinput_source::XRead> {
+            self.reads.lock().unwrap().pop_front().flatten()
+        }
+    }
+
+    #[test]
+    fn a_nano_on_xinput_connects_and_its_loss_is_a_disconnect() {
+        // A held, then XInput says the slot is gone: Connected, ButtonDown(0),
+        // Disconnected (the engine releases every held key on it).
+        let held = xinput_source::XRead { packet: 1, buttons: 0x1000, ..Default::default() };
+        let x = FakeX { nano_slot: Some(2), reads: Mutex::new(VecDeque::from([Some(held), Some(held), None])) };
+        let (tx, rx) = unbounded();
+        let (_ctx, crx) = unbounded();
+        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO);
+        assert_eq!(round, Some(("xinput-gone", true)));
+        let evs: Vec<GamepadEvent> = rx.try_iter().collect();
+        assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
+        assert!(evs.contains(&GamepadEvent::ButtonDown(0)), "{evs:?}");
+        assert!(!evs.contains(&GamepadEvent::ButtonUp(0)), "released by the engine, not here: {evs:?}");
+        assert_eq!(evs.last(), Some(&GamepadEvent::Disconnected), "{evs:?}");
+        // No slot holds the Nano (only our virtual pad): no session, nothing sent.
+        let x = FakeX { nano_slot: None, reads: Mutex::new(VecDeque::new()) };
+        assert_eq!(nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO), None);
+        assert_eq!(rx.try_iter().count(), 0);
     }
 
     #[test]
