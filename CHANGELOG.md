@@ -34,8 +34,9 @@ released on their own.
 - A pad with no reading keeps the green lamp: the Switch 2 Pro (its report
   has no battery we decode yet), and a DualSense reporting a battery error
   (its tab goes back to the lamp mid-session too).
-- macOS: Phase 2 TBD for the battery display (the Nano's GATT read uses
-  WinRT, Windows only).
+- macOS: Phase 2 TBD for the Xbox Nano's battery (its GATT read uses
+  WinRT, Windows only); the DualSense / Switch Pro decoding is not
+  platform-specific.
 
 ## [3.7.0] - 2026-11-09
 
