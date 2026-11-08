@@ -302,8 +302,10 @@ regresses real, observed bugs the codebase already fixed once:
    gamepad layer too, and `SourceHub` arbitrates so that one controller
    owns the session at a time. The user stick calibration (`stick_cal`,
    `gamepad/stick_cal.rs`) is applied in `SourceHub` to the owner's stick
-   events, on top of the pad's factory calibration. New platform quirks
-   live here.
+   events, on top of the pad's factory calibration. The Xbox Nano's Share
+   is not in its HID report: it is read from the Nano's keyboard collection
+   through Raw Input (`gamepad/raw_share.rs`, Windows only) and folded into
+   the Nano's session state as button 29. New platform quirks live here.
 7. **No process hooking, no DLL injection, no driver.** User-mode
    `SendInput` (Windows) / `CGEvent` (macOS) only, via the `enigo`
    crate. Anything else lands us in actual cheat-software territory.

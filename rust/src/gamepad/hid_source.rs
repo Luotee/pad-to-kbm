@@ -16,6 +16,7 @@ use super::cursor_params::CursorParams;
 use super::ds_protocol::{build_handshake_buffer, decode_31, REPORT_LEN_BT};
 use super::ns_handshake::{ns_handshake_counted, send_input_mode_full, send_turn_off};
 use super::ns_protocol::{decode_30, StickCal, NEUTRAL_RUMBLE};
+use super::raw_share::{NanoKey, RawShare, ShareKeys};
 use super::xbox_protocol::decode_xbox_bt;
 use super::pad::{emit_pad_diff, PadState, BUTTON_SLOTS};
 use super::rumble::{
@@ -50,6 +51,8 @@ const QUAD_TL: u32 = 25;
 const QUAD_TR: u32 = 26;
 const QUAD_BL: u32 = 27;
 const QUAD_BR: u32 = 28;
+/// Button id 29: the Xbox Nano's Share (Capture on the Switch pads).
+const SHARE_ID: usize = 29;
 /// Sentinel value emitted in `GamepadEvent::TouchpadHover.quadrant`
 /// when the finger lifts. Out of band — valid quadrant ids are 25..=28.
 const HOVER_QUADRANT_NONE: u32 = 255;
@@ -517,6 +520,9 @@ struct Session {
     lightbar: Option<(LightbarLive, LightbarPlayer)>,
     /// A lightbar write failure was already logged this session.
     lightbar_warned: bool,
+    /// Xbox Nano only: the keys of its keyboard collection held now
+    /// (Share, button 29, read through Raw Input).
+    share: ShareKeys,
 }
 
 impl Session {
@@ -530,6 +536,7 @@ impl Session {
             last_write: None,
             lightbar: None,
             lightbar_warned: false,
+            share: ShareKeys::default(),
         }
     }
 
@@ -699,6 +706,9 @@ pub struct HidSource {
     stop: Arc<AtomicBool>,
     /// Production worker only: signalled just before the worker thread exits.
     done_rx: Option<Receiver<()>>,
+    /// Production worker only (Windows): the Raw Input reader of the Xbox
+    /// Nano's Share. Dropped after the worker has stopped.
+    _share: Option<RawShare>,
 }
 
 impl HidSource {
@@ -720,14 +730,15 @@ impl HidSource {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = stop.clone();
         let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
+        let (share_rx, share) = super::raw_share::start();
         thread::Builder::new()
             .name("dualsense-hid".into())
             .spawn(move || {
-                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx, power_log);
+                worker_real(tx, stop_for_thread, params, lightbar, cmd_rx, power_log, share_rx);
                 let _ = done_tx.send(());
             })
             .map_err(|e| anyhow!("spawning HID worker thread: {e}"))?;
-        Ok(Self { rx, stop, done_rx: Some(done_rx) })
+        Ok(Self { rx, stop, done_rx: Some(done_rx), _share: share })
     }
 
     /// Test-only constructor for engine integration tests. Drains
@@ -735,7 +746,7 @@ impl HidSource {
     /// pipeline, no state machine.
     #[doc(hidden)]
     pub fn fake(rx: Receiver<GamepadEvent>) -> Self {
-        Self { rx, stop: Arc::new(AtomicBool::new(false)), done_rx: None }
+        Self { rx, stop: Arc::new(AtomicBool::new(false)), done_rx: None, _share: None }
     }
 
     /// Test-only constructor for state-machine tests. Decodes
@@ -783,7 +794,7 @@ impl HidSource {
                 worker_byte_stream(kind, byte_rx, tx, stop_for_thread, params, dummy_rx)
             })
             .expect("spawning fake HID worker");
-        Self { rx, stop, done_rx: None }
+        Self { rx, stop, done_rx: None, _share: None }
     }
 
     /// Drain pending events into `out`. Non-blocking.
@@ -811,6 +822,7 @@ fn worker_real(
     lightbar: LightbarLive,
     cmd_rx: crossbeam_channel::Receiver<SourceCmd>,
     power_log: PowerOffLog,
+    share_rx: Receiver<NanoKey>,
 ) {
     let mut api = match hidapi::HidApi::new() {
         Ok(a) => a,
@@ -834,8 +846,9 @@ fn worker_real(
             Some((d, kind)) => {
                 tracing::info!("{} opened, attempting handshake", kind.display_name());
                 // A Rumble or Disconnect queued for an earlier session must
-                // not act on this one.
+                // not act on this one; nor a Nano key from before it.
                 drain_commands(&cmd_rx);
+                while share_rx.try_recv().is_ok() {}
                 let mut session = Session::new(kind);
                 match kind {
                     ControllerKind::DualSense => {
@@ -860,7 +873,7 @@ fn worker_real(
                 let mut touchpad = TouchpadState::default();
                 let outcome = read_loop(
                     &d, &mut session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
-                    &params, &stop, &cmd_rx,
+                    &params, &stop, &cmd_rx, &share_rx,
                 );
                 // Switch Pro: ask the pad to sleep while the handle is still
                 // open, then drop it below.
@@ -939,6 +952,7 @@ fn read_loop(
     params: &CursorParams,
     stop: &Arc<AtomicBool>,
     cmd_rx: &crossbeam_channel::Receiver<SourceCmd>,
+    share_rx: &Receiver<NanoKey>,
 ) -> &'static str {
     let mut buf = [0u8; REPORT_LEN_BT];
     let disconnect_after = session.disconnect_after();
@@ -963,6 +977,16 @@ fn read_loop(
                     });
                     tracing::info!(kind = ?session.kind, "rumble: start");
                 }
+            }
+        }
+        // The Nano's keyboard keys are its Share (button 29); any other
+        // session drops them.
+        while let Ok(k) = share_rx.try_recv() {
+            if session.kind != ControllerKind::XboxNano {
+                continue;
+            }
+            if let Some(pressed) = session.share.key(k) {
+                apply_share(session, pressed, &mut emitted_connected, last_state, prev_buttons, tx);
             }
         }
         let wrote_rumble = play_rumble(d, session, &mut plan);
@@ -1009,9 +1033,13 @@ fn handle_frame(
     params: &CursorParams,
     tx: &Sender<GamepadEvent>,
 ) -> bool {
-    let Some(s) = session.decode(frame) else {
+    let Some(mut s) = session.decode(frame) else {
         return false;
     };
+    if session.kind == ControllerKind::XboxNano {
+        // Share is not in the report; keep what Raw Input says.
+        s.buttons[SHARE_ID] = session.share.pressed();
+    }
     if !*emitted_connected {
         let _ = tx.send(GamepadEvent::Connected(session.kind));
         *emitted_connected = true;
@@ -1022,6 +1050,28 @@ fn handle_frame(
     }
     *last_state = Some(s);
     true
+}
+
+/// The Nano's Share changed: emit it as a change of the last state (from
+/// the neutral state if no report came yet; the Nano reports only on
+/// change). A key event from the pad proves the link, so the first one
+/// connects the session like a first report.
+fn apply_share(
+    session: &Session,
+    pressed: bool,
+    emitted_connected: &mut bool,
+    last_state: &mut Option<PadState>,
+    prev_buttons: &mut [bool; BUTTON_SLOTS],
+    tx: &Sender<GamepadEvent>,
+) {
+    let mut s = last_state.clone().unwrap_or_default();
+    s.buttons[SHARE_ID] = pressed;
+    if !*emitted_connected {
+        let _ = tx.send(GamepadEvent::Connected(session.kind));
+        *emitted_connected = true;
+    }
+    emit_pad_diff(last_state.as_ref(), &s, prev_buttons, tx);
+    *last_state = Some(s);
 }
 
 fn worker_byte_stream(
@@ -1461,6 +1511,10 @@ mod read_loop_tests {
         reads: Mutex<usize>,
         inject: Option<(usize, Vec<SourceCmd>)>,
         cmd_tx: Mutex<Option<Sender<SourceCmd>>>,
+        /// Nano keyboard events sent on the loop's share channel when the
+        /// Nth read (1-based) happens.
+        share_inject: Vec<(usize, NanoKey)>,
+        share_tx: Mutex<Option<Sender<NanoKey>>>,
         stop_at: Option<usize>,
         stop: Mutex<Option<Arc<AtomicBool>>>,
     }
@@ -1476,6 +1530,8 @@ mod read_loop_tests {
                 reads: Mutex::new(0),
                 inject: None,
                 cmd_tx: Mutex::new(None),
+                share_inject: Vec::new(),
+                share_tx: Mutex::new(None),
                 stop_at: None,
                 stop: Mutex::new(None),
             }
@@ -1506,6 +1562,13 @@ mod read_loop_tests {
                 if *at == n_read {
                     if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
                         cmds.iter().for_each(|&c| tx.send(c).unwrap());
+                    }
+                }
+            }
+            for (at, key) in &self.share_inject {
+                if *at == n_read {
+                    if let Some(tx) = self.share_tx.lock().unwrap().as_ref() {
+                        tx.send(*key).unwrap();
                     }
                 }
             }
@@ -1573,6 +1636,8 @@ mod read_loop_tests {
             dtx.send(c).unwrap();
         }
         *io.cmd_tx.lock().unwrap() = Some(dtx.clone());
+        let (share_tx, share_rx) = unbounded::<NanoKey>();
+        *io.share_tx.lock().unwrap() = Some(share_tx);
         let stop = Arc::new(AtomicBool::new(false));
         *io.stop.lock().unwrap() = Some(stop.clone());
         let mut last_state = None;
@@ -1582,7 +1647,7 @@ mod read_loop_tests {
         let t0 = Instant::now();
         let outcome = read_loop(
             io, session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
-            &params, &stop, &drx,
+            &params, &stop, &drx, &share_rx,
         );
         let elapsed = t0.elapsed();
         (outcome, elapsed, rx.try_iter().collect())
@@ -1689,6 +1754,78 @@ mod read_loop_tests {
         assert!(elapsed >= Duration::from_millis(1300), "{elapsed:?}");
         assert!(evs.is_empty(), "{evs:?}");
         assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
+    }
+
+    fn share_key(key: u16, down: bool) -> NanoKey {
+        NanoKey { key, down }
+    }
+
+    fn button_events(evs: &[GamepadEvent], id: u32) -> Vec<GamepadEvent> {
+        evs.iter()
+            .filter(|e| matches!(e, GamepadEvent::ButtonDown(i) | GamepadEvent::ButtonUp(i) if *i == id))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn nano_share_keys_press_and_release_id_29_once() {
+        // Two keys from the Nano's keyboard collection, interleaved, with
+        // gamepad reports in between: one press, one release, and a report
+        // while Share is held does not release it.
+        let mut io = ScriptIo::new(vec![
+            Step::Frame(nano_frame(false)),
+            Step::Idle(5),
+            Step::Frame(nano_frame(true)),
+            Step::Idle(5),
+            Step::Frame(nano_frame(false)),
+            Step::Idle(5),
+            Step::Idle(5),
+            Step::Error,
+        ]);
+        io.share_inject = vec![
+            (2, share_key(0x15B, true)),
+            (2, share_key(0x137, true)),
+            (4, share_key(0x15B, false)),
+            (6, share_key(0x15B, true)), // pressed again and let go while 0x137 is held
+            (6, share_key(0x15B, false)),
+            (7, share_key(0x137, false)),
+        ];
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (outcome, _, evs) = run(&io, &mut s);
+        assert_eq!(outcome, "read-error");
+        assert_eq!(
+            button_events(&evs, 29),
+            vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)],
+            "{evs:?}"
+        );
+        let down = evs.iter().position(|e| *e == GamepadEvent::ButtonDown(29)).unwrap();
+        let up = evs.iter().position(|e| *e == GamepadEvent::ButtonUp(29)).unwrap();
+        let a_up = evs.iter().position(|e| *e == GamepadEvent::ButtonUp(0)).unwrap();
+        assert!(down < a_up && a_up < up, "Share held across the A report: {evs:?}");
+        assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
+    }
+
+    #[test]
+    fn nano_share_before_any_report_connects_the_session() {
+        // Share is often the first thing touched; the Nano sends no gamepad
+        // report until something on it changes.
+        let mut io = ScriptIo::new(vec![Step::Idle(5), Step::Idle(5), Step::Error]);
+        io.share_inject = vec![(1, share_key(0x137, true)), (2, share_key(0x137, false))];
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (_, _, evs) = run(&io, &mut s);
+        assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
+        assert_eq!(button_events(&evs, 29), vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29)]);
+    }
+
+    #[test]
+    fn share_keys_reach_only_a_nano_session() {
+        // While another pad's session is open, the Nano's keyboard events
+        // are dropped (the Nano is not the pad being read).
+        let mut io = ScriptIo::new(vec![Step::Frame(ds_frame()), Step::Idle(5), Step::Idle(5), Step::Error]);
+        io.share_inject = vec![(2, share_key(0x137, true)), (3, share_key(0x137, false))];
+        let mut s = Session::new(ControllerKind::DualSense);
+        let (_, _, evs) = run(&io, &mut s);
+        assert!(button_events(&evs, 29).is_empty(), "{evs:?}");
     }
 
     #[test]
