@@ -50,6 +50,11 @@ windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_UI_
 btleplug = "0.13.4"
 tokio = { version = "1", features = ["rt", "time", "macros"] }
 futures = "0.3"
+# Xbox Nano battery over Bluetooth GATT (gamepad/nano_battery.rs): WinRT
+# BluetoothLEDevice / GATT. 0.62 is the version btleplug already builds with
+# these features, so it adds no second copy of the bindings.
+windows = { version = "0.62", features = ["Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Foundation", "Storage_Streams"] }
+windows-future = "0.3"
 # Virtual Xbox 360 pad for the Switch 2 Pro in no-mapping mode
 # (xinput_sink.rs). User-mode client of an externally installed ViGEmBus.
 vigem-client = "0.1"

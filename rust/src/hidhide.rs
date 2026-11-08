@@ -200,6 +200,15 @@ pub fn bt_addr_from_instance(id: &str) -> Option<String> {
     ble_addr_in(id.split('\\').nth(1)?)
 }
 
+/// The Bluetooth address in a Bluetooth LE HID device's hidapi path
+/// (`\\?\HID#{00001812-…}…&fb3a7c7df9a8&Col01#8&…#{…}`): the path is the
+/// instance id with `#` for `\` (`bt_addr_from_instance`). The Xbox Nano's
+/// GATT battery read takes it (`gamepad::nano_battery`).
+pub fn bt_addr_from_hid_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\").unwrap_or(path);
+    bt_addr_from_instance(&rest.replace('#', "\\"))
+}
+
 /// The first field of a Bluetooth LE device id, split at `&` and `_`, that
 /// is 12 hex digits (the service UUID in braces is one field and never
 /// matches), upper-cased.
@@ -1088,6 +1097,23 @@ mod tests {
         assert_eq!(bt_addr_from_parent(r"BTHENUM\{x}\6&a71703f&0&7C66EF8223_C00000000"), None, "10 digits");
         assert_eq!(bt_addr_from_parent(r"BTHENUM\{x}\6&a71703f&0&7C66EF8223ZZ_C00000000"), None, "not hex");
         assert_eq!(bt_addr_from_parent(""), None);
+    }
+
+    #[test]
+    fn the_nanos_address_is_read_from_its_hidapi_path() {
+        // hidapi paths read on the maintainer's PC (2026-11-09), without and
+        // with Microsoft's Xbox driver.
+        let plain = r"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01#8&113d3dd1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        let official = r"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}&Dev&VID_045e&PID_0b4f&REV_0619&fb3a7c7df9a8&Col01&IG_00#8&4ca2c2&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(bt_addr_from_hid_path(plain).as_deref(), Some("FB3A7C7DF9A8"));
+        assert_eq!(bt_addr_from_hid_path(official).as_deref(), Some("FB3A7C7DF9A8"));
+        assert_eq!(bt_addr_from_hid_path(official).as_deref().and_then(bt_addr_value), Some(0xFB3A7C7DF9A8));
+        assert_eq!(
+            bt_addr_from_hid_path(r"\\?\HID#{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6#9&2d1c&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"),
+            None,
+            "classic Bluetooth path: no address in it"
+        );
+        assert_eq!(bt_addr_from_hid_path(""), None);
     }
 
     /// The Xbox Nano's HID-over-GATT service device (the maintainer's Nano,

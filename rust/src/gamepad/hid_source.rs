@@ -17,6 +17,7 @@ use super::ds_protocol::{build_handshake_buffer, decode_31, REPORT_LEN_BT};
 use super::ns_handshake::{ns_handshake_counted, send_input_mode_full, send_turn_off};
 use super::ns_protocol::{decode_30, StickCal, NEUTRAL_RUMBLE};
 use super::xbox_protocol::decode_xbox_bt;
+use super::nano_battery::{self, NanoBattery};
 use super::xinput_source::{self, OwnPad, XInputApi};
 use super::pad::{emit_pad_diff, PadState, BUTTON_SLOTS};
 use super::rumble::{
@@ -926,8 +927,9 @@ fn worker_real(
         .map(|(info, kind)| (info, kind, route(kind, &info.path().to_string_lossy())));
         // Microsoft's Xbox driver owns the Nano: read it through XInput; its
         // HID collection (which sends nothing then) is not opened.
-        if let Some((_, _, Route::XInput)) = device {
-            nano_via_xinput(&tx, &stop, &cmd_rx, &mut xinput_waiting_said);
+        if let Some((info, _, Route::XInput)) = device {
+            let addr = nano_addr(&info.path().to_string_lossy());
+            nano_via_xinput(&tx, &stop, &cmd_rx, &mut xinput_waiting_said, addr);
             continue;
         }
         let device = device.and_then(|(info, kind, _)| {
@@ -959,6 +961,10 @@ fn worker_real(
                     ControllerKind::Ns2Pro | ControllerKind::XboxNano => {}
                 }
                 session.attach_lightbar(&lightbar);
+                // The Nano's battery comes over GATT on its own thread
+                // (display only, iron rule 11); it ends with this session.
+                let battery = (kind == ControllerKind::XboxNano)
+                    .then(|| nano_battery::start(nano_addr(&path.to_string_lossy()), &tx));
                 let mut prev_buttons = [false; BUTTON_SLOTS];
                 let mut last_state: Option<PadState> = None;
                 let mut touchpad = TouchpadState::default();
@@ -984,6 +990,8 @@ fn worker_real(
                     power_off(kind);
                 }
                 tracing::info!(?outcome, "read loop exited; back to Searching");
+                // No battery reading may land after `Disconnected`.
+                drop(battery);
                 let _ = tx.send(GamepadEvent::Disconnected);
                 // `last_state` is set exactly when `Connected` was emitted: by
                 // the first decoded report (the Nano's initial report
@@ -1041,16 +1049,21 @@ fn nano_xinput_round(
     stop: &AtomicBool,
     cmd_rx: &Receiver<SourceCmd>,
     poll: Duration,
+    battery: impl FnOnce(&Sender<GamepadEvent>) -> NanoBattery,
 ) -> Option<(&'static str, bool)> {
     let slot = xinput_source::find_slot(api, own)?;
     tracing::info!(slot, "Xbox Nano on Microsoft's Xbox driver: reading XInput slot");
     // Nothing queued for an earlier session acts on this one.
     drain_commands(cmd_rx);
+    // The battery over GATT, for this session only (display only).
+    let battery = battery(tx);
     let (outcome, connected) = xinput_source::run_session(api, slot, tx, stop, cmd_rx, poll);
     if outcome == "manual-disconnect" {
         power_off(ControllerKind::XboxNano);
     }
     tracing::info!(?outcome, "Xbox Nano XInput session ended; back to Searching");
+    // No battery reading may land after `Disconnected`.
+    drop(battery);
     let _ = tx.send(GamepadEvent::Disconnected);
     Some((outcome, connected))
 }
@@ -1063,14 +1076,17 @@ fn nano_via_xinput(
     stop: &AtomicBool,
     cmd_rx: &Receiver<SourceCmd>,
     waiting_said: &mut bool,
+    addr: Option<u64>,
 ) {
     #[cfg(windows)]
     let round = xinput_source::RealXInput::get().map(|api| {
-        nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL)
+        nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL, |tx| {
+            nano_battery::start(addr, tx)
+        })
     });
     #[cfg(not(windows))]
     let round: Option<Option<(&'static str, bool)>> = {
-        let _ = (tx, stop);
+        let _ = (tx, stop, addr);
         None
     };
     match round {
@@ -1089,6 +1105,11 @@ fn nano_via_xinput(
             thread::sleep(ENUM_RETRY_INTERVAL);
         }
     }
+}
+
+/// The Nano's Bluetooth address from its HID path, for its GATT battery.
+fn nano_addr(path: &str) -> Option<u64> {
+    crate::hidhide::bt_addr_from_hid_path(path).as_deref().and_then(crate::hidhide::bt_addr_value)
 }
 
 /// Consume every queued command without acting on it.
@@ -2107,7 +2128,9 @@ mod read_loop_tests {
         let x = FakeX { nano_slot: Some(2), reads: Mutex::new(VecDeque::from([Some(held), Some(held), None])) };
         let (tx, rx) = unbounded();
         let (_ctx, crx) = unbounded();
-        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO);
+        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
+            nano_battery::start(None, tx)
+        });
         assert_eq!(round, Some(("xinput-gone", true)));
         let evs: Vec<GamepadEvent> = rx.try_iter().collect();
         assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
@@ -2116,8 +2139,41 @@ mod read_loop_tests {
         assert_eq!(evs.last(), Some(&GamepadEvent::Disconnected), "{evs:?}");
         // No slot holds the Nano (only our virtual pad): no session, nothing sent.
         let x = FakeX { nano_slot: None, reads: Mutex::new(VecDeque::new()) };
-        assert_eq!(nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO), None);
+        assert_eq!(
+            nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |_| {
+                panic!("no session: no battery read")
+            }),
+            None
+        );
         assert_eq!(rx.try_iter().count(), 0);
+    }
+
+    /// A Battery Level read that answers only after the session ended.
+    struct LateLevel(Arc<std::sync::Mutex<()>>);
+    impl nano_battery::LevelReader for LateLevel {
+        fn read(&mut self) -> Option<Vec<u8>> {
+            let _g = self.0.lock().unwrap();
+            Some(vec![70])
+        }
+    }
+
+    #[test]
+    fn a_nano_xinput_session_sends_no_battery_after_its_disconnect() {
+        let held = xinput_source::XRead { packet: 1, ..Default::default() };
+        let x = FakeX { nano_slot: Some(1), reads: Mutex::new(VecDeque::from([Some(held), None])) };
+        let (tx, rx) = unbounded();
+        let (_ctx, crx) = unbounded();
+        let gate = Arc::new(std::sync::Mutex::new(()));
+        let g = gate.lock().unwrap();
+        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
+            nano_battery::start_with(LateLevel(gate.clone()), Duration::from_secs(60), tx)
+        });
+        assert_eq!(round, Some(("xinput-gone", true)));
+        drop(g);
+        thread::sleep(Duration::from_millis(100));
+        let evs: Vec<GamepadEvent> = rx.try_iter().collect();
+        assert_eq!(evs.last(), Some(&GamepadEvent::Disconnected), "{evs:?}");
+        assert!(!evs.iter().any(|e| matches!(e, GamepadEvent::Battery(_))), "{evs:?}");
     }
 
     #[test]
