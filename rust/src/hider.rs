@@ -1,9 +1,9 @@
 //! Hider (v3.6.0): keeps the real DualSense / Switch Pro hidden from games
-//! with HidHide while that pad outputs a virtual Xbox pad, and undoes it
-//! when Xbox output ends (iron rule 7).
+//! with HidHide while that pad is on 鍵鼠 or Xbox, and undoes it when the
+//! pad leaves both (iron rule 7).
 //!
 //! [`Hider`] is the decision logic over a [`hidhide::Control`], fed with
-//! what is wanted (kinds in Xbox mode that Windows has a native driver for),
+//! what is wanted (kinds in 鍵鼠 or Xbox mode that Windows has a native driver for),
 //! what is present (HID instance ids) and what the engine has connected. It
 //! is unit-tested with a fake driver. [`HiderWorker`] runs it on its own
 //! thread, opening the control device fresh for every round and closing it

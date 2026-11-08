@@ -11,7 +11,7 @@ pub struct RunOptions {
     /// Folder of the config file; the `log_events` file goes there.
     pub log_dir: Option<std::path::PathBuf>,
     /// The config file; the HidHide state file goes beside it. `None`: no
-    /// HidHide (the real pad is not hidden in Xbox mode).
+    /// HidHide (the real pad is not hidden in 鍵鼠 / Xbox mode).
     pub config_path: Option<std::path::PathBuf>,
     pub shutdown: Arc<AtomicBool>,
 }

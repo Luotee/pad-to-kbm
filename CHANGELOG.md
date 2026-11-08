@@ -67,7 +67,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   native driver). To let a game read the pad directly, pick 手把.
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
-- Xbox output (ViGEmBus + HidHide) is Windows only; macOS is Phase 2 TBD.
+- Xbox output (ViGEmBus + HidHide) and hiding the pad in 鍵鼠 (HidHide) are Windows only; macOS is Phase 2 TBD.
 
 ## [3.5.1] - 2026-10-30
 
