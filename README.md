@@ -108,6 +108,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 
 選「Xbox」：遊戲會看到一支虛擬 Xbox 手把。DualSense／Switch Pro 另外需要
 [HidHide 1.5.230](https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0)，把原本的手把對遊戲藏起來，遊戲才不會同時讀到兩支。
+「鍵鼠」模式也會用 HidHide 藏住 DualSense／Switch Pro（遊戲只看到鍵盤滑鼠）；沒裝 HidHide 時鍵鼠照常運作，第一次會提示安裝一次（按「稍後」就不再自動跳出），之後齒輪旁留一個「!」可隨時點開。「手把」模式不藏，遊戲可直接讀。
 缺什麼，選 Xbox 時的提示會列出來，按一下就下載官方安裝程式、核對檔案後執行（會要求系統管理員權限）。
 手把是在藏起來之前就連上的話，要按分頁上的電源鍵斷開、再按 PS／HOME 鍵連回來一次。切回其他模式或關掉程式，手把就不再藏起來。
 遊戲的震動目前還不會轉給手把。

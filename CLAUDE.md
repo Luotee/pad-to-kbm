@@ -159,8 +159,10 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `set_trigger_mode`, `clear_pad`, `reset_pad`, `set_pad_tables`,
 `set_macro`, `rename_macro`, `delete_macro`, `set_settings`,
 `set_output_mode`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
-`reset_stick_cal`, `set_ui_prefs`; runtime-only `set_pad_off` (header 關,
-returns the off pads, no `config-changed`); Xbox output `get_xbox_status`,
+`reset_stick_cal`, `set_ui_prefs` (it and `get_ui_prefs` also carry `hidhide_prompt_dismissed`,
+written to the config only once true); runtime-only `set_pad_off` (header 關,
+returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
+at all: absent on a dry run / non-Windows, where no prompt shows),
 `get_vigem_status`, `install_vigem`, `install_hidhide`; fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
@@ -298,8 +300,8 @@ regresses real, observed bugs the codebase already fixed once:
    crate. Anything else lands us in actual cheat-software territory.
    Single exception (v2.6.0, widened in v3.6.0): two externally installed
    Nefarius drivers, ViGEmBus (a virtual Xbox 360 pad) and HidHide (hides
-   the real pad from games), used only while the user picks Xbox output
-   for a pad (`output_mode` `xbox`; HidHide only for a pad with a native
+   the real pad from games), used while the pad is on 鍵鼠 or Xbox
+   (`output_mode` `kbm` or `xbox`, never 手把; HidHide only for a pad with a native
    driver, `ControllerKind::has_native_driver`). The app never ships a
    driver. On the user's click it may download each pinned official
    installer, verify size + sha256, and run it; the user goes through the
@@ -307,7 +309,7 @@ regresses real, observed bugs the codebase already fixed once:
    User-mode client calls only: the ViGEm client, and HidHide's
    control-device IOCTLs (`hidhide.rs`). HidHide changes are limited to the
    pad's own HID instance ids on the blacklist and our exe on the
-   whitelist, merged with the user's existing lists, and undone when Xbox
+   whitelist, merged with the user's existing lists, and undone when the pad leaves 鍵鼠 / Xbox
    output ends. Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window

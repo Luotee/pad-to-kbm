@@ -3,7 +3,7 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.6.0] - 2026-10-31
+## [3.6.0] - 2026-11-08
 
 ### Added
 
@@ -30,10 +30,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hidden stays visible to games until it reconnects. A white banner says
   so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
   PS 鍵連回來」. It goes away after the reconnect.
-- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`.
+- **鍵鼠 hides the DualSense / Switch Pro too**, with HidHide, so a game
+  does not read the real pad next to the keys. Without HidHide 鍵鼠 works as
+  before; the install prompt opens once on its own, 「稍後」 is remembered,
+  and a gold 「!」 stays next to the gear until HidHide is in (it reopens the
+  prompt; so does picking 鍵鼠 in the header). Nothing shows where HidHide is
+  unsupported. The 「再連一次」 banner also shows in 鍵鼠.
+- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`;
+  `get_ui_prefs` / `set_ui_prefs` carry `hidhide_prompt_dismissed`.
 
 ### Changed
 
+- The header is tighter (it fits three pads and the 「!」), and the power key
+  (⏻) shows only on the selected tab.
 - **`output_mode` replaces `mapping_enabled`** in `padtokbm.json`:
   `{ "dualsense": "kbm" | "xbox" | "pad", … }` per controller. The bundled
   first-run config has `output_mode` and no `mapping_enabled`.
@@ -53,6 +62,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controller is removed the first time you change that controller's mode.
 - A DualSense / Switch Pro on 手把 stays on 手把; pick Xbox to get the
   virtual pad.
+- A pad that was on 鍵鼠 is hidden from games from its next reconnect on.
+  To let a game read it directly, pick 手把.
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
 - Xbox output (ViGEmBus + HidHide) is Windows only; macOS is Phase 2 TBD.
