@@ -23,6 +23,28 @@ mod win {
         }
     }
 
+    /// Poll XInput slot `slot` (plain + the Guide-aware ordinal 100) and print changes.
+    pub fn xinput_watch(slot: u32, secs: u64) {
+        let name: Vec<u16> = "xinput1_4.dll\0".encode_utf16().collect();
+        let module = unsafe { LoadLibraryW(name.as_ptr()) };
+        let ex = unsafe { GetProcAddress(module, 100usize as *const u8) };
+        let ex: Option<unsafe extern "system" fn(u32, *mut XINPUT_STATE) -> u32> = ex.map(|f| unsafe { std::mem::transmute(f) });
+        println!("XInputGetStateEx (#100) {}", if ex.is_some() { "found" } else { "missing" });
+        let t0 = std::time::Instant::now();
+        let mut last = (u16::MAX, 0u8, 0u8);
+        while t0.elapsed().as_secs() < secs {
+            let mut st: XINPUT_STATE = unsafe { std::mem::zeroed() };
+            let rc = match ex { Some(f) => unsafe { f(slot, &mut st) }, None => unsafe { XInputGetState(slot, &mut st) } };
+            let g = st.Gamepad;
+            let cur = (g.wButtons, g.bLeftTrigger, g.bRightTrigger);
+            if rc == 0 && cur != last {
+                println!("{:>6} ms buttons=0x{:04X} LT={} RT={} LX={} LY={}", t0.elapsed().as_millis(), g.wButtons, g.bLeftTrigger, g.bRightTrigger, g.sThumbLX, g.sThumbLY);
+                last = cur;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     pub fn xinput_off(slot: u32) {
         let name: Vec<u16> = "xinput1_4.dll\0".encode_utf16().collect();
         let module = unsafe { LoadLibraryW(name.as_ptr()) };
@@ -346,6 +368,7 @@ fn main() {
     {
         match args.get(1).map(String::as_str) {
             Some("--list") => win::list(),
+            Some("--xinput-watch") => win::xinput_watch(0, args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30)),
             Some("--xinput") => win::xinput_off(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0)),
             Some("--bth") => win::bth(args.get(2).map(String::as_str).unwrap_or("")),
             Some("--bt-list") => win::bt_list(),
