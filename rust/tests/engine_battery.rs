@@ -36,10 +36,10 @@ fn status_batteries(h: &Handle) -> Vec<BTreeMap<ControllerKind, Battery>> {
 /// DualSense owns at 80 %, the Switch Pro waits at 75 % charging.
 fn both_connected(h: &Handle) {
     h.fake_event(GamepadEvent::Connected(DS));
-    h.fake_event(GamepadEvent::Battery(batt(80, false)));
+    h.fake_event(GamepadEvent::Battery(Some(batt(80, false))));
     settle();
     h.fake_event_second(GamepadEvent::Connected(NS));
-    h.fake_event_second(GamepadEvent::Battery(batt(75, true)));
+    h.fake_event_second(GamepadEvent::Battery(Some(batt(75, true))));
     settle();
 }
 
@@ -71,21 +71,21 @@ fn status_is_resent_only_when_a_reading_changes() {
     let engine = Engine::spawn_with_fake_gamepad(test_helpers::load_example()).expect("spawn");
     let h = engine.handle();
     h.fake_event(GamepadEvent::Connected(DS));
-    h.fake_event(GamepadEvent::Battery(batt(80, false)));
+    h.fake_event(GamepadEvent::Battery(Some(batt(80, false))));
     settle();
     h.drain_events();
 
     for _ in 0..50 {
-        h.fake_event(GamepadEvent::Battery(batt(80, false)));
+        h.fake_event(GamepadEvent::Battery(Some(batt(80, false))));
     }
     settle();
     assert_eq!(status_batteries(&h).len(), 0, "same reading: no resend");
 
-    h.fake_event(GamepadEvent::Battery(batt(70, false)));
+    h.fake_event(GamepadEvent::Battery(Some(batt(70, false))));
     settle();
     assert_eq!(status_batteries(&h), vec![BTreeMap::from([(DS, batt(70, false))])], "pct changed");
 
-    h.fake_event(GamepadEvent::Battery(batt(70, true)));
+    h.fake_event(GamepadEvent::Battery(Some(batt(70, true))));
     settle();
     assert_eq!(status_batteries(&h), vec![BTreeMap::from([(DS, batt(70, true))])], "charging changed");
     engine.shutdown();
@@ -135,9 +135,25 @@ fn battery_alone_never_connects_a_pad() {
     // from the battery.
     let engine = Engine::spawn_with_fake_gamepad(test_helpers::load_example()).expect("spawn");
     let h = engine.handle();
-    h.fake_event(GamepadEvent::Battery(batt(50, false)));
+    h.fake_event(GamepadEvent::Battery(Some(batt(50, false))));
     settle();
     assert!(h.current_status().is_none());
     assert!(status_batteries(&h).is_empty());
+    engine.shutdown();
+}
+
+#[test]
+fn a_reading_that_disappears_is_resent_as_no_battery() {
+    let engine = Engine::spawn_with_fake_gamepad(test_helpers::load_example()).expect("spawn");
+    let h = engine.handle();
+    h.fake_event(GamepadEvent::Connected(DS));
+    h.fake_event(GamepadEvent::Battery(Some(batt(60, false))));
+    settle();
+    h.drain_events();
+
+    h.fake_event(GamepadEvent::Battery(None));
+    settle();
+    assert_eq!(status_batteries(&h), vec![BTreeMap::new()], "the board drops the stale value");
+    assert_eq!(h.current_status().expect("still connected").kind, DS);
     engine.shutdown();
 }

@@ -92,10 +92,10 @@ pub(crate) fn emit_pad_diff(
         }
     }
     prev_buttons.copy_from_slice(&cur.buttons);
-    if let Some(b) = cur.battery {
-        if prev.map_or(true, |p| p.battery != Some(b)) {
-            let _ = tx.send(GamepadEvent::Battery(b));
-        }
+    // First frame: only a reading. Later: any change, a reading that
+    // disappears (Some -> None) included.
+    if prev.map_or(cur.battery.is_some(), |p| p.battery != cur.battery) {
+        let _ = tx.send(GamepadEvent::Battery(cur.battery));
     }
 }
 
@@ -136,7 +136,7 @@ mod tests {
         let batt = |evs: Vec<GamepadEvent>| -> Vec<GamepadEvent> {
             evs.into_iter().filter(|e| matches!(e, GamepadEvent::Battery(_))).collect()
         };
-        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(cur.battery.unwrap())]);
+        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(cur.battery)]);
 
         emit_pad_diff(Some(&cur), &cur, &mut prev_buttons, &tx);
         assert_eq!(rx.try_iter().count(), 0, "same reading: nothing");
@@ -144,7 +144,14 @@ mod tests {
         let mut next = cur.clone();
         next.battery = Some(Battery { pct: 80, charging: true });
         emit_pad_diff(Some(&cur), &next, &mut prev_buttons, &tx);
-        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![GamepadEvent::Battery(next.battery.unwrap())]);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![GamepadEvent::Battery(next.battery)]);
+
+        // The reading disappears (DualSense error status mid-session): say so.
+        let gone = PadState::default();
+        emit_pad_diff(Some(&next), &gone, &mut prev_buttons, &tx);
+        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(None)]);
+        emit_pad_diff(Some(&gone), &gone, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().count(), 0, "still none: nothing");
 
         // A pad without a reading sends none.
         let none = PadState::default();

@@ -38,7 +38,7 @@
 //! * `Battery` readings (v3.8.0) are kept per source, owner or waiting,
 //!   and never passed on as events: the engine reads `batteries()` (one
 //!   entry per connected pad that reports one). A source's `Disconnected`
-//!   clears its reading. A reading never opens or closes a session
+//!   or a `Battery(None)` clears its reading. A reading never opens or closes a session
 //!   (iron rule 11).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -297,7 +297,7 @@ impl SourceHub {
                 }
             }
             GamepadEvent::Battery(b) => {
-                self.slots[i].battery = Some(b);
+                self.slots[i].battery = b;
                 return;
             }
             GamepadEvent::Disconnected => {
@@ -921,9 +921,9 @@ mod tests {
         let b80 = Battery { pct: 80, charging: false };
         let b75 = Battery { pct: 75, charging: true };
 
-        send(&r.a, &[DS, GamepadEvent::Battery(b80)]);
+        send(&r.a, &[DS, GamepadEvent::Battery(Some(b80))]);
         assert_eq!(poll(&mut hub), vec![DS], "the reading is not an event");
-        send(&r.b, &[GamepadEvent::Connected(ControllerKind::NsPro), GamepadEvent::Battery(b75)]);
+        send(&r.b, &[GamepadEvent::Connected(ControllerKind::NsPro), GamepadEvent::Battery(Some(b75))]);
         assert_eq!(poll(&mut hub), vec![]);
         assert_eq!(
             hub.batteries(),
@@ -944,13 +944,28 @@ mod tests {
     }
 
     #[test]
+    fn battery_reading_that_disappears_is_dropped() {
+        use crate::gamepad::Battery;
+        let r = rig();
+        let mut hub = r.hub;
+        let b = Battery { pct: 40, charging: false };
+        send(&r.a, &[DS, GamepadEvent::Battery(Some(b))]);
+        poll(&mut hub);
+        assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b)]));
+        send(&r.a, &[GamepadEvent::Battery(None)]);
+        assert_eq!(poll(&mut hub), vec![], "not an event");
+        assert!(hub.batteries().is_empty(), "the tab goes back to the lamp");
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::DualSense], "still connected");
+    }
+
+    #[test]
     fn battery_never_opens_a_session() {
         use crate::gamepad::Battery;
         let r = rig();
         let mut hub = r.hub;
         let b = Battery { pct: 50, charging: false };
         // A reading that comes before `Connected` is shown once it connects.
-        send(&r.a, &[GamepadEvent::Battery(b)]);
+        send(&r.a, &[GamepadEvent::Battery(Some(b))]);
         assert_eq!(poll(&mut hub), vec![]);
         assert!(hub.connected_kinds().is_empty());
         assert!(hub.batteries().is_empty());
