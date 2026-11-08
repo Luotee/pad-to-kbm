@@ -82,17 +82,18 @@ test('pad_art_has_no_switch_group', () => {
 test('photo_routes_end_at_the_pad_anchors', async () => {
   const { padAnchors } = await import('../board/padart.js');
   assert.equal(typeof padAnchors, 'function', 'padart.js exports padAnchors');
-  const B = q => [Math.round((q[0] + 340) * 2) / 2, Math.round((q[1] + 150) * 2) / 2];
   const MIRROR = { zr: 'zl', r1: 'l1', gr: 'gl' };
+  // A straight drop from a slot keeps the slot's column when the key is just off it: C and PS by 1; Cap and
+  // Home by 3 (Switch Pro) / 4 (Switch 2 Pro), their keys being closer together than two slots.
+  const DX = { c: 1, ps: 1, cap: 4, home: 4 };
   for (const pad of PADS) for (const modes of MODES) {
     const A = padAnchors(pad);
     for (const rt of layoutFor(pad, modes).routes) {
       const a = A[rt.id] || (MIRROR[rt.id] && [300 - A[MIRROR[rt.id]][0], A[MIRROR[rt.id]][1]]);
       assert.ok(a, `${pad} ${rt.id} has an anchor`);
-      const end = rt.pts[rt.pts.length - 1], want = B(a), prev = rt.pts[rt.pts.length - 2];
-      // A straight drop from a slot keeps the slot's column when the key is at most 6 off it (C, PS).
-      const dx = prev[0] === end[0] && rt.pts.length === 2 ? 6 : 0;
-      assert.ok(end[1] === want[1] && Math.abs(end[0] - want[0]) <= dx, `${pad} ${rt.id} ends ${end} want ${want}`);
+      // The end may round by up to half a unit (whole-pixel legs, half-unit ends).
+      const end = rt.pts[rt.pts.length - 1], want = [a[0] + 340, a[1] + 150];
+      assert.ok(Math.abs(end[1] - want[1]) <= 0.5 && Math.abs(end[0] - want[0]) <= (DX[rt.id] || 0.5), `${pad} ${rt.id} ends ${end} want ${want}`);
     }
   }
   // DualSense Create / Options lines stop at the key's top edge (r 2.5 + 4 short of its centre, top at y 44).
@@ -110,5 +111,18 @@ test('board_art_has_no_window_switches', async () => {
   for (const f of ['padart.js', 'layout.js', 'lightbar.js']) {
     const src = fs.readFileSync(new URL('../board/' + f, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /window\.__/, f);
+  }
+});
+
+// routeHTML draws each leg at +0.5 with a 3-wide stroke: a leg is crisp at 1x only when its perpendicular
+// coordinate (x of a vertical leg, y of a level one) is a whole unit. Ends may sit on half units.
+test('route_legs_sit_on_whole_pixels', () => {
+  for (const pad of PADS) for (const modes of MODES) {
+    for (const rt of layoutFor(pad, modes).routes) {
+      for (let i = 0; i + 1 < rt.pts.length; i++) {
+        const [a, b] = [rt.pts[i], rt.pts[i + 1]], perp = a[0] === b[0] ? a[0] : a[1];
+        assert.ok(Number.isInteger(perp), `${pad} ${JSON.stringify(modes)} ${rt.id} leg ${i} at ${perp}`);
+      }
+    }
   }
 });

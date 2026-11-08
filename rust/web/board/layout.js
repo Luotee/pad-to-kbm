@@ -56,24 +56,26 @@ function freshPath(f, d, side) {
 }
 
 // v3.7.0: the photo-traced pads put their keys elsewhere, so each line keeps its start and first leg and
-// its end moves to the key's anchor (padart.js padAnchors, pad units; the pad sits at (340, 150), ends on
-// half units). The last leg turns to reach it; a straight drop keeps its column when the key is at most 6
-// off it, else it gains a level leg half way.
+// its end moves to the key's anchor (padart.js padAnchors, pad units; the pad sits at (340, 150)). The last
+// leg turns to reach it; a straight drop keeps its column when the key is at most 6 off it, else it gains a
+// level leg half way. routeHTML draws a leg at +0.5 with a 3-wide stroke, so a leg is crisp at 1x only on
+// a whole unit: the anchor rounds to whole units across the last leg and to half units along it.
+function half(v) { return Math.round(v * 2) / 2; }
 function retarget(r, a) {
-  var p = r.pts, n = p.length;
+  var p = r.pts, n = p.length, vEnd = [Math.round(a[0]), half(a[1])], hEnd = [half(a[0]), Math.round(a[1])];
   if (n === 4) {
-    if (p[0][0] === p[1][0]) { p[2] = [a[0], p[1][1]]; p[3] = a; } else { p[2] = [p[1][0], a[1]]; p[3] = a; }
-  } else if (n === 3) { p[1] = [a[0], p[0][1]]; p[2] = a; }
+    if (p[0][0] === p[1][0]) { p[2] = [vEnd[0], p[1][1]]; p[3] = vEnd; } else { p[2] = [p[1][0], hEnd[1]]; p[3] = hEnd; }
+  } else if (n === 3) { p[1] = [vEnd[0], p[0][1]]; p[2] = vEnd; }
   else if (n === 2) {
-    if (p[0][1] === p[1][1]) r.pts = [p[0], [a[0], p[0][1]]];
-    else if (Math.abs(a[0] - p[0][0]) <= 6) r.pts = [p[0], [p[0][0], a[1]]];
-    else { var mid = snap((p[0][1] + a[1]) / 2); r.pts = [p[0], [p[0][0], mid], [a[0], mid], a]; }
+    if (p[0][1] === p[1][1]) r.pts = [p[0], [half(a[0]), p[0][1]]];
+    else if (Math.abs(a[0] - p[0][0]) <= 6) r.pts = [p[0], [p[0][0], half(a[1])]];
+    else { var mid = snap((p[0][1] + a[1]) / 2); r.pts = [p[0], [p[0][0], mid], [vEnd[0], mid], vEnd]; }
   }
 }
 function photoRoutes(pad, R) {
   var A = padAnchors(pad);
   if (!A) return;
-  var B = function (q) { return [Math.round((q[0] + 340) * 2) / 2, Math.round((q[1] + 150) * 2) / 2]; }, M = function (q) { return [300 - q[0], q[1]]; };
+  var B = function (q) { return [q[0] + 340, q[1] + 150]; }, M = function (q) { return [300 - q[0], q[1]]; };
   var map = Object.assign({}, A, { zr: M(A.zl), r1: M(A.l1), gr: A.gl && M(A.gl) });
   R.forEach(function (r) {
     if (map[r.id]) retarget(r, B(map[r.id]));
