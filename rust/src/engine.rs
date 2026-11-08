@@ -858,13 +858,13 @@ fn output_mode(h: &HandleInner, kind: Option<ControllerKind>) -> OutputMode {
     kind.map_or(OutputMode::Kbm, |k| h.config.read().unwrap().output_mode_for(k))
 }
 
-/// The kinds HidHide should hide: in Xbox output mode (whether connected or
-/// not, so a reconnect arrives hidden) and driven natively by Windows (the
+/// The kinds HidHide should hide: in 鍵鼠 or Xbox output mode (whether
+/// connected or not, so a reconnect arrives hidden; 手把 mode never hides) and driven natively by Windows (the
 /// Switch 2 Pro is not, so a game cannot see it anyway).
 fn hide_wanted_kinds(cfg: &Config) -> Vec<ControllerKind> {
     ControllerKind::ALL
         .into_iter()
-        .filter(|k| k.has_native_driver() && cfg.output_mode_for(*k) == OutputMode::Xbox)
+        .filter(|k| k.has_native_driver() && matches!(cfg.output_mode_for(*k), OutputMode::Kbm | OutputMode::Xbox))
         .collect()
 }
 
@@ -1231,17 +1231,18 @@ mod tests {
     use crate::config::OutputMode;
 
     #[test]
-    fn hide_wanted_kinds_are_xbox_pads_with_a_native_driver() {
+    fn hide_wanted_kinds_are_native_pads_in_kbm_or_xbox() {
         let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
         cfg.output_mode.clear();
         cfg.mapping_enabled.clear();
-        assert!(hide_wanted_kinds(&cfg).is_empty(), "default is kbm");
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro], "default 鍵鼠 is hidden");
         for k in ControllerKind::ALL {
-            cfg.output_mode.insert(k.slug().into(), OutputMode::Xbox);
+            cfg.output_mode.insert(k.slug().into(), OutputMode::Pad);
         }
-        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro]);
-        cfg.output_mode.insert("dualsense".into(), OutputMode::Pad);
-        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::NsPro]);
+        assert!(hide_wanted_kinds(&cfg).is_empty(), "手把 is never hidden");
+        cfg.output_mode.insert("dualsense".into(), OutputMode::Xbox);
+        cfg.output_mode.insert("ns2_pro".into(), OutputMode::Kbm);
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense], "Switch 2 Pro has no native driver");
     }
 
     #[test]

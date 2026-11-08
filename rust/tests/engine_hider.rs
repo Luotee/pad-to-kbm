@@ -1,5 +1,5 @@
 //! HidHide through the engine (v3.6.0): the engine feeds the hider worker
-//! the kinds wanted hidden (Xbox mode, native driver) and the connected
+//! the kinds wanted hidden (鍵鼠 or Xbox mode, native driver) and the connected
 //! kinds; `get_xbox_status` reports `hidden` from the worker. A fake
 //! HidHide stands in for the driver: tests never touch a real one.
 
@@ -123,16 +123,28 @@ fn hidden(h: &Handle) -> Option<bool> {
 }
 
 #[test]
-fn a_pad_in_xbox_mode_is_hidden_until_xbox_output_ends() {
-    let r = rig(xbox(ControllerKind::DualSense));
+fn a_pad_is_hidden_in_kbm_and_xbox_and_released_on_pad() {
+    // Default 鍵鼠 config: the pad is hidden too.
+    let r = rig(test_helpers::load_example());
     // Wanted from the config alone, before the pad connects. It was present
     // when hidden, so a game may still hold it: one replug needed.
     eventually("first round", || hidden(&r.h) == Some(false));
     assert_eq!(r.ctl.black(), vec![FOREIGN_DEV.to_string(), DS_USB.to_string()], "present → hidden");
     assert_eq!(HideState::load(&r.state_path).ids, vec![DS_USB.to_string()], "recorded for crash recovery");
 
-    // Leaves Xbox: the entry goes, the user's stays.
+    // Xbox keeps it hidden.
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Xbox);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(hidden(&r.h).is_some());
+    assert!(r.ctl.black().contains(&DS_USB.to_string()));
+    // Back to 鍵鼠: still hidden.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Kbm);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(hidden(&r.h).is_some());
+    assert!(r.ctl.black().contains(&DS_USB.to_string()));
+
+    // Leaves to 手把: the entry goes, the user's stays.
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
     eventually("unhidden", || r.ctl.black() == vec![FOREIGN_DEV.to_string()]);
     assert_eq!(hidden(&r.h), None);
 
@@ -142,11 +154,29 @@ fn a_pad_in_xbox_mode_is_hidden_until_xbox_output_ends() {
 }
 
 #[test]
+fn kbm_to_xbox_keeps_the_pad_hidden() {
+    let r = rig(test_helpers::load_example());
+    eventually("hidden in kbm", || r.ctl.black().contains(&DS_USB.to_string()));
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Xbox);
+    let until = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < until {
+        assert!(r.ctl.black().contains(&DS_USB.to_string()), "released between kbm and xbox");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
 fn a_pad_hidden_while_connected_needs_a_replug_and_the_status_is_resent() {
     let r = rig(test_helpers::load_example());
     r.h.fake_event(GamepadEvent::Connected(ControllerKind::DualSense));
     eventually("connected", || r.h.current_status().is_some());
-    assert_eq!(hidden(&r.h), None, "鍵鼠: not applicable");
+    assert_eq!(hidden(&r.h), Some(false), "鍵鼠: hidden too, connected → needs a replug");
+
+    // 手把 releases it; hiding again (Xbox) while connected needs a replug.
+    r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
+    eventually("released", || hidden(&r.h) == None);
     r.h.drain_events();
 
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Xbox);
@@ -180,8 +210,9 @@ fn xbox_status_reports_hidden_from_the_worker() {
     // HidHide missing: hidden is not applicable.
     let st = xbox_status_impl(&r.h, "dualsense", "missing", "missing").unwrap();
     assert_eq!(st.hidden, None);
-    // Not in Xbox mode, or never hidden.
-    assert_eq!(xbox_status_impl(&r.h, "ns_pro", "installed", "installed").unwrap().hidden, None);
+    // 鍵鼠 is hidden too; the Switch 2 Pro has no native driver, never hidden.
+    // (ns_pro is absent from the fake's present list: hidden, no replug needed.)
+    eventually("ns_pro wanted", || xbox_status_impl(&r.h, "ns_pro", "installed", "installed").unwrap().hidden == Some(true));
     assert_eq!(xbox_status_impl(&r.h, "ns2_pro", "installed", "installed").unwrap().hidden, None);
     assert!(xbox_status_impl(&r.h, "joycon", "installed", "installed").is_err());
     r.worker.stop();

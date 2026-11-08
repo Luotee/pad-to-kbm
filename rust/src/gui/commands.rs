@@ -683,8 +683,8 @@ pub async fn install_vigem(engine: State<'_, Handle>) -> Result<String, String> 
 
 /// What one pad's Xbox output needs and whether its real pad is hidden.
 /// `vigem` / `hidhide`: `"installed" | "missing" | "unsupported"`.
-/// `hidden`: `null` when not applicable (pad not in Xbox mode, Switch 2 Pro,
-/// HidHide missing or not used), `false` while it needs one reconnect or
+/// `hidden`: `null` when not applicable (pad in 手把 mode, Switch 2 Pro,
+/// HidHide missing or not used; hidden in 鍵鼠 or Xbox mode), `false` while it needs one reconnect or
 /// hiding is not applied yet, `true` when hidden.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct XboxStatus {
