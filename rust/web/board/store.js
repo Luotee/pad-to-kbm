@@ -60,7 +60,7 @@ export async function setPad(pad, { save = true } = {}) {
   if (changed) padChangeHooks.forEach(f => f(pad));
   if (save && state.prefs.last_pad !== pad) {
     state.prefs = { ...state.prefs, last_pad: pad };
-    try { await invoke('set_ui_prefs', { prefs: state.prefs }); } catch (e) { console.warn('set_ui_prefs failed', e); }
+    try { await invoke('set_ui_prefs', { prefs: { last_pad: pad } }); } catch (e) { console.warn('set_ui_prefs failed', e); }
   }
 }
 

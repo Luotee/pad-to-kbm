@@ -105,7 +105,11 @@ function tauriMock({ config, version }) {
   };
   try {
     const keep = JSON.parse(sessionStorage.getItem('__keep') || 'null');
-    if (keep) { Object.assign(state.xbox, keep.xbox || {}); state.dismissed = !!keep.dismissed; }
+    if (keep) {
+      Object.assign(state.xbox, keep.xbox || {});
+      state.dismissed = !!keep.dismissed;
+      if (Array.isArray(keep.connected)) state.status.connected = keep.connected;   // [] = no pad connected at load
+    }
   } catch (e) { /* no storage */ }
   window.__mock = state;
   window.__mockCalls = [];
@@ -700,8 +704,8 @@ try {
 
   // ── v3.6.0: 鍵鼠 hides a native pad too (HidHide prompt once, !, reconnect banner) ──
   {
-    const reloadWith = async (xbox, dismissed) => {
-      await page.evaluate(([x, d]) => sessionStorage.setItem('__keep', JSON.stringify({ xbox: x, dismissed: d })), [xbox, dismissed]);
+    const reloadWith = async (xbox, dismissed, connected = null) => {
+      await page.evaluate(([x, d, c]) => sessionStorage.setItem('__keep', JSON.stringify({ xbox: x, dismissed: d, connected: c })), [xbox, dismissed, connected]);
       await page.reload({ waitUntil: 'load' });
       await page.locator('#board .hdr').waitFor({ timeout: 10000 });
       await page.waitForFunction(() => document.querySelectorAll('#board .slot').length > 20, null, { timeout: 10000 });
@@ -745,6 +749,33 @@ try {
     await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
     await settle(page);
     check('kbm-unsupported: no reconnect banner either', (await page.locator('#board .obanner').count()) === 0 && (await pop().count()) === 0 && (await bang().count()) === 0);
+    // The prompt waits for the pad: nothing connected → no popover; the pad connecting opens it once.
+    const connectEv = () => page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await reloadWith(MISS, false, []);
+    check('kbm-await-pad: nothing connected → no popover on load', (await modeOf()) === 'kbm' && (await pop().count()) === 0);
+    await connectEv();
+    await settle(page);
+    check('kbm-await-pad: the pad connecting opens it', (await pop().count()) === 1 && JSON.stringify(await popRows()) === '["HidHide:未安裝"]');
+    await page.click('#board [data-act="vglater"]');
+    await settle(page);
+    await page.evaluate(() => { window.__mock.status.connected = []; window.__mockEmit('controller-status', { connected: false, kind: null, connected_pads: [], warnings: [], off_pads: [] }); });
+    await settle(page);
+    await connectEv();
+    await settle(page);
+    check('kbm-await-pad: opened once this session, a reconnect does not reopen it', (await pop().count()) === 0);
+    await reloadWith(MISS, true, []);
+    await connectEv();
+    await settle(page);
+    check('kbm-await-pad: dismissed → no auto-open on connect either, the ! is there', (await pop().count()) === 0 && (await bang().count()) === 1);
+    {
+      await page.evaluate(() => { window.__mockCalls.length = 0; });
+      await page.click('#board [data-pad="ns_pro"]');
+      await settle(page);
+      const sp = (await calls(page)).filter(c => c.cmd === 'set_ui_prefs').pop();
+      check('tab switch sends only last_pad (no hidhide_prompt_dismissed)', !!sp && sp.args.prefs.last_pad === 'ns_pro' && !('hidhide_prompt_dismissed' in sp.args.prefs), JSON.stringify(sp?.args));
+      await page.click('#board [data-pad="dualsense"]');
+      await settle(page);
+    }
     await reloadWith(MISS, true);
     check('kbm-dismissed: no popover, the ! is there', (await pop().count()) === 0 && (await bang().count()) === 1);
     await bang().click();
@@ -796,6 +827,7 @@ try {
     check('ns2-kbm: picking 鍵鼠 again still shows neither', (await pop().count()) === 0 && (await bang().count()) === 0, `${await modeOf()} pop=${await pop().count()} bang=${await bang().count()} `);
     await page.click('#board [data-pad="dualsense"]');
     await settle(page);
+    await page.evaluate(() => sessionStorage.removeItem('__keep'));
     // Leave the drivers installed: the ! moves the header controls (later layout checks assume none).
     await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
     await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));

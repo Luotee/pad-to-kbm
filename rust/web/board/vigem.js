@@ -13,7 +13,7 @@ import { ICON } from './icons.js';
 
 // status: the selected pad's get_xbox_status reply { vigem, hidhide, hidden }, null until asked.
 // stale: a controller-status / config-changed came in, so `hidden` may have changed.
-export const VG = { status: null, probing: false, again: false, quiet: false, stale: false, pop: false, busy: false, err: '' };
+export const VG = { status: null, probing: false, next: null, autoOpened: false, quiet: false, stale: false, pop: false, busy: false, err: '' };
 const NAME = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
 const DRIVER = { vigem: { name: 'ViGEmBus', cmd: 'install_vigem' }, hidhide: { name: 'HidHide', cmd: 'install_hidhide' } };
 
@@ -40,15 +40,16 @@ function missing(mode = hideMode()) {
 // one of them, where anything missing opens the popover; otherwise only the status is refreshed
 // (the reconnect banner) and a popover the user closed stays closed.
 export async function probe({ open = true, mode = null } = {}) {
-  // One probe at a time; a pick of Xbox during one asks again when it returns.
-  if (VG.probing) { if (open) VG.again = true; return; }
+  // One probe at a time; a request during one is remembered (the latest wins, with its own
+  // mode / open) and asked again when it returns.
+  if (VG.probing) { VG.next = { mode, open }; return; }
   VG.probing = true;
   VG.stale = false;
   const kind = state.pad;
   let s = null;
   try { s = await invoke('get_xbox_status', { kind }); } catch (e) { if (open) s = { vigem: 'missing', hidhide: 'missing', hidden: null }; }
   VG.probing = false;
-  if (VG.again) { VG.again = false; return probe({ mode }); }
+  if (VG.next) { const n = VG.next; VG.next = null; return probe(n); }
   if (state.pad !== kind) { VG.stale = true; rerender(); return; }   // the answer is for a pad no longer shown
   if (s) VG.status = s;
   const need = missing(mode || hideMode());
@@ -170,11 +171,16 @@ export async function startVigem() {
 }
 
 // Called on every paint: the first look at a pad in Xbox / 鍵鼠 mode, or a refresh after an event.
-// The first look opens the popover in 鍵鼠 only until 稍後 was pressed once.
+// In 鍵鼠 the popover opens by itself only for a connected pad, once, and not after 稍後.
 // One probe at a time; none while installing (install re-probes itself).
 export function maybeProbe() {
   const mode = hideMode();
   if (!mode || VG.probing || VG.busy) return;
-  if (VG.status === null) probe({ open: mode === 'xbox' || !state.prefs.hidhide_prompt_dismissed });
+  // 鍵鼠 opens by itself once per session, when the selected pad is connected (not before any
+  // pad is there), and never after 稍後.
+  const ask = mode === 'kbm' && !state.prefs.hidhide_prompt_dismissed && !VG.autoOpened && state.connected.has(state.pad);
+  if (ask) VG.autoOpened = true;
+  if (VG.status === null) probe({ open: mode === 'xbox' || ask });
+  else if (ask) probe({ open: true });
   else if (VG.stale) probe({ open: false });
 }
