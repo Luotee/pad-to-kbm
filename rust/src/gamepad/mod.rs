@@ -21,6 +21,7 @@ pub mod ns2_protocol;
 pub mod pad;
 pub mod rumble;
 pub mod stick_cal;
+pub mod xbox_protocol;
 
 pub use controller::ControllerKind;
 pub use cursor_params::CursorParams;

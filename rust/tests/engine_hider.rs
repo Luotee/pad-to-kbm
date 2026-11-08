@@ -441,3 +441,26 @@ fn start_for_starts_nothing_on_a_dry_run() {
     assert!(h.hider().is_none());
     engine.shutdown();
 }
+
+// ── Xbox Nano (v3.7.0) ──
+
+const NANO_COL01: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\8&113d3dd1&0&0000";
+const NANO_COL02: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col02\8&113d3dd1&0&0001";
+
+#[test]
+fn the_nano_over_bluetooth_le_is_hidden_in_kbm() {
+    // Default 鍵鼠: the Nano's HOGP collections are hidden like a DualSense.
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, NANO_COL01, NANO_COL02], |_, _| Box::new(|_| {}));
+    eventually("nano hidden", || {
+        let b = r.ctl.black();
+        b.contains(&NANO_COL01.to_string()) && b.contains(&NANO_COL02.to_string())
+    });
+    assert!(!r.ctl.black().contains(&MOUSE.to_string()));
+    eventually("status", || r.h.hider().unwrap().hidden(ControllerKind::XboxNano).is_some());
+
+    // 手把 releases it.
+    r.h.config_write().output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+    eventually("unhidden", || r.ctl.black() == vec![FOREIGN_DEV.to_string()]);
+    r.worker.stop();
+    r.engine.shutdown();
+}

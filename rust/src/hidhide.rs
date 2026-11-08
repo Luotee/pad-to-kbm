@@ -733,6 +733,13 @@ mod tests {
         assert_eq!(kind_for_instance(ns_bt), Some(ControllerKind::NsPro));
         assert_eq!(kind_for_instance(r"HID\VID_057E&PID_2009\7&3&0&0000"), None);
         assert_eq!(kind_for_instance(r"HID\VID_046D&PID_C52B\7&3&0&0000"), None);
+        // Xbox Nano: Bluetooth LE (HOGP) only, every collection (the HID
+        // source reads Col01; Col02 is the keyboard Share comes from).
+        for col in ["Col01", "Col02"] {
+            let nano = format!(r"HID\{{00001812-0000-1000-8000-00805f9b34fb}}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&{col}\8&113d3dd1&0&0000");
+            assert_eq!(kind_for_instance(&nano), Some(ControllerKind::XboxNano), "{nano}");
+        }
+        assert_eq!(kind_for_instance(r"HID\VID_045E&PID_0B4F\7&3&0&0000"), None, "USB Nano");
     }
 
     // ── merge / unmerge ──

@@ -81,9 +81,9 @@ impl ControllerKind {
     }
 
     /// The pad's only non-keyboard output is the virtual Xbox pad (no driver
-    /// games understand). True for the Switch 2 Pro alone.
+    /// games understand): the opposite of `has_native_driver`.
     pub fn needs_virtual_pad(self) -> bool {
-        matches!(self, ControllerKind::Ns2Pro)
+        !self.has_native_driver()
     }
 }
 
@@ -166,5 +166,8 @@ mod tests {
         assert!(!ControllerKind::XboxNano.needs_virtual_pad());
         assert!(ControllerKind::Ns2Pro.needs_virtual_pad());
         assert!(!ControllerKind::DualSense.needs_virtual_pad());
+        for k in ControllerKind::ALL {
+            assert_eq!(k.needs_virtual_pad(), !k.has_native_driver(), "{k:?}");
+        }
     }
 }

@@ -123,8 +123,37 @@ pub const LABELS: [&str; 33] = [
     "C（Switch 2 C 鍵）",
 ];
 
-fn entry(id: u32, binding: Binding) -> ButtonEntry {
-    ButtonEntry { label: LABELS[id as usize].to_string(), binding }
+/// The Xbox Nano's own names for the ids whose shared label names a
+/// DualSense control (its other ids keep `LABELS`).
+const NANO_LABELS: [(u32, &str); 14] = [
+    (0, "A"),
+    (1, "B"),
+    (2, "X"),
+    (3, "Y"),
+    (4, "View（檢視鍵）"),
+    (5, "Xbox 按鈕"),
+    (6, "Menu（選單鍵）"),
+    (7, "LS（L3）"),
+    (8, "RS（R3）"),
+    (9, "LB"),
+    (10, "RB"),
+    (23, "LT（類比板機）"),
+    (24, "RT（類比板機）"),
+    (29, "Share（分享鍵）"),
+];
+
+/// The label of button `id` in `kind`'s table, as shipped in
+/// `config.example.json`.
+pub fn label(kind: ControllerKind, id: u32) -> &'static str {
+    let own = match kind {
+        ControllerKind::XboxNano => NANO_LABELS.iter().find(|(i, _)| *i == id).map(|(_, l)| *l),
+        _ => None,
+    };
+    own.unwrap_or(LABELS[id as usize])
+}
+
+fn entry(kind: ControllerKind, id: u32, binding: Binding) -> ButtonEntry {
+    ButtonEntry { label: label(kind, id).to_string(), binding }
 }
 
 /// The default table (spec 4.8), used by first run, `reset_pad` and the
@@ -142,7 +171,7 @@ pub fn default_pad_bindings(kind: ControllerKind) -> PadBindings {
             25..=28 if kind == ControllerKind::DualSense => Binding::Mouse(MouseButton::Left),
             _ => Binding::Unbound,
         };
-        buttons.insert(id.to_string(), entry(id, binding));
+        buttons.insert(id.to_string(), entry(kind, id, binding));
     }
     PadBindings {
         buttons,
@@ -226,7 +255,10 @@ mod tests {
                 if !bound {
                     assert_eq!(e.binding, Binding::Unbound, "{k:?} id {id}");
                 }
-                assert_eq!(e.label, LABELS[id as usize]);
+                assert_eq!(e.label, label(k, id));
+                if k != ControllerKind::XboxNano {
+                    assert_eq!(e.label, LABELS[id as usize]);
+                }
             }
         }
     }

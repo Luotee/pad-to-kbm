@@ -374,8 +374,9 @@ regresses real, observed bugs the codebase already fixed once:
     frame and `Disconnected` on either read-error or a per-kind
     report-stream deadline (DualSense 800 ms, Switch Pro
     1000 ms; the Switch 2 Pro over BLE uses the BLE disconnect event or
-    1000 ms without a decoded report). `SourceHub` forwards only the
-    owner's events. No more `is_connected()` cache, no
+    1000 ms without a decoded report; the Xbox Nano reports only on
+    change, so it has no deadline: read error or manual disconnect).
+    `SourceHub` forwards only the owner's events. No more `is_connected()` cache, no
     more "must press a button to confirm" UX hack — the radio
     link presence is observed directly via report stream
     presence/absence. The worker that owns the session may also write
