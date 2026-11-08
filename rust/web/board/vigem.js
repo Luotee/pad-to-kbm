@@ -113,6 +113,8 @@ export function reconnectBanner() {
   // On USB (`replug_usb`) only unplugging makes a game drop it; the power key would not, and would drop a
   // Bluetooth pad of the same type.
   if (VG.status.replug_usb) return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：拔掉 USB 線再插回去';
+  // The Xbox Nano is Bluetooth LE: neither the tab power key nor the app can drop its link, so it is turned off on the pad.
+  if (state.pad === 'xbox_nano') return '再連一次 Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開';
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + powerKey(state.pad) + ' 鍵連回來';
 }
 

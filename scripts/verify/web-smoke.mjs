@@ -1130,7 +1130,8 @@ try {
     await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
     await settle(page);
     const rc = ((await page.locator('#board .obanner.rc span').first().textContent().catch(() => '')) || '').trim();
-    check('Nano 鍵鼠 reconnect hint: press the Xbox key', rc.startsWith('再連一次 Xbox Nano，') && rc.endsWith('再按 Xbox 鍵連回來'), rc);
+    // Bluetooth LE: the app cannot turn the Nano off (no ⏻ in the hint): hold Xbox about 6 s, then press it.
+    check('Nano 鍵鼠 reconnect hint: turn it off with the Xbox key, no ⏻', rc === '再連一次 Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開', rc);
     await setXbox({ hidden: false, auto_off: true });
     await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
     await page.click('#board [data-pad="xbox_nano"]');

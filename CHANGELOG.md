@@ -40,7 +40,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `output_mode.xbox_nano: "kbm"` on load.
 - The Xbox Nano is not turned off by the app: it uses Bluetooth LE, and the
   automatic power-off (and the tab's ⏻) only drop a classic Bluetooth link.
-  When it was on while it got hidden, turn it off and on yourself.
+  When it was on while it got hidden, the 鍵鼠 「再連一次」 banner says 「再連一次
+  Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開」
+  (no ⏻).
 - The Xbox key may open the Xbox Game Bar: that is Windows (Settings →
   Gaming → Game Bar), not PadToKBM.
 - macOS: Phase 2 TBD for the Xbox Nano's Share (Raw Input is Windows only).
