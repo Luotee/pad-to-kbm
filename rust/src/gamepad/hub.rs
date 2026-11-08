@@ -1,8 +1,10 @@
 //! `SourceHub`: one controller owns the session at a time.
 //!
-//! The engine polls a single source. Since v2.6.0 two workers can produce
-//! events — the HID worker (DualSense, Switch Pro) and the NS2 Pro BLE
-//! worker — so the hub arbitrates between them:
+//! The engine polls a single source. Since v2.6.0 several workers can
+//! produce events — the HID worker (DualSense, Switch Pro), the NS2 Pro BLE
+//! worker and, since v3.7.0, the Xbox Nano's own HID worker — so the hub
+//! arbitrates between them (the rules below say "the other source"; with
+//! three, a waiting source is promoted in polling order):
 //!
 //! * The first source to emit `Connected` becomes the owner. While an owner
 //!   exists, every event from the other source is dropped, its
@@ -43,7 +45,7 @@ use crossbeam_channel::{Receiver, Sender};
 use super::controller::ControllerKind;
 use super::cursor_params::CursorParams;
 use super::events::GamepadEvent;
-use super::hid_source::HidSource;
+use super::hid_source::{HidPads, HidSource};
 use super::lightbar::LightbarLive;
 use super::stick_cal::{StickCalTable, StickPositions, StickProbe};
 use super::{HubCmd, PowerOffLog, SourceCmd};
@@ -85,7 +87,8 @@ impl Slot {
 }
 
 pub struct SourceHub {
-    /// Polled in order each tick; `[0]` is the HID worker.
+    /// Polled in order each tick: the DualSense / Switch Pro HID worker,
+    /// the Xbox Nano HID worker, the NS2 Pro BLE worker.
     slots: Vec<Slot>,
     owner: Option<usize>,
     /// Commands from the engine handle (manual disconnect, rumble).
@@ -98,7 +101,8 @@ pub struct SourceHub {
 }
 
 impl SourceHub {
-    /// Spawn the HID worker and the NS2 Pro BLE worker. `cmd_rx`
+    /// Spawn the HID workers (DualSense / Switch Pro, and the Xbox Nano)
+    /// and the NS2 Pro BLE worker. `cmd_rx`
     /// carries the engine's commands (routed to the owner);
     /// `warn_tx` receives status warnings from the BLE worker; `lightbar`
     /// carries the live lightbar settings to the HID worker; `power_log`
@@ -111,13 +115,18 @@ impl SourceHub {
         power_log: PowerOffLog,
     ) -> Result<Self> {
         let (hid_tx, hid_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
-        let hid = HidSource::new(params, lightbar, hid_rx, power_log)?;
+        let hid = HidSource::new(params.clone(), lightbar.clone(), hid_rx, power_log.clone(), HidPads::Classic)?;
+        // The Xbox Nano has its own HID worker: idle, it sends nothing and
+        // keeps its session open, which must not keep a DualSense closed.
+        let (nano_tx, nano_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
+        let nano = HidSource::new(params, lightbar, nano_rx, power_log, HidPads::Nano)?;
         let (ble_tx, ble_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
         let ble = Ns2BleSource::new(ble_rx, warn_tx)?;
         let suspend = ble.suspend_flag();
         Ok(Self::from_slots(
             vec![
                 Slot::new(Src::Hid(hid), Some(hid_tx), None),
+                Slot::new(Src::Hid(nano), Some(nano_tx), None),
                 Slot::new(Src::Ble(ble), Some(ble_tx), Some(suspend)),
             ],
             Some(cmd_rx),
@@ -388,6 +397,37 @@ mod tests {
         send(&b, &[NS2, GamepadEvent::ButtonDown(1)]);
         send(&a, &[DS, GamepadEvent::ButtonDown(2)]);
         assert_eq!(poll(&mut hub), vec![DS, GamepadEvent::ButtonDown(2)]);
+    }
+
+    #[test]
+    fn an_idle_nano_and_a_dualsense_are_both_connected() {
+        // v3.7.0: the Nano has its own HID worker (slot `n`). An idle Nano
+        // that connected first owns; the DualSense opens anyway and waits,
+        // both are listed as connected, and the DualSense takes over when
+        // the Nano leaves. Ownership rules are unchanged.
+        let (a, a_rx) = unbounded();
+        let (n, n_rx) = unbounded();
+        let (_b, b_rx) = unbounded::<GamepadEvent>();
+        let mut hub = SourceHub::from_slots(
+            vec![
+                Slot::new(Src::Hid(HidSource::fake(a_rx)), None, None),
+                Slot::new(Src::Hid(HidSource::fake(n_rx)), None, None),
+                Slot::new(Src::Hid(HidSource::fake(b_rx)), None, Some(Arc::new(AtomicBool::new(false)))),
+            ],
+            None,
+        );
+        let nano = GamepadEvent::Connected(ControllerKind::XboxNano);
+        send(&n, &[nano]);
+        assert_eq!(poll(&mut hub), vec![nano]);
+        send(&a, &[DS, GamepadEvent::ButtonDown(0)]);
+        assert_eq!(poll(&mut hub), vec![], "the waiting DualSense is not forwarded");
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::XboxNano, ControllerKind::DualSense]);
+        send(&n, &[GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29), OFF]);
+        assert_eq!(
+            poll(&mut hub),
+            vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29), OFF, DS]
+        );
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::DualSense]);
     }
 
     #[test]

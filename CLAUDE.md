@@ -298,7 +298,8 @@ regresses real, observed bugs the codebase already fixed once:
    etc.) or a hat axis (`Axis::DPadX/Y`), and that triggers can be
    reported in `[-1, 1]` or `[0, 1]`. Mapper / keyboard see one
    uniform event surface. Per-kind protocol modules (DualSense, Switch
-   Pro, Switch 2 Pro) and the BLE transport (`ns2_ble.rs`) live in this
+   Pro, Switch 2 Pro, Xbox Nano `xbox_protocol.rs`) and the BLE transport
+   (`ns2_ble.rs`) live in this
    gamepad layer too, and `SourceHub` arbitrates so that one controller
    owns the session at a time. The user stick calibration (`stick_cal`,
    `gamepad/stick_cal.rs`) is applied in `SourceHub` to the owner's stick
@@ -373,7 +374,10 @@ regresses real, observed bugs the codebase already fixed once:
     `hidapi` against the DualSense BT 0x31 report. The HID
     worker thread's state machine (Searching → Handshaking →
     Streaming) emits `Connected` on the first decoded input
-    frame and `Disconnected` on either read-error or a per-kind
+    frame (the Xbox Nano, which reports only on change, also on its
+    read-only initial GET_REPORT reply or its first Share key; it has
+    its own HID worker so an idle Nano never blocks a DualSense / Switch
+    Pro) and `Disconnected` on either read-error or a per-kind
     report-stream deadline (DualSense 800 ms, Switch Pro
     1000 ms; the Switch 2 Pro over BLE uses the BLE disconnect event or
     1000 ms without a decoded report; the Xbox Nano reports only on

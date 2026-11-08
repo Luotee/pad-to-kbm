@@ -4,8 +4,10 @@
 //! keystroke on its keyboard collection (0001/0006), which Windows owns, so
 //! hidapi cannot open it. On Windows a thread with a message-only window
 //! registers for keyboard Raw Input (`RIDEV_INPUTSINK`, so it hears keys
-//! while the app is in the background) and forwards the key events whose
-//! source device is the Nano's keyboard (`is_nano_keyboard`) as `NanoKey`s.
+//! while the app is in the background) while a Nano session is open
+//! (`RawShare::set_active`; removed again with `RIDEV_REMOVE` when it ends)
+//! and forwards the key events whose source device is the Nano's keyboard
+//! (`is_nano_keyboard`) as `NanoKey`s.
 //! Every other keyboard's event is dropped on the spot: not stored, not
 //! forwarded, not logged. Raw Input only reads; it does not hook, intercept
 //! or change what Windows does with the key (iron rule 7).
@@ -65,10 +67,26 @@ impl ShareKeys {
     }
 }
 
-/// The running Raw Input reader. Dropping it ends its thread.
+/// The running Raw Input reader. It listens only while active; dropping
+/// it ends its thread.
 pub struct RawShare {
     #[cfg(windows)]
     thread_id: u32,
+}
+
+impl RawShare {
+    /// Register (true) or remove (false) the keyboard Raw Input sink: the
+    /// HID worker turns it on for a Nano session and off when it ends.
+    pub fn set_active(&self, on: bool) {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+            // SAFETY: posting to a thread id is valid even if it has exited.
+            unsafe { PostThreadMessageW(self.thread_id, win::WM_SET_ACTIVE, on as usize, 0) };
+        }
+        #[cfg(not(windows))]
+        let _ = on;
+    }
 }
 
 /// Start the Raw Input reader and return the receiver of the Nano's key
@@ -106,17 +124,21 @@ mod win {
     use windows_sys::Win32::UI::Input::{
         GetRawInputData, GetRawInputDeviceInfoW, GetRegisteredRawInputDevices,
         RegisterRawInputDevices, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK,
-        RIDI_DEVICENAME, RID_INPUT, RIM_TYPEKEYBOARD,
+        RIDEV_REMOVE, RIDI_DEVICENAME, RID_INPUT, RIM_TYPEKEYBOARD,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, SetTimer, HWND_MESSAGE,
-        MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1, WM_INPUT, WM_TIMER,
+        CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, KillTimer, SetTimer,
+        HWND_MESSAGE, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1, WM_APP, WM_INPUT, WM_TIMER,
     };
+
+    /// Thread message from `RawShare::set_active`: wParam 1 registers the
+    /// keyboard sink, 0 removes it.
+    pub(super) const WM_SET_ACTIVE: u32 = WM_APP + 1;
 
     const USAGE_PAGE_GENERIC: u16 = 0x01;
     const USAGE_KEYBOARD: u16 = 0x06;
-    /// How often the thread checks that keyboard Raw Input still comes to
-    /// its window. Registration is per process and the last one wins; the
+    /// While active, how often the thread checks that keyboard Raw Input
+    /// still comes to its window. Registration is per process and the last one wins; the
     /// GUI's event loop (tao) registers keyboard Raw Input for its own
     /// window when it starts, after the engine, and tauri does it again
     /// when the app is built. Nothing in the app uses tao's keyboard device
@@ -124,7 +146,7 @@ mod win {
     const RECHECK_MS: u32 = 2000;
 
     /// Start the reader thread; returns its thread id once its window is
-    /// up and registered.
+    /// up. It registers nothing until `WM_SET_ACTIVE`.
     pub(super) fn spawn(tx: Sender<NanoKey>) -> anyhow::Result<u32> {
         let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<u32, String>>(1);
         std::thread::Builder::new()
@@ -153,28 +175,38 @@ mod win {
                 let _ = ready.send(Err(format!("CreateWindowExW: {}", std::io::Error::last_os_error())));
                 return;
             }
-            if !register(hwnd) {
-                let _ = ready.send(Err(format!(
-                    "RegisterRawInputDevices: {}",
-                    std::io::Error::last_os_error()
-                )));
-                DestroyWindow(hwnd);
-                return;
-            }
-            SetTimer(hwnd, 1, RECHECK_MS, None);
             let _ = ready.send(Ok(GetCurrentThreadId()));
-            tracing::info!("Nano Share: Raw Input reader started");
+            tracing::info!("Nano Share: Raw Input reader started (idle)");
 
+            let mut active = false;
             let mut msg: MSG = zeroed();
             // 0: WM_QUIT (RawShare dropped); -1: error.
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
                 match msg.message {
-                    WM_INPUT => {
+                    WM_SET_ACTIVE if msg.wParam != 0 && !active => {
+                        active = true;
+                        if register(hwnd) {
+                            tracing::info!("Nano Share: keyboard Raw Input on");
+                        } else {
+                            tracing::warn!(
+                                "Nano Share: RegisterRawInputDevices: {} (retrying)",
+                                std::io::Error::last_os_error()
+                            );
+                        }
+                        SetTimer(hwnd, 1, RECHECK_MS, None);
+                    }
+                    WM_SET_ACTIVE if msg.wParam == 0 && active => {
+                        active = false;
+                        KillTimer(hwnd, 1);
+                        unregister(hwnd);
+                        tracing::info!("Nano Share: keyboard Raw Input off");
+                    }
+                    WM_INPUT if active => {
                         if let Some(k) = nano_key(msg.lParam as _) {
                             let _ = tx.send(k);
                         }
                     }
-                    WM_TIMER if !registered_to(hwnd) => {
+                    WM_TIMER if active && !registered_to(hwnd) => {
                         tracing::info!("Nano Share: keyboard Raw Input taken over; registering again");
                         register(hwnd);
                     }
@@ -182,6 +214,9 @@ mod win {
                 }
                 // WM_INPUT must reach DefWindowProc for its cleanup.
                 DispatchMessageW(&msg);
+            }
+            if active {
+                unregister(hwnd);
             }
             DestroyWindow(hwnd);
         }
@@ -199,6 +234,15 @@ mod win {
     unsafe fn register(hwnd: HWND) -> bool {
         let d = RAWINPUTDEVICE { hwndTarget: hwnd, ..device() };
         RegisterRawInputDevices(&d, 1, size_of::<RAWINPUTDEVICE>() as u32) != 0
+    }
+
+    /// Remove the process's keyboard sink if it is still ours (if another
+    /// window took it over, that registration is left alone).
+    unsafe fn unregister(hwnd: HWND) {
+        if registered_to(hwnd) {
+            let d = RAWINPUTDEVICE { dwFlags: RIDEV_REMOVE, ..device() };
+            RegisterRawInputDevices(&d, 1, size_of::<RAWINPUTDEVICE>() as u32);
+        }
     }
 
     /// Whether this process's keyboard Raw Input still goes to `hwnd`.
