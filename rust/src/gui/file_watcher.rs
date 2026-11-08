@@ -9,10 +9,12 @@
 //! v2.6.0 it was leading-edge and dropped every change in the 250ms after
 //! a signal — a second save within that window was never reloaded.)
 
+use crate::config_io::ConfigDoc;
+use crate::engine::Handle;
 use anyhow::Result;
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
 use notify::{Config as NConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
@@ -45,4 +47,36 @@ pub fn spawn(path: PathBuf, tx: Sender<()>) -> Result<RecommendedWatcher> {
     watcher.configure(NConfig::default().with_poll_interval(Duration::from_millis(500)))?;
     watcher.watch(&path, RecursiveMode::NonRecursive)?;
     Ok(watcher)
+}
+
+/// What [`reload`] did with the file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Reload {
+    /// Same as the live config (our own writes come back here too; the
+    /// writer already emitted `config-changed`).
+    Same,
+    /// An external edit: the live config was replaced.
+    Applied,
+    /// The file does not load or validate; the live config is unchanged.
+    Invalid(String),
+}
+
+/// Load the config at `path` and, if it differs, replace the engine's live
+/// config with it. Under the config file lock (`config_io::file_lock`), so
+/// a write by the IPC or the hider cannot land between the load and the
+/// replace and be undone in the live config.
+pub fn reload(engine: &Handle, path: &Path) -> Reload {
+    let _file = crate::config_io::file_lock();
+    match ConfigDoc::load(path) {
+        Ok(doc) => {
+            let same = *engine.config_read() == *doc.typed();
+            if same {
+                Reload::Same
+            } else {
+                *engine.config_write() = doc.typed().clone();
+                Reload::Applied
+            }
+        }
+        Err(e) => Reload::Invalid(format!("{e:#}")),
+    }
 }

@@ -46,10 +46,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   later, it reaches the game already hidden, with no reconnect. The entries
   still come out when the app exits. A new 設定 tab, 「記住的手把」, lists
   them (name, 藍牙 / USB) with 刪除 and 全部刪除; at most 16 are kept, the
-  oldest goes first.
+  oldest goes first. A controller that is on right now is marked 連線中 and
+  cannot be deleted until it is turned off; 全部刪除 skips it.
 - New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`,
-  `forget_hidden_pad`, `forget_all_hidden_pads`; `get_ui_prefs` /
-  `set_ui_prefs` carry `hidhide_prompt_dismissed`.
+  `get_present_pad_ids`, `forget_hidden_pad`, `forget_all_hidden_pads`;
+  `get_ui_prefs` / `set_ui_prefs` carry `hidhide_prompt_dismissed`.
 
 ### Changed
 

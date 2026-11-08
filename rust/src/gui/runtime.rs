@@ -10,7 +10,6 @@
 //! (`gui/session_end.rs`), since the loop never returns then.
 
 use crate::config::Config;
-use crate::config_io::ConfigDoc;
 use crate::engine::Engine;
 use crate::safety;
 use crate::shutdown::Cleanup;
@@ -132,22 +131,19 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             let path_for_watcher = config_path_for_setup.clone();
             std::thread::spawn(move || {
                 for _ in notify_rx.iter() {
-                    match ConfigDoc::load(&path_for_watcher) {
-                        // Our own IPC writes come back here too; the engine
-                        // already has them and the IPC command emitted
-                        // config-changed, so only a real external edit goes on.
-                        Ok(doc) if *handle_for_watcher.config_read() == *doc.typed() => {}
-                        Ok(doc) => {
-                            *handle_for_watcher.config_write() = doc.typed().clone();
+                    // Under the config file lock (`file_watcher::reload`).
+                    match crate::gui::file_watcher::reload(&handle_for_watcher, &path_for_watcher) {
+                        crate::gui::file_watcher::Reload::Same => {}
+                        crate::gui::file_watcher::Reload::Applied => {
                             let _ = app_for_watcher.emit(
                                 "config-changed",
                                 serde_json::json!({ "source": "file" }),
                             );
                         }
-                        Err(e) => {
+                        crate::gui::file_watcher::Reload::Invalid(message) => {
                             let _ = app_for_watcher.emit(
                                 "validation-error",
-                                serde_json::json!({ "message": format!("{e:#}") }),
+                                serde_json::json!({ "message": message }),
                             );
                         }
                     }
@@ -175,6 +171,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::install_vigem,
             crate::gui::commands::get_xbox_status,
             crate::gui::commands::install_hidhide,
+            crate::gui::commands::get_present_pad_ids,
             crate::gui::commands::forget_hidden_pad,
             crate::gui::commands::forget_all_hidden_pads,
             crate::gui::commands::pause_mapper,

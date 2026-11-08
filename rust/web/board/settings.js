@@ -126,19 +126,44 @@ function cfgBox() {
 // Remembered HidHide pads (v3.6.0, `hidhide_known`): read from the live
 // config, deleted at once through forget_hidden_pad / forget_all_hidden_pads
 // (not part of the 儲存 draft). Two columns of up to 8 (the cap is 16).
-// 藍牙 / USB as hidhide::kind_for_instance tells the buses apart.
+// 藍牙 / USB as hidhide::kind_for_instance tells the buses apart. A pad
+// present now (get_present_pad_ids, the hider's last round) is 連線中: it
+// would be remembered again at once, so the Rust side keeps it and its 刪除
+// is disabled here; 全部刪除 forgets only the absent ones.
+const HINT_PRESENT = '連線中的手把要先關掉才能刪除';
+let presentIds = [];
 function busOf(id) {
   const l = String(id).toLowerCase();
   return l.includes('{00001124-') || l.includes('{00001812-') ? '藍牙' : 'USB';
 }
+function isPresent(id) { return presentIds.some(p => String(p).toLowerCase() === String(id).toLowerCase()); }
 function knownPane() {
   const list = (state.config && state.config.hidhide_known) || [];
-  let h = '<div class="knbox"><span class="cfgl">記住的手把</span><span class="knd">連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。</span>';
+  let h = '<div class="knbox"><span class="cfgl">記住的手把</span><span class="knd">連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。<br>刪除會立刻生效；連線中的手把要先關掉才能刪除。</span>';
   if (!list.length) return h + '<p class="kne">還沒有記住的手把</p></div>';
-  h += '<div class="knl">' + list.map(k => '<div class="knr"><span class="knn">' + esc(PAD_NAMES[k.kind] || k.kind) + '</span><span class="knb">' + busOf(k.id) +
-    '</span><button type="button" class="mini" data-act="forgetpad" data-id="' + esc(k.id) + '">刪除</button></div>').join('') + '</div>';
-  if (list.length >= 2) h += '<div class="knf"><button type="button" class="mini" data-act="forgetall">全部刪除</button></div>';
+  h += '<div class="knl">' + list.map(k => {
+    const here = isPresent(k.id);
+    return '<div class="knr" title="' + esc(k.id) + '"><span class="knn">' + esc(PAD_NAMES[k.kind] || k.kind) + '</span><span class="knb">' + busOf(k.id) + '</span>' +
+      (here ? '<span class="knc">連線中</span>' : '') +
+      '<button type="button" class="mini" data-act="forgetpad" data-id="' + esc(k.id) + '"' + (here ? ' disabled title="' + HINT_PRESENT + '"' : '') + '>刪除</button></div>';
+  }).join('') + '</div>';
+  if (list.length >= 2) h += '<div class="knf"><button type="button" class="mini" data-act="forgetall"' + (list.every(k => isPresent(k.id)) ? ' disabled' : '') + '>全部刪除</button></div>';
   return h + '</div>';
+}
+// While the tab is open: re-read the present pads every second and on
+// config-changed; re-render only when they changed.
+let presentTimer = null;
+async function refreshPresent() {
+  let ids;
+  try { ids = (await invoke('get_present_pad_ids')) || []; } catch (e) { return; }
+  if (JSON.stringify(ids) === JSON.stringify(presentIds)) return;
+  presentIds = ids;
+  if (state.setOpen && state.setTab === 'known') rerender();
+}
+function watchPresent(tab, open) {
+  const on = open && tab === 'known';
+  if (on && !presentTimer) { refreshPresent(); presentTimer = setInterval(refreshPresent, 1000); }
+  if (!on && presentTimer) { clearInterval(presentTimer); presentTimer = null; }
 }
 
 // Extra panes the calibration feature fills in (#stkbox / #calbar).
@@ -223,6 +248,7 @@ async function save() {
 }
 
 export async function startSettings(board) {
+  onSettingsTab(watchPresent);
   hook('click', ev => {
     const el = ev.target.closest('[data-act],[data-stab]');
     if (el?.dataset.act === 'setopen') { openSettings(); return true; }
@@ -289,7 +315,10 @@ export async function startSettings(board) {
     else if (lastKind) { log('連線', (PAD_NAMES[lastKind] || lastKind) + ' 已斷開'); lastKind = null; }
   });
   // Remembering the shown pad (`ui`, v3.4.0) is not a settings change.
-  await listen('config-changed', p => { if (!p?.ui) log('設定', '設定已變更'); });
+  await listen('config-changed', p => {
+    if (!p?.ui) log('設定', '設定已變更');
+    if (presentTimer) refreshPresent();
+  });
   await listen('touchpad-hover', p => { finger = p.quadrant === 255 ? null : [p.raw_x, p.raw_y]; paintTouchpad(); });
   await listen('touchpad-click', p => { finger = [p.raw_x, p.raw_y]; paintTouchpad(); });
 }

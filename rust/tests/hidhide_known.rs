@@ -11,6 +11,7 @@ use dualsense_mapper::engine::Engine;
 use dualsense_mapper::gui::commands::{
     forget_all_hidden_pads_impl, forget_hidden_pad_impl, set_settings_impl, Settings,
 };
+use dualsense_mapper::gui::file_watcher::{reload, Reload};
 use dualsense_mapper::hider::remember_hidden_pads;
 
 const DS_USB: &str = r"HID\VID_054C&PID_0CE6&MI_03\7&1a2b&0&0000";
@@ -153,5 +154,58 @@ fn remembering_never_overwrites_a_concurrent_ipc_write() {
     assert_eq!(disk.typed().hidhide_known.len(), N, "every remembered pad survived the IPC writes");
     assert!((disk.typed().deadzone - (0.1 + (N as f32 - 1.0) * 0.01)).abs() < 1e-4, "the last IPC write survived");
     assert_eq!(h.config_read().hidhide_known.len(), N, "live config too");
+    engine.shutdown();
+}
+
+#[test]
+fn watcher_reload_applies_external_edits_only() {
+    let cfg = test_helpers::load_example();
+    let file = test_helpers::tmp_config_with(&cfg);
+    let engine = Engine::spawn_with_fake_gamepad(cfg.clone()).unwrap();
+    let h = engine.handle();
+    assert_eq!(reload(&h, file.path()), Reload::Same);
+    let mut edited = cfg.clone();
+    edited.deadzone = 0.33;
+    std::fs::write(file.path(), serde_json::to_string_pretty(&edited).unwrap()).unwrap();
+    assert_eq!(reload(&h, file.path()), Reload::Applied);
+    assert!((h.config_read().deadzone - 0.33).abs() < 1e-6);
+    std::fs::write(file.path(), "{ not json").unwrap();
+    assert!(matches!(reload(&h, file.path()), Reload::Invalid(_)));
+    engine.shutdown();
+}
+
+#[test]
+fn a_watcher_reload_never_drops_a_remembered_pad_from_the_live_config() {
+    // The watcher loads, compares and replaces the live config; a remember
+    // landing between its load and its replace would be lost from the live
+    // config without the shared file lock.
+    let cfg = test_helpers::load_example();
+    let file = test_helpers::tmp_config_with(&cfg);
+    let engine = Engine::spawn_with_fake_gamepad(cfg).unwrap();
+    let h = engine.handle();
+    let path = file.path().to_path_buf();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let lost = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = reload(&h, &path);
+            }
+        });
+        s.spawn(|| {
+            for i in 0..16 {
+                let id = format!(r"HID\VID_054C&PID_0CE6\7&{i}&0&0000");
+                remember_hidden_pads(&h, &path, &[kp("dualsense", &id)]).unwrap();
+                for _ in 0..20 {
+                    if !h.config_read().hidhide_known.iter().any(|k| k.id == id) {
+                        lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    std::thread::yield_now();
+                }
+            }
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    });
+    assert_eq!(lost.load(std::sync::atomic::Ordering::SeqCst), 0, "a reload replaced the live config with a stale file");
     engine.shutdown();
 }

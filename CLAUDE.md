@@ -164,8 +164,9 @@ written to the config only once true); runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
 at all: absent on a dry run / non-Windows, where no prompt shows),
 `get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
-(`hidhide_known` in the config) `forget_hidden_pad` (`id`) and
-`forget_all_hidden_pads`; fire-and-forget
+(`hidhide_known` in the config) `get_present_pad_ids` (pads present at the
+hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
+present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
 (`connected` bool + `connected_pads` + `off_pads` + `warnings`),

@@ -210,13 +210,17 @@ function tauriMock({ config, version }) {
       case 'set_rumble_on_connect': c.rumble_on_connect = a.enabled; changed(); return null;
       case 'save_stick_cal': c.stick_cal = c.stick_cal || {}; c.stick_cal[a.pad] = clone(a.cal); changed(); return null;
       case 'reset_stick_cal': if (c.stick_cal) delete c.stick_cal[a.pad]; changed(); return null;
-      // v3.6.0 remembered HidHide pads: config-changed only when something went.
-      case 'forget_hidden_pad': {
-        const list = c.hidhide_known || [], next = list.filter(k => k.id.toLowerCase() !== String(a.id).toLowerCase());
+      // v3.6.0 remembered HidHide pads, as the Rust side: a present pad is
+      // kept (刪除 refused, 全部刪除 skips it); config-changed only when something went.
+      case 'get_present_pad_ids': return clone(state.presentIds || []);
+      case 'forget_hidden_pad': case 'forget_all_hidden_pads': {
+        const lc = s => String(s).toLowerCase(), here = new Set((state.presentIds || []).map(lc));
+        if (cmd === 'forget_hidden_pad' && here.has(lc(a.id))) throw '連線中的手把要先關掉才能刪除';
+        const list = c.hidhide_known || [];
+        const next = cmd === 'forget_hidden_pad' ? list.filter(k => lc(k.id) !== lc(a.id)) : list.filter(k => here.has(lc(k.id)));
         if (next.length !== list.length) { if (next.length) c.hidhide_known = next; else delete c.hidhide_known; changed(); }
         return null;
       }
-      case 'forget_all_hidden_pads': if ((c.hidhide_known || []).length) { delete c.hidhide_known; changed(); } return null;
       default: return null;
     }
   }
@@ -1594,66 +1598,98 @@ try {
     const DS_USB = 'HID\\VID_054C&PID_0CE6&MI_03\\7&1a2b&0&0000';
     const NSP_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\\9&1&0&0000';
     const DS_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\\9&2d1c&0&0000';
-    const setKnown = async list => {
-      await page.evaluate(l => { if (l.length) window.__mock.config.hidhide_known = l; else delete window.__mock.config.hidhide_known; window.__mockEmit('config-changed', { source: 'watcher' }); }, list);
+    const HINT = '連線中的手把要先關掉才能刪除';
+    // The list and the pads present now (the hider's last round); the tab re-reads them on config-changed.
+    const setKnown = async (list, present = []) => {
+      await page.evaluate(([l, p]) => {
+        window.__mock.presentIds = p;
+        if (l.length) window.__mock.config.hidhide_known = l; else delete window.__mock.config.hidhide_known;
+        window.__mockEmit('config-changed', { source: 'watcher' });
+      }, [list, present]);
       await settle(page);
     };
     // Rows, columns and text placement in the open pane.
     const measure = () => page.evaluate(() => {
       const pane = document.querySelector('#board .spane'), R = e => e.getBoundingClientRect();
       const txt = e => { const rg = document.createRange(); rg.selectNodeContents(e); return rg.getBoundingClientRect(); };
+      const ints = r => Number.isInteger(r.left) && Number.isInteger(r.top) && Number.isInteger(r.width) && Number.isInteger(r.height);
       const pr = R(pane), bad = [];
       const rows = [...pane.querySelectorAll('.knr')].map(r => {
-        const rr = R(r), b = r.querySelector('[data-act="forgetpad"]'), br = R(b), bt = txt(b);
-        for (const s of r.querySelectorAll('span')) {
+        const rr = R(r), b = r.querySelector('[data-act="forgetpad"]'), br = R(b), bt = txt(b), tag = r.querySelector('.knc');
+        for (const s of r.querySelectorAll('.knn, .knb')) {
           const sr = txt(s);
-          if (sr.left < rr.left || sr.right > br.left || Math.abs((sr.top + sr.bottom) / 2 - (rr.top + rr.bottom) / 2) > 1) bad.push('span ' + s.textContent);
+          if (sr.left < rr.left || sr.right > (tag ? R(tag).left : br.left) || Math.abs((sr.top + sr.bottom) / 2 - (rr.top + rr.bottom) / 2) > 1) bad.push('span ' + s.textContent);
+        }
+        if (tag) {
+          const tr = R(tag), tt = txt(tag);
+          if (!ints(tr) || tr.right > br.left || tt.left < tr.left + 1 || tt.right > tr.right - 1 || Math.abs((tt.top + tt.bottom) / 2 - (tr.top + tr.bottom) / 2) > 1 ||
+            Math.abs((tr.top + tr.bottom) / 2 - (rr.top + rr.bottom) / 2) > 1) bad.push('tag ' + b.dataset.id);
         }
         if (bt.left < br.left + 2 || bt.right > br.right - 2 || Math.abs((bt.top + bt.bottom) / 2 - (br.top + br.bottom) / 2) > 1) bad.push('button ' + b.dataset.id);
-        if (br.right > rr.right || !Number.isInteger(rr.left) || !Number.isInteger(rr.top) || !Number.isInteger(br.left) || !Number.isInteger(br.top)) bad.push('px ' + b.dataset.id);
+        if (br.right > rr.right || !Number.isInteger(rr.left) || !Number.isInteger(rr.top) || !ints(br)) bad.push('px ' + b.dataset.id);
         if (rr.left < pr.left || rr.right > pr.right || rr.bottom > pr.bottom) bad.push('out ' + b.dataset.id);
-        return { x: rr.left, y: rr.top, text: r.textContent, id: b.dataset.id, btn: b.textContent.trim() };
+        return { x: rr.left, y: rr.top, text: r.textContent, title: r.getAttribute('title'), id: b.dataset.id, btn: b.textContent.trim(),
+          tag: tag ? tag.textContent.trim() : null, dis: b.disabled, btitle: b.getAttribute('title') };
       });
       const all = pane.querySelector('[data-act="forgetall"]');
-      if (all) { const ar = R(all), at = txt(all); if (at.left < ar.left + 2 || at.right > ar.right - 2 || Math.abs((at.top + at.bottom) / 2 - (ar.top + ar.bottom) / 2) > 1 || !Number.isInteger(ar.top) || ar.bottom > pr.bottom) bad.push('forgetall'); }
-      return { rows, bad, all: all ? all.textContent.trim() : null, sh: pane.scrollHeight, ch: pane.clientHeight, sw: pane.scrollWidth, cw: pane.clientWidth,
-        title: pane.querySelector('.knbox .cfgl')?.textContent.trim(), desc: pane.querySelector('.knd')?.textContent.trim(), empty: pane.querySelector('.kne')?.textContent.trim() ?? null };
+      if (all) { const ar = R(all), at = txt(all); if (at.left < ar.left + 2 || at.right > ar.right - 2 || Math.abs((at.top + at.bottom) / 2 - (ar.top + ar.bottom) / 2) > 1 || !ints(ar) || ar.bottom > pr.bottom) bad.push('forgetall'); }
+      const d = pane.querySelector('.knd');
+      return { rows, bad, all: all ? all.textContent.trim() : null, allDis: all ? all.disabled : null, sh: pane.scrollHeight, ch: pane.clientHeight, sw: pane.scrollWidth, cw: pane.clientWidth,
+        title: pane.querySelector('.knbox .cfgl')?.textContent.trim(), desc: d ? d.innerText.split('\n').map(x => x.trim()) : null, empty: pane.querySelector('.kne')?.textContent.trim() ?? null };
     });
-    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT }]);
+    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT }], [DS_USB]);
     await page.click('#board [data-act="setopen"]');
     await settle(page);
     await page.click('#board [data-stab="known"]');
     await settle(page);
     let m = await measure();
     const J = () => JSON.stringify(m);
-    check('記住的手把: title and description verbatim', m.title === '記住的手把' && m.desc === '連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。', J());
-    check('記住的手把: one row per pad, name + 藍牙／USB + 刪除', m.rows.length === 2 &&
-      /DualSense/.test(m.rows[0].text) && /USB/.test(m.rows[0].text) && m.rows[0].id === DS_USB && m.rows[0].btn === '刪除' &&
-      /Switch Pro/.test(m.rows[1].text) && /藍牙/.test(m.rows[1].text) && m.rows[1].id === NSP_BT, J());
+    check('記住的手把: title and the two description lines verbatim', m.title === '記住的手把' &&
+      JSON.stringify(m.desc) === JSON.stringify(['連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。', '刪除會立刻生效；連線中的手把要先關掉才能刪除。']), J());
+    check('記住的手把: one row per pad, name + 藍牙／USB + 刪除, row title = instance id', m.rows.length === 2 &&
+      /^DualSense\s*USB/.test(m.rows[0].text) && m.rows[0].id === DS_USB && m.rows[0].title === DS_USB && m.rows[0].btn === '刪除' &&
+      /^Switch Pro\s*藍牙/.test(m.rows[1].text) && m.rows[1].id === NSP_BT && m.rows[1].title === NSP_BT, J());
+    check('記住的手把: a present pad shows 連線中 and its 刪除 is disabled with the hint', m.rows[0].tag === '連線中' && m.rows[0].dis === true && m.rows[0].btitle === HINT &&
+      m.rows[1].tag === null && m.rows[1].dis === false && m.rows[1].btitle === null, J());
     check('記住的手把: two rows fill the left column first', m.rows[0].x === m.rows[1].x && m.rows[1].y > m.rows[0].y, J());
-    check('記住的手把: 全部刪除 shows with two or more', m.all === '全部刪除', J());
+    check('記住的手把: 全部刪除 shows with two or more, enabled while one is absent', m.all === '全部刪除' && m.allDis === false, J());
     check('記住的手把 (2): whole pixels, text inside its box and centred, pane does not scroll', m.bad.length === 0 && m.sh === m.ch && m.sw === m.cw, J());
+    check('記住的手把 asks for the present pads', (await countCalls(page, 'get_present_pad_ids')) > 0);
     await page.screenshot({ path: path.join(outDir, 'web-known-2.png') });
-    await page.click('#board [data-act="forgetpad"][data-id="' + DS_USB.replace(/\\/g, '\\\\') + '"]');
+    await page.click('#board [data-act="forgetpad"][data-id="' + NSP_BT.replace(/\\/g, '\\\\') + '"]');
     await settle(page);
     m = await measure();
-    check('刪除 sends forget_hidden_pad with the id; the list redraws', (await lastCall(page, 'forget_hidden_pad'))?.args?.id === DS_USB &&
-      m.rows.length === 1 && m.rows[0].id === NSP_BT && m.all === null, J());
-    await setKnown([{ kind: 'dualsense', id: DS_BT }, { kind: 'ns_pro', id: NSP_BT }]);
+    check('刪除 sends forget_hidden_pad with the id; the list redraws', (await lastCall(page, 'forget_hidden_pad'))?.args?.id === NSP_BT &&
+      m.rows.length === 1 && m.rows[0].id === DS_USB && m.all === null, J());
+    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'dualsense', id: DS_BT }, { kind: 'ns_pro', id: NSP_BT }], [DS_USB]);
     const nAll = await countCalls(page, 'forget_all_hidden_pads');
     await page.click('#board [data-act="forgetall"]');
     await settle(page);
     m = await measure();
-    check('全部刪除 sends forget_all_hidden_pads; empty text shows', (await countCalls(page, 'forget_all_hidden_pads')) === nAll + 1 &&
-      m.rows.length === 0 && m.empty === '還沒有記住的手把' && m.all === null, J());
-    const many = [];
-    for (let i = 0; i < 16; i++) many.push(i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0') }
-      : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)) });
-    await setKnown(many);
+    check('全部刪除 sends forget_all_hidden_pads (no args): the absent ones go, the present one stays', (await countCalls(page, 'forget_all_hidden_pads')) === nAll + 1 &&
+      (await lastCall(page, 'forget_all_hidden_pads'))?.args == null && m.rows.length === 1 && m.rows[0].id === DS_USB && m.rows[0].tag === '連線中', J());
+    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT }], [DS_USB, NSP_BT]);
+    m = await measure();
+    check('全部刪除 disabled when every remembered pad is present', m.all === '全部刪除' && m.allDis === true && m.rows.every(r => r.dis && r.tag === '連線中'), J());
+    await setKnown([{ kind: 'dualsense', id: DS_BT }, { kind: 'ns_pro', id: NSP_BT }], []);
+    await page.click('#board [data-act="forgetall"]');
+    await settle(page);
+    m = await measure();
+    check('全部刪除 with none present: empty text shows', m.rows.length === 0 && m.empty === '還沒有記住的手把' && m.all === null, J());
+    const many = [], here = [];
+    for (let i = 0; i < 16; i++) {
+      const k = i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0') }
+        : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)) };
+      many.push(k);
+      if ([1, 2, 9, 11].includes(i)) here.push(k.id);   // DualSense 藍牙 and Switch Pro 藍牙 連線中 in both columns
+    }
+    await setKnown(many, here);
     m = await measure();
     const left = m.rows.slice(0, 8), right = m.rows.slice(8);
     check('記住的手把 (16): two columns of eight, left first', m.rows.length === 16 && left.every(r => r.x === left[0].x) && right.every(r => r.x === right[0].x) &&
       right[0].x > left[0].x && left.every((r, i) => i === 0 || r.y > left[i - 1].y) && right.every((r, i) => r.y === left[i].y), J());
+    check('記住的手把 (16): DualSense 藍牙 連線中 / Switch Pro 藍牙 連線中 rows carry the tag', m.rows.filter(r => r.tag === '連線中').length === 4 &&
+      m.rows.some(r => /^DualSense\s*藍牙\s*連線中/.test(r.text)) && m.rows.some(r => /^Switch Pro\s*藍牙\s*連線中/.test(r.text)), J());
     check('記住的手把 (16): pane does not scroll, whole pixels, text inside its box and centred', m.sh === m.ch && m.sw === m.cw && m.bad.length === 0, J());
     await page.screenshot({ path: path.join(outDir, 'web-known-16.png') });
     await setKnown([]);

@@ -651,10 +651,25 @@ pub fn set_output_mode_impl(
 
 // ─── forget_hidden_pad / forget_all_hidden_pads ──────────────────────────────
 
+/// Tauri command: HID instance ids of the pads present at the hider's last
+/// round (`HideStatus::present`); empty without a worker or while nothing
+/// is hidden. The settings' 記住的手把 marks these 連線中 and keeps them.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn get_present_pad_ids(engine: State<'_, Handle>) -> Vec<String> {
+    present_pad_ids_impl(&engine)
+}
+
+/// Pure implementation of `get_present_pad_ids`.
+pub fn present_pad_ids_impl(engine: &Handle) -> Vec<String> {
+    engine.hider().map(|l| l.status().present).unwrap_or_default()
+}
+
 /// Tauri command: the settings' 刪除 on one remembered HidHide pad (`id`,
-/// case-insensitive). The engine then sends the hider the shorter list: an
-/// absent pad leaves the blacklist; a present one in 鍵鼠 / Xbox stays hidden
-/// and is remembered again. `config-changed` only when something went.
+/// case-insensitive). Refused while that pad is present (it would be
+/// remembered again at once). The engine then sends the hider the shorter
+/// list and the absent pad leaves the blacklist. `config-changed` only when
+/// something went.
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
 pub fn forget_hidden_pad(
@@ -672,10 +687,14 @@ pub fn forget_hidden_pad(
 /// Pure implementation of `forget_hidden_pad`: `true` when the config was
 /// written.
 pub fn forget_hidden_pad_impl(engine: &Handle, config_path: &Path, id: &str) -> anyhow::Result<bool> {
+    if present_pad_ids_impl(engine).iter().any(|p| p.eq_ignore_ascii_case(id)) {
+        anyhow::bail!("連線中的手把要先關掉才能刪除");
+    }
     forget_hidden(engine, config_path, Some(id))
 }
 
-/// Tauri command: the settings' 全部刪除 (every remembered HidHide pad).
+/// Tauri command: the settings' 全部刪除: every remembered HidHide pad that
+/// is not present (present ones stay, as for 刪除).
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
 pub fn forget_all_hidden_pads(
@@ -695,9 +714,13 @@ pub fn forget_all_hidden_pads_impl(engine: &Handle, config_path: &Path) -> anyho
 }
 
 fn forget_hidden(engine: &Handle, config_path: &Path, id: Option<&str>) -> anyhow::Result<bool> {
+    let present = present_pad_ids_impl(engine);
     mutate_config_if(engine, config_path, |doc| {
         let before = &doc.typed().hidhide_known;
-        let next = crate::config::forget_known(before, id);
+        let next: Vec<crate::config::KnownPad> = match id {
+            Some(_) => crate::config::forget_known(before, id),
+            None => before.iter().filter(|k| present.iter().any(|p| p.eq_ignore_ascii_case(&k.id))).cloned().collect(),
+        };
         if next == *before {
             return Ok(false);
         }

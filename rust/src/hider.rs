@@ -64,6 +64,10 @@ pub struct HideStatus {
     pub needs_replug: Vec<ControllerKind>,
     /// The last round fully succeeded.
     pub ok: bool,
+    /// HID instance ids of pads the app hides (any kind with a native
+    /// driver) present at the last round; empty while nothing is wanted.
+    /// The settings' 記住的手把 marks these 連線中.
+    pub present: Vec<String>,
 }
 
 impl HideStatus {
@@ -95,6 +99,8 @@ pub struct Hider {
     forgotten: Vec<String>,
     /// Learned, not yet taken by [`Hider::take_learned`].
     learned: Vec<KnownPad>,
+    /// Pads present at the last round (`HideStatus::present`).
+    present: Vec<String>,
     ok: bool,
     /// Last logged failure, so a failing retry loop logs once.
     last_err: Option<String>,
@@ -119,6 +125,7 @@ impl Hider {
             pending: Vec::new(),
             forgotten: Vec::new(),
             learned: Vec::new(),
+            present: Vec::new(),
             ok: false,
             last_err: None,
             inverse_warned: false,
@@ -146,6 +153,7 @@ impl Hider {
             wanted: self.wanted.clone(),
             needs_replug: self.needs_replug.clone(),
             ok: self.ok,
+            present: self.present.clone(),
         }
     }
 
@@ -232,6 +240,7 @@ impl Hider {
         present: &[String],
         own: Option<&str>,
     ) -> Result<(), Error> {
+        self.present = merge(&[], &present.iter().filter(|id| kind_of(id).is_some()).cloned().collect::<Vec<_>>());
         let ctl = open()?;
 
         // 1. Our exe may see hidden devices.
@@ -312,6 +321,7 @@ impl Hider {
 
     fn release_inner<C: Control>(&mut self, open: impl FnOnce() -> Result<C, Error>) -> Result<(), Error> {
         self.needs_replug.clear();
+        self.present.clear();
         if self.state.is_empty() {
             return Ok(());
         }
@@ -1074,6 +1084,32 @@ mod tests {
     }
 
     #[test]
+    fn a_remembered_absent_id_added_beside_a_present_hidden_pad_needs_no_replug() {
+        // DS_USB is ours and blacklisted already (an earlier run); DS_BT is
+        // remembered, off, and added this round. Only an id added while
+        // present may be held open by a game.
+        let mut r = rig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() });
+        HideState { ids: s(&[DS_USB]), ..Default::default() }.save(&r.path).unwrap();
+        r.hider = Hider::new(r.path.clone());
+        r.hider.set_known(&s(&[DS_USB, DS_BT]));
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[DS_USB, DS_BT]));
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+    }
+
+    #[test]
+    fn the_status_lists_the_present_pads() {
+        let mut r = rig(Fake::default());
+        r.hider.set_inputs(&[DS], &[DS]);
+        round(&mut r, &[MOUSE, DS_USB, NSP_BT]).unwrap();
+        assert_eq!(r.hider.status().present, s(&[DS_USB, NSP_BT]), "pads the app hides, any kind; no mouse");
+        r.hider.set_inputs(&[], &[DS]);
+        round(&mut r, &[DS_USB]).unwrap();
+        assert!(r.hider.status().present.is_empty(), "nothing wanted: not looked up");
+    }
+
+    #[test]
     fn remembered_ids_compare_case_insensitively() {
         let mut r = rig(Fake::default());
         r.hider.set_known(&s(&[&DS_USB.to_lowercase()]));
@@ -1255,7 +1291,7 @@ mod tests {
 
     #[test]
     fn status_hidden_is_none_without_a_worker() {
-        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true };
+        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true, present: vec![] };
         assert_eq!(st.hidden(DS), None);
     }
 

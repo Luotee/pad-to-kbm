@@ -248,6 +248,28 @@ fn a_learned_pad_is_saved_to_the_config_and_announced() {
     r.engine.shutdown();
 }
 
+#[test]
+fn present_pads_cannot_be_forgotten_and_forget_all_keeps_them() {
+    use dualsense_mapper::gui::commands::{forget_all_hidden_pads_impl, forget_hidden_pad_impl, present_pad_ids_impl};
+    let mut cfg = test_helpers::load_example();
+    cfg.hidhide_known = vec![
+        KnownPad { kind: "dualsense".into(), id: DS_USB.into() },
+        KnownPad { kind: "dualsense".into(), id: DS_BT.into() },
+    ];
+    let r = rig(cfg);
+    let path = r.state_path.with_file_name("padtokbm.json");
+    eventually("a round ran", || present_pad_ids_impl(&r.h) == vec![DS_USB.to_string()]);
+    let err = forget_hidden_pad_impl(&r.h, &path, &DS_USB.to_lowercase()).unwrap_err();
+    assert!(format!("{err:#}").contains("連線中"), "{err:#}");
+    assert_eq!(r.h.config_read().hidhide_known.len(), 2, "nothing written");
+    assert!(forget_all_hidden_pads_impl(&r.h, &path).unwrap());
+    let left: Vec<String> = r.h.config_read().hidhide_known.iter().map(|k| k.id.clone()).collect();
+    assert_eq!(left, vec![DS_USB.to_string()], "only the absent one goes");
+    assert!(!forget_all_hidden_pads_impl(&r.h, &path).unwrap(), "only present ones left: no change");
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
 // ── get_xbox_status ──
 
 #[test]
