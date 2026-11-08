@@ -92,6 +92,16 @@ fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
     }
 }
 
+/// The pad must stay hidden (never released) for a short window.
+fn stays_hidden(r: &Rig) {
+    let until = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < until {
+        assert!(hidden(&r.h).is_some(), "released");
+        assert!(r.ctl.black().contains(&DS_USB.to_string()), "released");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 struct Rig {
     _dir: tempfile::TempDir,
     state_path: std::path::PathBuf,
@@ -134,14 +144,10 @@ fn a_pad_is_hidden_in_kbm_and_xbox_and_released_on_pad() {
 
     // Xbox keeps it hidden.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Xbox);
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(hidden(&r.h).is_some());
-    assert!(r.ctl.black().contains(&DS_USB.to_string()));
+    stays_hidden(&r);
     // Back to 鍵鼠: still hidden.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Kbm);
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(hidden(&r.h).is_some());
-    assert!(r.ctl.black().contains(&DS_USB.to_string()));
+    stays_hidden(&r);
 
     // Leaves to 手把: the entry goes, the user's stays.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
@@ -172,7 +178,7 @@ fn a_pad_hidden_while_connected_needs_a_replug_and_the_status_is_resent() {
     let r = rig(test_helpers::load_example());
     r.h.fake_event(GamepadEvent::Connected(ControllerKind::DualSense));
     eventually("connected", || r.h.current_status().is_some());
-    assert_eq!(hidden(&r.h), Some(false), "鍵鼠: hidden too, connected → needs a replug");
+    eventually("鍵鼠: hidden too, connected → needs a replug", || hidden(&r.h) == Some(false));
 
     // 手把 releases it; hiding again (Xbox) while connected needs a replug.
     r.h.config_write().output_mode.insert("dualsense".into(), OutputMode::Pad);
