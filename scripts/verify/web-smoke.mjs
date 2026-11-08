@@ -210,6 +210,13 @@ function tauriMock({ config, version }) {
       case 'set_rumble_on_connect': c.rumble_on_connect = a.enabled; changed(); return null;
       case 'save_stick_cal': c.stick_cal = c.stick_cal || {}; c.stick_cal[a.pad] = clone(a.cal); changed(); return null;
       case 'reset_stick_cal': if (c.stick_cal) delete c.stick_cal[a.pad]; changed(); return null;
+      // v3.6.0 remembered HidHide pads: config-changed only when something went.
+      case 'forget_hidden_pad': {
+        const list = c.hidhide_known || [], next = list.filter(k => k.id.toLowerCase() !== String(a.id).toLowerCase());
+        if (next.length !== list.length) { if (next.length) c.hidhide_known = next; else delete c.hidhide_known; changed(); }
+        return null;
+      }
+      case 'forget_all_hidden_pads': if ((c.hidhide_known || []).length) { delete c.hidhide_known; changed(); } return null;
       default: return null;
     }
   }
@@ -1475,7 +1482,25 @@ try {
   await settle(page);
   check('gear opens the settings window', (await page.locator('#board .setw').count()) === 1);
   const tabs = await page.locator('#board .stabs [data-stab]').allTextContents();
-  check('four tabs 一般/搖桿/觸控板/按鍵', JSON.stringify(tabs.map(t => t.trim())) === '["一般","搖桿","觸控板","按鍵"]', tabs.join('|'));
+  check('five tabs 一般/搖桿/觸控板/按鍵/記住的手把', JSON.stringify(tabs.map(t => t.trim())) === '["一般","搖桿","觸控板","按鍵","記住的手把"]', tabs.join('|'));
+  {
+    // The tab column holds all five on whole pixels; every label inside its button, vertically centred.
+    const m = await page.evaluate(() => {
+      const col = document.querySelector('#board .stabs'), out = [];
+      for (const b of col.querySelectorAll('[data-stab]')) {
+        const r = b.getBoundingClientRect(), rg = document.createRange();
+        rg.selectNodeContents(b);
+        const tr = rg.getBoundingClientRect();
+        out.push({ t: b.textContent.trim(), ints: Number.isInteger(r.left) && Number.isInteger(r.top) && Number.isInteger(r.width) && Number.isInteger(r.height),
+          inside: tr.left >= r.left + 2 && tr.right <= r.right - 2 && tr.top >= r.top && tr.bottom <= r.bottom,
+          mid: Math.abs((tr.top + tr.bottom) / 2 - (r.top + r.bottom) / 2), bottom: r.bottom });
+      }
+      const cr = col.getBoundingClientRect();
+      return { out, sh: col.scrollHeight, ch: col.clientHeight, sw: col.scrollWidth, cw: col.clientWidth, colBottom: cr.bottom };
+    });
+    check('settings tab column: five tabs fit (no overflow), whole pixels, labels inside and centred',
+      m.out.length === 5 && m.sh === m.ch && m.sw === m.cw && m.out.every(o => o.ints && o.inside && o.mid <= 1 && o.bottom <= m.colBottom), JSON.stringify(m));
+  }
   check('settings version line names PadToKBM 手把轉鍵鼠', /^PadToKBM 手把轉鍵鼠 v/.test(((await page.locator('#board .ver').textContent()) || '').trim()), await page.locator('#board .ver').textContent());
   check('一般 shows the config path and both open buttons', /padtokbm\.json/.test(await page.locator('#board .cfgp').textContent()) &&
     (await page.locator('#board [data-act="opencfg"]').count()) === 1 && (await page.locator('#board [data-act="opendir"]').count()) === 1);
@@ -1563,6 +1588,86 @@ try {
   await page.click('#board .setw .x');
   await settle(page);
   check('✕ closes the window', (await page.locator('#board .setw').count()) === 0);
+
+  // ── v3.6.0: 設定 → 記住的手把 (remembered HidHide pads) ─────────────────────
+  {
+    const DS_USB = 'HID\\VID_054C&PID_0CE6&MI_03\\7&1a2b&0&0000';
+    const NSP_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\\9&1&0&0000';
+    const DS_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\\9&2d1c&0&0000';
+    const setKnown = async list => {
+      await page.evaluate(l => { if (l.length) window.__mock.config.hidhide_known = l; else delete window.__mock.config.hidhide_known; window.__mockEmit('config-changed', { source: 'watcher' }); }, list);
+      await settle(page);
+    };
+    // Rows, columns and text placement in the open pane.
+    const measure = () => page.evaluate(() => {
+      const pane = document.querySelector('#board .spane'), R = e => e.getBoundingClientRect();
+      const txt = e => { const rg = document.createRange(); rg.selectNodeContents(e); return rg.getBoundingClientRect(); };
+      const pr = R(pane), bad = [];
+      const rows = [...pane.querySelectorAll('.knr')].map(r => {
+        const rr = R(r), b = r.querySelector('[data-act="forgetpad"]'), br = R(b), bt = txt(b);
+        for (const s of r.querySelectorAll('span')) {
+          const sr = txt(s);
+          if (sr.left < rr.left || sr.right > br.left || Math.abs((sr.top + sr.bottom) / 2 - (rr.top + rr.bottom) / 2) > 1) bad.push('span ' + s.textContent);
+        }
+        if (bt.left < br.left + 2 || bt.right > br.right - 2 || Math.abs((bt.top + bt.bottom) / 2 - (br.top + br.bottom) / 2) > 1) bad.push('button ' + b.dataset.id);
+        if (br.right > rr.right || !Number.isInteger(rr.left) || !Number.isInteger(rr.top) || !Number.isInteger(br.left) || !Number.isInteger(br.top)) bad.push('px ' + b.dataset.id);
+        if (rr.left < pr.left || rr.right > pr.right || rr.bottom > pr.bottom) bad.push('out ' + b.dataset.id);
+        return { x: rr.left, y: rr.top, text: r.textContent, id: b.dataset.id, btn: b.textContent.trim() };
+      });
+      const all = pane.querySelector('[data-act="forgetall"]');
+      if (all) { const ar = R(all), at = txt(all); if (at.left < ar.left + 2 || at.right > ar.right - 2 || Math.abs((at.top + at.bottom) / 2 - (ar.top + ar.bottom) / 2) > 1 || !Number.isInteger(ar.top) || ar.bottom > pr.bottom) bad.push('forgetall'); }
+      return { rows, bad, all: all ? all.textContent.trim() : null, sh: pane.scrollHeight, ch: pane.clientHeight, sw: pane.scrollWidth, cw: pane.clientWidth,
+        title: pane.querySelector('.knbox .cfgl')?.textContent.trim(), desc: pane.querySelector('.knd')?.textContent.trim(), empty: pane.querySelector('.kne')?.textContent.trim() ?? null };
+    });
+    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT }]);
+    await page.click('#board [data-act="setopen"]');
+    await settle(page);
+    await page.click('#board [data-stab="known"]');
+    await settle(page);
+    let m = await measure();
+    const J = () => JSON.stringify(m);
+    check('記住的手把: title and description verbatim', m.title === '記住的手把' && m.desc === '連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。', J());
+    check('記住的手把: one row per pad, name + 藍牙／USB + 刪除', m.rows.length === 2 &&
+      /DualSense/.test(m.rows[0].text) && /USB/.test(m.rows[0].text) && m.rows[0].id === DS_USB && m.rows[0].btn === '刪除' &&
+      /Switch Pro/.test(m.rows[1].text) && /藍牙/.test(m.rows[1].text) && m.rows[1].id === NSP_BT, J());
+    check('記住的手把: two rows fill the left column first', m.rows[0].x === m.rows[1].x && m.rows[1].y > m.rows[0].y, J());
+    check('記住的手把: 全部刪除 shows with two or more', m.all === '全部刪除', J());
+    check('記住的手把 (2): whole pixels, text inside its box and centred, pane does not scroll', m.bad.length === 0 && m.sh === m.ch && m.sw === m.cw, J());
+    await page.screenshot({ path: path.join(outDir, 'web-known-2.png') });
+    await page.click('#board [data-act="forgetpad"][data-id="' + DS_USB.replace(/\\/g, '\\\\') + '"]');
+    await settle(page);
+    m = await measure();
+    check('刪除 sends forget_hidden_pad with the id; the list redraws', (await lastCall(page, 'forget_hidden_pad'))?.args?.id === DS_USB &&
+      m.rows.length === 1 && m.rows[0].id === NSP_BT && m.all === null, J());
+    await setKnown([{ kind: 'dualsense', id: DS_BT }, { kind: 'ns_pro', id: NSP_BT }]);
+    const nAll = await countCalls(page, 'forget_all_hidden_pads');
+    await page.click('#board [data-act="forgetall"]');
+    await settle(page);
+    m = await measure();
+    check('全部刪除 sends forget_all_hidden_pads; empty text shows', (await countCalls(page, 'forget_all_hidden_pads')) === nAll + 1 &&
+      m.rows.length === 0 && m.empty === '還沒有記住的手把' && m.all === null, J());
+    const many = [];
+    for (let i = 0; i < 16; i++) many.push(i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0') }
+      : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)) });
+    await setKnown(many);
+    m = await measure();
+    const left = m.rows.slice(0, 8), right = m.rows.slice(8);
+    check('記住的手把 (16): two columns of eight, left first', m.rows.length === 16 && left.every(r => r.x === left[0].x) && right.every(r => r.x === right[0].x) &&
+      right[0].x > left[0].x && left.every((r, i) => i === 0 || r.y > left[i - 1].y) && right.every((r, i) => r.y === left[i].y), J());
+    check('記住的手把 (16): pane does not scroll, whole pixels, text inside its box and centred', m.sh === m.ch && m.sw === m.cw && m.bad.length === 0, J());
+    await page.screenshot({ path: path.join(outDir, 'web-known-16.png') });
+    await setKnown([]);
+    await page.click('#board [data-act="setclose"]');
+    await settle(page);
+    // The 一般 pane is unchanged and still fits.
+    await page.click('#board [data-act="setopen"]');
+    await page.click('#board [data-stab="gen"]');
+    await settle(page);
+    const g = await page.evaluate(() => { const p = document.querySelector('#board .spane'); return [p.scrollHeight, p.clientHeight, p.querySelectorAll('.knr, .knbox').length]; });
+    check('一般 pane unchanged: no 記住的手把 section, no scroll', g[0] === g[1] && g[2] === 0, JSON.stringify(g));
+    await page.click('#board [data-act="setclose"]');
+    await settle(page);
+  }
 
   // ── Stick calibration (設定 → 搖桿) ───────────────────────────────────────
   await page.click('#board [data-pad="dualsense"]');
