@@ -2,6 +2,8 @@
 // (keymap-board.html): groups of slots around the pad and orthogonal guide
 // lines. 980×640 board units. The mockup's layout editor is not shipped.
 
+import { padAnchors } from './padart.js';
+
 // A 4-slot group with no middle slot packs tight, like the MapleStory quick slot: up and down
 // meet in the centre column, every seam 2px (the plate under each slot shows through).
 function diamond(cx, cy, keys, tags) {
@@ -53,15 +55,43 @@ function freshPath(f, d, side) {
   return [f, [f[0], my], [d[0], my], d];
 }
 
+// v3.7.0: the photo-traced pads put their keys elsewhere, so each line keeps its start and first leg and
+// its end moves to the key's anchor (padart.js padAnchors, pad units; the pad sits at (340, 150)). The last
+// leg turns to reach it; a straight drop keeps its column when the key is at most 6 off it, else it gains a
+// level leg half way. routeHTML draws a leg at +0.5 with a 3-wide stroke, so a leg is crisp at 1x only on
+// a whole unit: the anchor rounds to whole units across the last leg and to half units along it.
+function half(v) { return Math.round(v * 2) / 2; }
+function retarget(r, a) {
+  var p = r.pts, n = p.length, vEnd = [Math.round(a[0]), half(a[1])], hEnd = [half(a[0]), Math.round(a[1])];
+  if (n === 4) {
+    if (p[0][0] === p[1][0]) { p[2] = [vEnd[0], p[1][1]]; p[3] = vEnd; } else { p[2] = [p[1][0], hEnd[1]]; p[3] = hEnd; }
+  } else if (n === 3) { p[1] = [vEnd[0], p[0][1]]; p[2] = vEnd; }
+  else if (n === 2) {
+    if (p[0][1] === p[1][1]) r.pts = [p[0], [half(a[0]), p[0][1]]];
+    else if (Math.abs(a[0] - p[0][0]) <= 6) r.pts = [p[0], [p[0][0], half(a[1])]];
+    else { var mid = snap((p[0][1] + a[1]) / 2); r.pts = [p[0], [p[0][0], mid], [vEnd[0], mid], vEnd]; }
+  }
+}
+function photoRoutes(pad, R) {
+  var A = padAnchors(pad);
+  if (!A) return;
+  var B = function (q) { return [q[0] + 340, q[1] + 150]; }, M = function (q) { return [300 - q[0], q[1]]; };
+  var map = Object.assign({}, A, { zr: M(A.zl), r1: M(A.l1), gr: A.gl && M(A.gl) });
+  R.forEach(function (r) {
+    if (map[r.id]) retarget(r, B(map[r.id]));
+    if (pad === 'dualsense' && (r.id === 'share' || r.id === 'opt')) r.r = 2.5;   // stop at Create / Options' top edge
+  });
+}
+
 function defaultLayout(pad) {
-  var ds = pad === 'dualsense', ns2 = pad === 'ns2_pro';
-  var face4 = ds ? ['PS:tri', 'PS:sq', 'PS:ring', 'PS:x'] : ['X', 'Y', 'A', 'B'];
+  var ds = pad === 'dualsense', ns2 = pad === 'ns2_pro', xn = pad === 'xbox_nano';
+  var face4 = ds ? ['PS:tri', 'PS:sq', 'PS:ring', 'PS:x'] : xn ? ['Y', 'X', 'B', 'A'] : ['X', 'Y', 'A', 'B'];
   var LS = ['15', '17', '18', '16', '7'], RS = ['19', '21', '22', '20', '8'];
   var G = [
-    { id: 'qL', kind: 'pair', x: 143, y: 145, keys: ['L11', 'L13', 'L14', 'L12', 'L3', 'L2', 'L1', 'L0'], tags: face4, cap: (ds ? 'L2' : 'ZL') + ' 快捷頁' },
-    { id: 'qR', kind: 'pair', x: 837, y: 145, keys: ['R11', 'R13', 'R14', 'R12', 'R3', 'R2', 'R1', 'R0'], tags: face4, cap: (ds ? 'R2' : 'ZR') + ' 快捷頁' },
-    { id: 'b1L', kind: 'slot', x: 311, y: 192, keys: ['9'], tags: [ds ? 'L1' : 'L'] },
-    { id: 'b1R', kind: 'slot', x: 669, y: 192, keys: ['10'], tags: [ds ? 'R1' : 'R'] },
+    { id: 'qL', kind: 'pair', x: 143, y: 145, keys: ['L11', 'L13', 'L14', 'L12', 'L3', 'L2', 'L1', 'L0'], tags: face4, cap: (ds ? 'L2' : xn ? 'LT' : 'ZL') + ' 快捷頁' },
+    { id: 'qR', kind: 'pair', x: 837, y: 145, keys: ['R11', 'R13', 'R14', 'R12', 'R3', 'R2', 'R1', 'R0'], tags: face4, cap: (ds ? 'R2' : xn ? 'RT' : 'ZR') + ' 快捷頁' },
+    { id: 'b1L', kind: 'slot', x: 311, y: 192, keys: ['9'], tags: [ds ? 'L1' : xn ? 'LB' : 'L'] },
+    { id: 'b1R', kind: 'slot', x: 669, y: 192, keys: ['10'], tags: [ds ? 'R1' : xn ? 'RB' : 'R'] },
     { id: 'face', kind: 'diamond', x: 884, y: 288, keys: ['3', '2', '1', '0'], tags: face4 },
     { id: 'rs', kind: 'cross', x: 736, y: 320, keys: RS }
   ];
@@ -73,7 +103,28 @@ function defaultLayout(pad) {
     { id: 'rs', g: 'rs', side: 'l', pts: [[677, 320], [648, 320], [648, 286], [536, 286]], m: 'c' },
     { id: 'face', g: 'face', side: 'l', pts: [[825, 288], [792, 288], [792, 232], [566, 232]], m: 'c' }
   ];
-  if (ds) {
+  if (xn) {
+    // Xbox Nano: left stick high (outer group), D-pad low (inner group), like the Switch pads. LB / RB sit level
+    // with their shoulder key's end, one level line each; View / Xbox / Menu in the top row, Share below the pad.
+    // Every line ends at the traced key (photoRoutes, padAnchors).
+    var lb = padAnchors(pad).l1[1] + 150;
+    G[2].y = lb; G[3].y = lb;
+    R[0].pts = [[267, 145], [402, 145], [402, 175]]; R[1].pts = [[713, 145], [578, 145], [578, 175]];
+    R[2].pts = [[330, lb], [358, lb]]; R[3].pts = [[650, lb], [622, lb]];
+    R[4].pts = [[677, 320], [648, 320], [648, 277], [531, 277]]; R[5].pts = [[825, 288], [792, 288], [792, 236], [578, 236]];
+    G.push({ id: 'ls', kind: 'cross', x: 96, y: 288, keys: LS },
+      { id: 'dpad', kind: 'diamond', x: 244, y: 320, keys: ['11', '13', '14', '12'], tags: ARROWS },
+      { id: 'view', kind: 'slot', x: 399, y: 89, keys: ['4'], tags: ['View'] },
+      { id: 'xg', kind: 'slot', x: 490, y: 89, keys: ['5'], tags: ['Xbox'] },
+      { id: 'menu', kind: 'slot', x: 581, y: 89, keys: ['6'], tags: ['Menu'] },
+      { id: 'share', kind: 'slot', x: 490, y: 372, keys: ['29'], tags: ['Share'] });
+    R.push({ id: 'ls', g: 'ls', side: 'r', pts: [[155, 288], [188, 288], [188, 236], [404, 236]], m: 'c' },
+      { id: 'dpad', g: 'dpad', side: 'r', pts: [[303, 320], [332, 320], [332, 276], [450, 276]], m: 'c' },
+      { id: 'view', g: 'view', side: 'b', pts: [[399, 108], [399, 129], [465, 129], [465, 235]], r: 7 },
+      { id: 'xg', g: 'xg', side: 'b', pts: [[490, 108], [490, 216]], r: 10 },
+      { id: 'menu', g: 'menu', side: 'b', pts: [[581, 108], [581, 129], [515, 129], [515, 235]], r: 7 },
+      { id: 'share', g: 'share', side: 't', pts: [[490, 353], [490, 246]], r: 3.5 });
+  } else if (ds) {
     // DualSense: D-pad sits high on the pad, so its group is the outer, higher one; the left stick is the inner, lower one.
     G.push({ id: 'dpad', kind: 'diamond', x: 96, y: 288, keys: ['11', '13', '14', '12'], tags: ARROWS },
       { id: 'ls', kind: 'cross', x: 244, y: 320, keys: LS },
@@ -105,11 +156,17 @@ function defaultLayout(pad) {
       G.push({ id: 'c', kind: 'slot', x: 491, y: 372, keys: ['32'], tags: ['C'] },
         { id: 'gl', kind: 'slot', x: 344, y: 372, keys: ['30'], tags: ['GL'] },
         { id: 'gr', kind: 'slot', x: 636, y: 372, keys: ['31'], tags: ['GR'] });
-      R.push({ id: 'c', g: 'c', side: 't', pts: [[491, 353], [491, 256]], r: 6 },
-        { id: 'gl', g: 'gl', side: 'r', pts: [[363, 372], [418, 372], [418, 340]], r: 7 },
-        { id: 'gr', g: 'gr', side: 'l', pts: [[617, 372], [562, 372], [562, 340]], r: 7 });
+      // The traced body has longer grips: GL / GR sit beside them, one level line to each back key's
+      // visible corner; Cap / Home move in over their keys and drop straight down.
+      G[G.length - 2].x = 300; G[G.length - 1].x = 680; G[G.length - 2].y = 362; G[G.length - 1].y = 362;
+      G.forEach(function (g) { if (g.id === 'cap') g.x = 468; if (g.id === 'home') g.x = 512; });
+      R.forEach(function (r) { if (r.id === 'cap' || r.id === 'home') { var x = r.id === 'cap' ? 468 : 512; r.pts = r.pts.map(function (q) { return [x, q[1]]; }); } });
+      R.push({ id: 'c', g: 'c', side: 't', pts: [[491, 353], [490, 295]], r: 6 },
+        { id: 'gl', g: 'gl', side: 'r', pts: [[319, 362], [401, 362]], m: 'c' },
+        { id: 'gr', g: 'gr', side: 'l', pts: [[661, 362], [579, 362]], m: 'c' });
     }
   }
+  photoRoutes(pad, R);
   return { groups: G, routes: R };
 }
 
@@ -130,7 +187,7 @@ function applyQuickMode(pad, L, modes) {
     var gid = side === 'L' ? 'qL' : 'qR', g = L.byId[gid];
     g.q = side;
     if ((side === 'L' ? modes.l : modes.r) !== 'key') return;
-    g.kind = 'slot'; g.keys = [side === 'L' ? '23' : '24']; g.tags = [pad === 'dualsense' ? side + '2' : 'Z' + side];
+    g.kind = 'slot'; g.keys = [side === 'L' ? '23' : '24']; g.tags = [pad === 'dualsense' ? side + '2' : pad === 'xbox_nano' ? side + 'T' : 'Z' + side];
   });
 }
 

@@ -202,6 +202,7 @@ fn real_main(cli: &Cli) -> Result<()> {
         return app::run(cfg, app::RunOptions {
             dry_run: cli.dry_run,
             log_dir: cfg_path.parent().map(|d| d.to_path_buf()),
+            config_path: Some(cfg_path.clone()),
             shutdown,
         });
     }
@@ -331,7 +332,7 @@ fn list_buttons(cfg: Option<Config>) -> Result<()> {
                     println!("  [touch ] dx={dx:<+4} dy={dy:<+4}  (touchpad cursor)"),
                 GamepadEvent::TouchpadClick { raw_x, raw_y, quadrant } =>
                     println!("  [tpclick] raw=({raw_x:<5},{raw_y:<5}) quadrant={quadrant}"),
-                GamepadEvent::TouchpadHover { .. } => {}
+                GamepadEvent::TouchpadHover { .. } | GamepadEvent::Battery(_) => {}
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(10));

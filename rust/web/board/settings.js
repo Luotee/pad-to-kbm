@@ -12,7 +12,7 @@ import { settingsFrom } from './actions.js';
 import { PAD_NAMES, keyToTile } from './model.js';
 import { LABEL } from './keys.js';
 
-const TABS = [['gen', '一般'], ['stick', '搖桿'], ['tp', '觸控板'], ['timing', '按鍵']];
+const TABS = [['gen', '一般'], ['stick', '搖桿'], ['tp', '觸控板'], ['timing', '按鍵'], ['known', '記住的手把']];
 let badFields = [];
 
 // ─── Recent events (a 40-row ring, newest first on screen) ───────────────────
@@ -123,6 +123,55 @@ function cfgBox() {
     '<span class="cfgn">改完存檔，程式會自動套用</span></div></div>';
 }
 
+// Remembered HidHide pads (v3.6.0, `hidhide_known`): read from the live
+// config, deleted at once through forget_hidden_pad / forget_all_hidden_pads
+// (not part of the 儲存 draft). Two columns of up to 8 (the cap is 16).
+// 藍牙 / USB as hidhide::kind_for_instance tells the buses apart. A pad
+// present now (get_present_pad_ids, the hider's last round) is 連線中: it
+// would be remembered again at once, so the Rust side keeps it and its 刪除
+// is disabled here; 全部刪除 forgets only the absent ones. A Bluetooth pad
+// whose address the app found (`addr`, 12 hex digits) shows its last two
+// bytes as a serial (`23:D2`), so two pads of one model can be told apart;
+// the row's title starts with the whole address.
+const HINT_PRESENT = '連線中的手把要先關掉才能刪除';
+let presentIds = [];
+function busOf(id) {
+  const l = String(id).toLowerCase();
+  return l.includes('{00001124-') || l.includes('{00001812-') ? '藍牙' : 'USB';
+}
+function addrOf(k) { return /^[0-9A-F]{12}$/.test(k.addr || '') && busOf(k.id) === '藍牙' ? k.addr : ''; }
+function colons(a) { return a.match(/../g).join(':'); }
+function isPresent(id) { return presentIds.some(p => String(p).toLowerCase() === String(id).toLowerCase()); }
+function knownPane() {
+  const list = (state.config && state.config.hidhide_known) || [];
+  let h = '<div class="knbox"><span class="cfgl">記住的手把</span><span class="knd">連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。<br>刪除會立刻生效；連線中的手把要先關掉才能刪除。</span>';
+  if (!list.length) return h + '<p class="kne">還沒有記住的手把</p></div>';
+  h += '<div class="knl">' + list.map(k => {
+    const here = isPresent(k.id), a = addrOf(k);
+    return '<div class="knr" title="' + (a ? '藍牙位址 ' + colons(a) + '&#10;' : '') + esc(k.id) + '"><span class="knn">' + esc(PAD_NAMES[k.kind] || k.kind) + '</span><span class="knb">' + busOf(k.id) + '</span>' +
+      (a ? '<span class="kns">' + colons(a.slice(8)) + '</span>' : '') +
+      (here ? '<span class="knc">連線中</span>' : '') +
+      '<button type="button" class="mini" data-act="forgetpad" data-id="' + esc(k.id) + '"' + (here ? ' disabled title="' + HINT_PRESENT + '"' : '') + '>刪除</button></div>';
+  }).join('') + '</div>';
+  if (list.length >= 2) h += '<div class="knf"><button type="button" class="mini" data-act="forgetall"' + (list.every(k => isPresent(k.id)) ? ' disabled' : '') + '>全部刪除</button></div>';
+  return h + '</div>';
+}
+// While the tab is open: re-read the present pads every second and on
+// config-changed; re-render only when they changed.
+let presentTimer = null;
+async function refreshPresent() {
+  let ids;
+  try { ids = (await invoke('get_present_pad_ids')) || []; } catch (e) { return; }
+  if (JSON.stringify(ids) === JSON.stringify(presentIds)) return;
+  presentIds = ids;
+  if (state.setOpen && state.setTab === 'known') rerender();
+}
+function watchPresent(tab, open) {
+  const on = open && tab === 'known';
+  if (on && !presentTimer) { refreshPresent(); presentTimer = setInterval(refreshPresent, 1000); }
+  if (!on && presentTimer) { clearInterval(presentTimer); presentTimer = null; }
+}
+
 // Extra panes the calibration feature fills in (#stkbox / #calbar).
 const stickExtras = { stk: () => '', bar: () => '' };
 export function setStickExtras(stk, bar) { stickExtras.stk = stk; stickExtras.bar = bar; }
@@ -130,7 +179,8 @@ export function setStickExtras(stk, bar) { stickExtras.stk = stk; stickExtras.ba
 function pane(d, t) {
   if (t === 'gen') return cfgBox() + sw('slog', '記錄每個按鍵事件，存成檔案', d.log) +
     '<div class="logbox"><span class="cfgl">最近的事件</span><div id="logrows">' + logRows(6) + '</div></div>' +
-    '<p class="ver">PadToKBM 手把轉鍵鼠 v' + esc(state.version) + '<br>支援 DualSense、Switch Pro、Switch 2 Pro</p>';
+    '<p class="ver">PadToKBM 手把轉鍵鼠 v' + esc(state.version) + '<br>支援 DualSense、Switch Pro、Switch 2 Pro、Xbox Nano</p>';
+  if (t === 'known') return knownPane();
   if (t === 'stick') return '<div class="two"><div id="stkbox">' + stickExtras.stk(d) + '</div><div class="col">' +
     slider('deadzone', '搖桿死區（粉紅圈）', 0, 0.9, 0.05, d.deadzone, d.deadzone.toFixed(2)) +
     '<div class="trrow">' + trSvg(d.trigger) + slider('trigger', '扳機按到多深算按下', 0.05, 0.95, 0.05, d.trigger, Math.round(d.trigger * 100) + '%') + '</div></div></div>' +
@@ -204,6 +254,7 @@ async function save() {
 }
 
 export async function startSettings(board) {
+  onSettingsTab(watchPresent);
   hook('click', ev => {
     const el = ev.target.closest('[data-act],[data-stab]');
     if (el?.dataset.act === 'setopen') { openSettings(); return true; }
@@ -221,6 +272,8 @@ export async function startSettings(board) {
     else if (a === 'setsave') save();
     else if (a === 'opencfg') invoke('open_config_in_editor').catch(e => { state.setErr = String(e); rerender(); });
     else if (a === 'opendir') invoke('open_config_folder').catch(e => { state.setErr = String(e); rerender(); });
+    else if (a === 'forgetpad') invoke('forget_hidden_pad', { id: el.dataset.id }).catch(e => { state.setErr = String(e); rerender(); });
+    else if (a === 'forgetall') invoke('forget_all_hidden_pads').catch(e => { state.setErr = String(e); rerender(); });
     else if (a === 'slog') { d.log = !d.log; rerender(); }
     else if (a === 'sfreeze') { d.freeze = !d.freeze; rerender(); }
     else if (a === 'stp') { d.tpOn = !d.tpOn; rerender(); }
@@ -268,7 +321,10 @@ export async function startSettings(board) {
     else if (lastKind) { log('連線', (PAD_NAMES[lastKind] || lastKind) + ' 已斷開'); lastKind = null; }
   });
   // Remembering the shown pad (`ui`, v3.4.0) is not a settings change.
-  await listen('config-changed', p => { if (!p?.ui) log('設定', '設定已變更'); });
+  await listen('config-changed', p => {
+    if (!p?.ui) log('設定', '設定已變更');
+    if (presentTimer) refreshPresent();
+  });
   await listen('touchpad-hover', p => { finger = p.quadrant === 255 ? null : [p.raw_x, p.raw_y]; paintTouchpad(); });
   await listen('touchpad-click', p => { finger = [p.raw_x, p.raw_y]; paintTouchpad(); });
 }

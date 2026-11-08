@@ -54,13 +54,14 @@ export function lbarHTML(st) {
     style = 'color:' + fill + ';animation-duration:' + (s.kind === 'rainstep' ? P + 's,' + s.p + 's' : s.p + 's') +
       ';animation-delay:-' + (now % P).toFixed(3) + 's' + (s.kind === 'rainstep' ? ',-' + (now % s.p).toFixed(3) + 's' : '');
   }
-  // Design G (no outline, no blur): lit strips get two stepped rings of the colour (.18, .38), every state a 3 px core
-  // and a 1 px pale centre. 關燈 / 原廠燈 have no rings and no visible centre line.
-  const ring = !(s.kind === 'off' || s.kind === 'none'), core = ring ? 'color-mix(in srgb,' + fill + ' 45%,#fff)' : fill;
-  const strip = c => '<g shape-rendering="crispEdges">' +
-    (ring ? '<rect x="' + (c - 2) + '" y="44" width="7" height="50" fill="' + fill + '" opacity=".18"/><rect x="' + (c - 1) + '" y="45" width="5" height="48" fill="' + fill + '" opacity=".38"/>' : '') +
-    '<rect x="' + c + '" y="46" width="3" height="46" fill="' + fill + '"/><rect x="' + (c + 1) + '" y="47" width="1" height="44" fill="' + core + '"/></g>';
-  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g' + dim + '><g class="' + cls + '" style="' + style + '">' + strip(103) + strip(194) + '</g></g></svg>';
+  // Design G (no outline, no blur): lit strips get two stepped rings of the colour (.18, .38) around a 3-wide
+  // core. 關燈 / 原廠燈 have no rings. v3.7.0: the strips run along the traced touchpad's slanted sides
+  // (left strip's left edge 88.6,38 -> 96.4,84; the right strip mirrored).
+  const ring = !(s.kind === 'off' || s.kind === 'none');
+  const poly = (w, mir) => [[88.6 - w, 38], [88.6 + 3 + w, 38], [96.4 + 3 + w, 84], [96.4 - w, 84]].map(p => (mir ? 300 - p[0] : p[0]) + ',' + p[1]).join(' ');
+  const strip = mir => (ring ? '<polygon points="' + poly(2, mir) + '" fill="' + fill + '" opacity=".18"/><polygon points="' + poly(1, mir) + '" fill="' + fill + '" opacity=".38"/>' : '') +
+    '<polygon points="' + poly(0, mir) + '" fill="' + fill + '"/>';
+  return '<svg class="lbarsvg" width="300" height="210" viewBox="0 0 300 210" aria-hidden="true"><g' + dim + '><g class="' + cls + '" style="' + style + '">' + strip(false) + strip(true) + '</g></g></svg>';
 }
 
 // ─── The dropdown in the caption row ─────────────────────────────────────────

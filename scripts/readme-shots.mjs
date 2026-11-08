@@ -34,7 +34,7 @@ fs.mkdirSync(outDir, { recursive: true });
 // ─── Demo config ─────────────────────────────────────────────────────────────
 
 const config = JSON.parse(fs.readFileSync(path.join(repo, 'rust/config.example.json'), 'utf8'));
-for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
+for (const pad of ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano']) {
   const p = config.pads[pad], b = p.buttons;
   const key = (id, value) => { b[id] = { label: b[id].label, type: 'key', value }; };
   key('0', 'LAlt'); key('1', 'z'); key('2', 'LShift'); key('3', 'a');
@@ -47,10 +47,18 @@ for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
   };
   p.quick_r = { '0': { label: 'Cross', type: 'key', value: '1' }, '1': { label: 'Circle', type: 'key', value: '2' }, '2': { label: 'Square', type: 'key', value: '3' }, '3': { label: 'Triangle', type: 'key', value: '4' } };
 }
-config.mapping_enabled = { ...config.mapping_enabled, ns2_pro: true };
+config.output_mode = { ...config.output_mode, ns2_pro: 'kbm' };
 // DualSense: L2 stays a quick page, R2 is a plain key, so the board shows both trigger modes.
 config.pads.dualsense.trigger_mode = { l: 'page', r: 'key' };
 { const b = config.pads.dualsense.buttons; b['24'] = { label: b['24'].label, type: 'key', value: 'LCtrl' }; }
+// Xbox Nano: the Xbox key (5) sends F12, so its shot shows it held (Share, 29, is greyed out: it never reaches the PC).
+{ const b = config.pads.xbox_nano.buttons; b['5'] = { label: b['5'].label, type: 'key', value: 'F12' }; }
+// 設定 → 記住的手把: a DualSense on Bluetooth and the Xbox Nano (connected now).
+const NANO_ID = 'HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\\8&113d3dd1&0&0000';
+config.hidhide_known = [
+  { kind: 'dualsense', id: 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\\9&2d1c&0&0000', addr: '7C66EF8223D2' },
+  { kind: 'xbox_nano', id: NANO_ID, addr: 'FB3A7C7DF9A8' },
+];
 // The light bar shots: 鍵鼠時 彩虹 (the default), 非鍵鼠時 呼吸 in 天藍 so both sections show their rows.
 config.lightbar = { ...config.lightbar, other: { ...config.lightbar.other, effect: 'breathe', color: '#2EA8FF' } };
 config.macros = {
@@ -81,10 +89,12 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 
 // ─── Tauri mock (runs in the page) ───────────────────────────────────────────
 
-function tauriMock({ config, version }) {
+function tauriMock({ config, version, nanoId }) {
   const listeners = {};
   let nextId = 1;
-  const status = { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense', 'ns2_pro'], off_pads: [] };
+  // v3.8.0: the DualSense and the Nano show their battery; the Switch 2 Pro (no reading) keeps the green lamp.
+  const status = { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense', 'ns2_pro', 'xbox_nano'], off_pads: [],
+    battery: { dualsense: { pct: 80, charging: false }, xbox_nano: { pct: 70, charging: false } } };
   window.__emit = (name, payload) => {
     for (const l of (listeners[name] || []).slice()) l.cb({ event: name, id: l.id, payload });
   };
@@ -97,8 +107,10 @@ function tauriMock({ config, version }) {
       case 'get_app_version': return version;
       case 'get_config_path': return 'D:\\Games\\PadToKBM\\padtokbm.json';
       case 'set_pad_off': return [];
+      case 'get_present_pad_ids': return [nanoId];
+      case 'get_xbox_status': return { vigem: 'installed', hidhide: 'installed', hidden: true };
       case 'get_vigem_status': return 'installed';
-      case 'install_vigem': return 'installed';
+      case 'install_vigem': case 'install_hidhide': return 'installed';
       default: return null;
     }
   }
@@ -120,7 +132,7 @@ const browser = await chromium.launch({ executablePath: chrome, headless: true }
 const errors = [];
 try {
   const context = await browser.newContext({ viewport: { width: 994, height: 669 }, deviceScaleFactor: 2 });   // the drawn window at 2x
-  await context.addInitScript(tauriMock, { config, version });
+  await context.addInitScript(tauriMock, { config, version, nanoId: NANO_ID });
   const page = await context.newPage();
   page.on('pageerror', e => errors.push(String(e)));
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -134,6 +146,11 @@ try {
   const emit = (name, payload) => page.evaluate(([n, p]) => window.__emit(n, p), [name, payload]);
   // The pad-art light strips animate (彩虹 by default): hold them at their first frame so reruns give the same pictures.
   await page.addStyleTag({ content: '#board .lbar{animation-play-state:paused!important;animation-delay:0s!important}' });
+
+  // 0. Battery (v3.8.0): the pad tabs, the DualSense's battery hovered (its plate says 80%). Cropped to the header.
+  await page.hover('#board [data-pad="dualsense"]');
+  await shot('battery.png', { x: 7, y: 34, width: 404, height: 72 });
+  await page.mouse.move(980, 650);
 
   // 1. The board, DualSense shown, Cross held: slot, line and tile light up.
   await emit('button-down', { id: 0 });
@@ -178,6 +195,9 @@ try {
     await page.waitForTimeout(40);
   }
   await shot('settings.png');
+  // 記住的手把 (v3.6.0; the Xbox Nano, v3.7.0).
+  await page.click('#board [data-stab="known"]');
+  await shot('known-pads.png');
   await page.click('#board [data-act="setclose"]');
 
   // 6. Macro editor.
@@ -185,6 +205,13 @@ try {
   await shot('macro-editor.png');
   await page.click('#board .med [data-act="mdone"]');
 
+  // 7. Xbox Nano (v3.7.0): its traced art, the Xbox key held (bound to F12), Share greyed out.
+  await page.click('#board [data-pad="xbox_nano"]');
+  await emit('button-down', { id: 5 });
+  await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F12', action: 'down', source: { button: 5 } });
+  await shot('xbox-nano.png');
+  await emit('button-up', { id: 5 });
+  await emit('activity', { ts_ms: Date.now(), kind: 'emit', key: 'F12', action: 'up' });
 
 } finally {
   await browser.close();

@@ -14,7 +14,7 @@
 //! feature; the `*_impl` functions are always compiled.
 
 use crate::config::{Binding, ButtonEntry, Config, MacroDef, ADDED_IDS};
-use crate::config_io::{write_atomic, ConfigDoc};
+use crate::config_io::{file_lock, write_atomic, ConfigDoc};
 use crate::engine::Handle;
 use crate::gamepad::lightbar::LightbarConfig;
 use crate::gamepad::ControllerKind;
@@ -155,18 +155,31 @@ pub fn get_config_impl(engine: &Handle) -> Config {
 /// Load the on-disk config, patch it, validate, write it atomically, then
 /// replace the live engine config with the result (which bumps the
 /// generation the mapper watches). Any failure leaves disk and engine
-/// unchanged.
+/// unchanged. Under the config file lock (`config_io::file_lock`).
 fn mutate_config(
     engine: &Handle,
     config_path: &Path,
     patch: impl FnOnce(&mut ConfigDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    mutate_config_if(engine, config_path, |doc| patch(doc).map(|()| true)).map(|_| ())
+}
+
+/// [`mutate_config`] that writes only when `patch` returns `true` (it
+/// changed something). Returns whether it wrote.
+fn mutate_config_if(
+    engine: &Handle,
+    config_path: &Path,
+    patch: impl FnOnce(&mut ConfigDoc) -> anyhow::Result<bool>,
+) -> anyhow::Result<bool> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
-    patch(&mut doc)?;
+    if !patch(&mut doc)? {
+        return Ok(false);
+    }
     doc.validate()?;
     write_atomic(config_path, &doc)?;
     *engine.config_write() = doc.typed().clone();
-    Ok(())
+    Ok(true)
 }
 
 /// A quick page holds only `QUICK_IDS`; the base table any id `0..=32`.
@@ -339,6 +352,7 @@ pub fn set_macro_impl(
     name: String,
     def: MacroDef,
 ) -> anyhow::Result<()> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     let mut macros = doc.typed().macros.clone();
     macros.insert(name, def);
@@ -519,6 +533,7 @@ pub fn set_settings_impl(
     config_path: &Path,
     s: Settings,
 ) -> anyhow::Result<()> {
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     doc.set_deadzone(s.deadzone);
     doc.set_trigger_threshold(s.trigger_threshold);
@@ -591,44 +606,133 @@ pub fn reset_settings_impl(
     set_settings_impl(engine, config_path, Settings::defaults())
 }
 
-// ─── set_mapping_enabled ──────────────────────────────────────────────────────
+// ─── set_output_mode ──────────────────────────────────────────────────────────
 
-/// Tauri command: turn mapping ON/OFF for one controller kind (persisted).
+/// Tauri command: where one controller kind's input goes, `mode` =
+/// kbm / xbox / pad (persisted).
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
-pub fn set_mapping_enabled(
+pub fn set_output_mode(
     app: tauri::AppHandle,
     engine: State<'_, Handle>,
     config_path: State<'_, PathBuf>,
     kind: String,
-    enabled: bool,
+    mode: String,
 ) -> Result<(), String> {
-    set_mapping_enabled_impl(&*engine, &config_path, &kind, enabled)
+    set_output_mode_impl(&*engine, &config_path, &kind, &mode)
         .map_err(|e| format!("{e:#}"))?;
     let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
     Ok(())
 }
 
-/// Pure implementation of `set_mapping_enabled` callable without `tauri::State`.
+/// Pure implementation of `set_output_mode` callable without `tauri::State`.
 ///
-/// Unknown `kind` slugs are rejected before touching disk.
-pub fn set_mapping_enabled_impl(
+/// Unknown `kind` slugs and `mode` values are rejected before touching disk.
+pub fn set_output_mode_impl(
     engine: &Handle,
     config_path: &Path,
     kind: &str,
-    enabled: bool,
+    mode: &str,
 ) -> anyhow::Result<()> {
     let k = crate::gamepad::ControllerKind::from_slug(kind)
         .ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
+    let m = crate::config::OutputMode::from_slug(mode)
+        .ok_or_else(|| anyhow::anyhow!("unknown output mode '{mode}'"))?;
+    // The Nano has one joined Xbox / 手把 output, stored as `pad`.
+    let m = if k == crate::gamepad::ControllerKind::XboxNano && m == crate::config::OutputMode::Xbox {
+        crate::config::OutputMode::Pad
+    } else {
+        m
+    };
+    let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
-    doc.set_mapping_enabled(k, enabled);
+    doc.set_output_mode(k, m);
     doc.validate()?;
     write_atomic(config_path, &doc)?;
-    engine
-        .config_write()
-        .mapping_enabled
-        .insert(k.slug().to_string(), enabled);
+    let mut live = engine.config_write();
+    live.output_mode.insert(k.slug().to_string(), m);
+    live.mapping_enabled.remove(k.slug());
     Ok(())
+}
+
+// ─── forget_hidden_pad / forget_all_hidden_pads ──────────────────────────────
+
+/// Tauri command: HID instance ids of the pads present at the hider's last
+/// round (`HideStatus::present`); empty without a worker or while nothing
+/// is hidden. The settings' 記住的手把 marks these 連線中 and keeps them.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn get_present_pad_ids(engine: State<'_, Handle>) -> Vec<String> {
+    present_pad_ids_impl(&engine)
+}
+
+/// Pure implementation of `get_present_pad_ids`.
+pub fn present_pad_ids_impl(engine: &Handle) -> Vec<String> {
+    engine.hider().map(|l| l.status().present).unwrap_or_default()
+}
+
+/// Tauri command: the settings' 刪除 on one remembered HidHide pad (`id`,
+/// case-insensitive). Refused while that pad is present (it would be
+/// remembered again at once). The engine then sends the hider the shorter
+/// list and the absent pad leaves the blacklist. `config-changed` only when
+/// something went.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn forget_hidden_pad(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+    id: String,
+) -> Result<(), String> {
+    if forget_hidden_pad_impl(&*engine, &config_path, &id).map_err(|e| format!("{e:#}"))? {
+        let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    }
+    Ok(())
+}
+
+/// Pure implementation of `forget_hidden_pad`: `true` when the config was
+/// written.
+pub fn forget_hidden_pad_impl(engine: &Handle, config_path: &Path, id: &str) -> anyhow::Result<bool> {
+    if present_pad_ids_impl(engine).iter().any(|p| p.eq_ignore_ascii_case(id)) {
+        anyhow::bail!("連線中的手把要先關掉才能刪除");
+    }
+    forget_hidden(engine, config_path, Some(id))
+}
+
+/// Tauri command: the settings' 全部刪除: every remembered HidHide pad that
+/// is not present (present ones stay, as for 刪除).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub fn forget_all_hidden_pads(
+    app: tauri::AppHandle,
+    engine: State<'_, Handle>,
+    config_path: State<'_, PathBuf>,
+) -> Result<(), String> {
+    if forget_all_hidden_pads_impl(&*engine, &config_path).map_err(|e| format!("{e:#}"))? {
+        let _ = app.emit("config-changed", serde_json::json!({"source": "ipc"}));
+    }
+    Ok(())
+}
+
+/// Pure implementation of `forget_all_hidden_pads`.
+pub fn forget_all_hidden_pads_impl(engine: &Handle, config_path: &Path) -> anyhow::Result<bool> {
+    forget_hidden(engine, config_path, None)
+}
+
+fn forget_hidden(engine: &Handle, config_path: &Path, id: Option<&str>) -> anyhow::Result<bool> {
+    let present = present_pad_ids_impl(engine);
+    mutate_config_if(engine, config_path, |doc| {
+        let before = &doc.typed().hidhide_known;
+        let next: Vec<crate::config::KnownPad> = match id {
+            Some(_) => crate::config::forget_known(before, id),
+            None => before.iter().filter(|k| present.iter().any(|p| p.eq_ignore_ascii_case(&k.id))).cloned().collect(),
+        };
+        if next == *before {
+            return Ok(false);
+        }
+        doc.set_hidhide_known(next);
+        Ok(true)
+    })
 }
 
 // ─── set_pad_off ─────────────────────────────────────────────────────────────
@@ -649,9 +753,10 @@ pub fn set_pad_off_impl(engine: &Handle, kind: &str, off: bool) -> anyhow::Resul
     Ok(engine.off_pads().into_iter().map(|k| k.slug().to_string()).collect())
 }
 
-// ─── ViGEmBus (Switch 2 Pro Xbox output) ─────────────────────────────────────
+// ─── Xbox output: ViGEmBus + HidHide ─────────────────────────────────────────
 
-/// Tauri command: `"installed" | "missing" | "unsupported"`.
+/// Tauri command: `"installed" | "missing" | "unsupported"`. Kept for older
+/// callers; `get_xbox_status` reports both drivers.
 #[cfg_attr(feature = "gui", tauri::command)]
 #[cfg(feature = "gui")]
 pub async fn get_vigem_status() -> Result<String, String> {
@@ -674,6 +779,77 @@ pub async fn install_vigem(engine: State<'_, Handle>) -> Result<String, String> 
         .map_err(|e| e.to_string())?;
     if status == "installed" {
         engine.retry_virtual_pad();
+    }
+    Ok(status.to_string())
+}
+
+/// What one pad's Xbox output needs and whether its real pad is hidden.
+/// `vigem` / `hidhide`: `"installed" | "missing" | "unsupported"`.
+/// `hidden`: `null` when not applicable (pad in 手把 mode, Switch 2 Pro,
+/// HidHide missing or unsupported); `false` while the pad needs one
+/// reconnect (hiding is not applied yet); `true` when it is hidden.
+/// Hiding applies in 鍵鼠 and Xbox mode.
+/// `auto_off`: the app powered a pad of this kind off this launch because it
+/// needed that reconnect (its own Bluetooth link, dropped by address), and
+/// that pad is not back yet; `false` once it is, and when nothing could be
+/// powered off (USB, no link dropped): then `hidden` stays `false`.
+/// `replug_usb`: a pad of this kind that needs the reconnect is on USB: only
+/// unplugging it makes a game drop it (the ⏻ would not, and would drop a
+/// Bluetooth pad of the same kind), so the board says to unplug it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct XboxStatus {
+    pub vigem: String,
+    pub hidhide: String,
+    pub hidden: Option<bool>,
+    pub auto_off: bool,
+    pub replug_usb: bool,
+}
+
+/// Tauri command: [`XboxStatus`] for pad `kind` (slug). Probes both drivers
+/// off the UI thread.
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub async fn get_xbox_status(engine: State<'_, Handle>, kind: String) -> Result<XboxStatus, String> {
+    let vigem = tauri::async_runtime::spawn_blocking(crate::vigem_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    let hidhide = tauri::async_runtime::spawn_blocking(crate::hidhide_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    xbox_status_impl(&engine, &kind, vigem, hidhide).map_err(|e| format!("{e:#}"))
+}
+
+/// Pure part of `get_xbox_status`, given the two probe results. Without a
+/// HidHide worker (dry run, not Windows) HidHide is `"unsupported"`: the app
+/// does not touch it then.
+pub fn xbox_status_impl(engine: &Handle, kind: &str, vigem: &str, hidhide: &str) -> anyhow::Result<XboxStatus> {
+    let k = ControllerKind::from_slug(kind).ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
+    let link = engine.hider();
+    let hidhide = if link.is_some() { hidhide } else { "unsupported" };
+    let auto_off = link.is_some() && engine.auto_off(k);
+    let replug_usb = link.as_ref().is_some_and(|l| l.replug_usb(k));
+    let hidden = match link {
+        Some(link) if hidhide == "installed" => link.hidden(k),
+        _ => None,
+    };
+    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden, auto_off, replug_usb })
+}
+
+/// Tauri command: download the pinned official HidHide installer, verify it
+/// and run it (iron rule 7); returns the status after the installer exits.
+/// When installed, the hider runs a round now (and keeps retrying while the
+/// driver is not loaded yet).
+#[cfg_attr(feature = "gui", tauri::command)]
+#[cfg(feature = "gui")]
+pub async fn install_hidhide(engine: State<'_, Handle>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(crate::hidhide_setup::install)
+        .await
+        .map_err(|e| e.to_string())??;
+    let status = tauri::async_runtime::spawn_blocking(crate::hidhide_setup::status)
+        .await
+        .map_err(|e| e.to_string())?;
+    if status == "installed" {
+        engine.retry_hiding();
     }
     Ok(status.to_string())
 }
@@ -981,7 +1157,13 @@ pub fn get_ui_prefs(engine: State<'_, Handle>) -> Result<crate::gui::ui_prefs::U
 
 /// Pure implementation of `get_ui_prefs`.
 pub fn get_ui_prefs_impl(engine: &Handle) -> crate::gui::ui_prefs::UiPrefs {
-    crate::gui::ui_prefs::UiPrefs { last_pad: engine.config_read().last_pad.clone() }
+    {
+        let cfg = engine.config_read();
+        crate::gui::ui_prefs::UiPrefs {
+            last_pad: cfg.last_pad.clone(),
+            hidhide_prompt_dismissed: Some(cfg.hidhide_prompt_dismissed),
+        }
+    }
 }
 
 /// Tauri command: remember the pad the board shows (`last_pad` in the
@@ -1008,12 +1190,23 @@ pub fn set_ui_prefs_impl(
     config_path: &Path,
     prefs: crate::gui::ui_prefs::UiPrefs,
 ) -> anyhow::Result<bool> {
-    let Some(pad) = prefs.last_pad else { return Ok(false) };
-    if engine.config_read().last_pad.as_deref() == Some(pad.as_str()) {
+    let (pad, dismissed) = {
+        let cfg = engine.config_read();
+        (
+            prefs.last_pad.filter(|p| cfg.last_pad.as_deref() != Some(p.as_str())),
+            prefs.hidhide_prompt_dismissed.filter(|v| cfg.hidhide_prompt_dismissed != *v),
+        )
+    };
+    if pad.is_none() && dismissed.is_none() {
         return Ok(false);
     }
     mutate_config(engine, config_path, |doc| {
-        doc.set_last_pad(&pad);
+        if let Some(pad) = &pad {
+            doc.set_last_pad(pad);
+        }
+        if let Some(v) = dismissed {
+            doc.set_hidhide_prompt_dismissed(v);
+        }
         Ok(())
     })?;
     Ok(true)

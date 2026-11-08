@@ -35,10 +35,15 @@ pub struct Config {
     pub touchpad_deadzone_radius: u32,
     #[serde(default = "default_touchpad_click_freeze_enabled")]
     pub touchpad_click_freeze_enabled: bool,
-    /// Per-controller mapping switch, keyed by `ControllerKind::slug()`.
-    /// Missing key → `ControllerKind::default_mapping_enabled()`.
+    /// Pre-v3.6.0 per-controller switch, keyed by `ControllerKind::slug()`.
+    /// Read only as the fallback for a slug missing from `output_mode`
+    /// (`output_mode_for`); `ConfigDoc::set_output_mode` removes its entry.
     #[serde(default)]
     pub mapping_enabled: BTreeMap<String, bool>,
+    /// Where each pad's input goes, keyed by `ControllerKind::slug()`
+    /// (v3.6.0). Missing key → `mapping_enabled`, then `Kbm`.
+    #[serde(default)]
+    pub output_mode: BTreeMap<String, OutputMode>,
     /// Buzz the controller once when it becomes the active one.
     #[serde(default = "default_rumble_on_connect")]
     pub rumble_on_connect: bool,
@@ -52,9 +57,98 @@ pub struct Config {
     /// file, padtokbm.ui.json (`gui::ui_prefs::absorb`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pad: Option<String>,
+    /// v3.6.0: the user pressed 「稍後」 on the HidHide install prompt, so it
+    /// no longer opens by itself. A UI hint; written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidhide_prompt_dismissed: bool,
     /// DualSense lightbar (v3.5.0); a missing key = the defaults.
     #[serde(default)]
     pub lightbar: crate::gamepad::lightbar::LightbarConfig,
+    /// v3.6.0: pads the hider has hidden, oldest first, at most
+    /// [`HIDHIDE_KNOWN_MAX`]. Hidden at start even when absent, so a pad
+    /// turned on later arrives hidden. Written by the hider
+    /// (`hider::remember_hidden_pads`), trimmed by the settings' 刪除.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidhide_known: Vec<KnownPad>,
+}
+
+/// A pad the hider has hidden (`Config::hidhide_known`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownPad {
+    /// `ControllerKind::slug()`, for the settings' list.
+    pub kind: String,
+    /// Its HID device instance id, as HidHide's blacklist holds it.
+    pub id: String,
+    /// Its Bluetooth address, 12 upper-case hex digits (`7C66EF8223D2`),
+    /// read from the device tree when it was learned
+    /// (`hidhide::bt_addr_of_instance`); the settings show its last four as
+    /// the pad's serial. `None`: USB, or not found. Read upper-cased (the
+    /// same address in either case); `validate` still wants 12 hex digits.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "upper_addr")]
+    pub addr: Option<String>,
+}
+
+fn upper_addr<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.map(|a| a.to_ascii_uppercase()))
+}
+
+/// At most this many remembered pads; the oldest goes first.
+pub const HIDHIDE_KNOWN_MAX: usize = 16;
+
+/// `list` with the pads of `found` it lacks appended (ids compare
+/// case-insensitively, as HidHide's), then cut to the newest
+/// [`HIDHIDE_KNOWN_MAX`]. A pad already listed without an address gets the
+/// one `found` has; an address already listed is kept.
+pub fn remember_known(list: &[KnownPad], found: &[KnownPad]) -> Vec<KnownPad> {
+    let mut out = list.to_vec();
+    for k in found {
+        match out.iter_mut().find(|x| x.id.eq_ignore_ascii_case(&k.id)) {
+            Some(x) => {
+                if x.addr.is_none() {
+                    x.addr = k.addr.clone();
+                }
+            }
+            None => out.push(k.clone()),
+        }
+    }
+    let excess = out.len().saturating_sub(HIDHIDE_KNOWN_MAX);
+    out.drain(..excess);
+    out
+}
+
+/// `list` without the pad `id` (case-insensitive); `None`: without any.
+pub fn forget_known(list: &[KnownPad], id: Option<&str>) -> Vec<KnownPad> {
+    match id {
+        Some(id) => list.iter().filter(|x| !x.id.eq_ignore_ascii_case(id)).cloned().collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Where a pad's input goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputMode {
+    /// 鍵鼠: buttons go through this mapping as keys / mouse.
+    Kbm,
+    /// A virtual Xbox 360 pad (ViGEmBus) mirrors the pad.
+    Xbox,
+    /// The app sends nothing; the game reads the controller itself. Only
+    /// for a pad with a native Windows driver (`has_native_driver`).
+    Pad,
+}
+
+impl OutputMode {
+    pub fn slug(self) -> &'static str {
+        match self {
+            OutputMode::Kbm => "kbm",
+            OutputMode::Xbox => "xbox",
+            OutputMode::Pad => "pad",
+        }
+    }
+
+    pub fn from_slug(s: &str) -> Option<OutputMode> {
+        [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Pad].into_iter().find(|m| m.slug() == s)
+    }
 }
 
 fn default_rumble_on_connect() -> bool { true }
@@ -197,8 +291,21 @@ impl Config {
             .context("parsing config")?;
         cfg.fill_missing_pads();
         cfg.fill_added_id_defaults();
+        cfg.drop_stray_known();
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Drop remembered Xbox Nano entries that are not its gamepad
+    /// collection (`&Col01`): the v3.7.0 test build remembered all four,
+    /// the keyboard Share comes from among them. The hider no longer hides
+    /// them, and takes ours out of HidHide at its next round. Returns
+    /// whether any went.
+    pub fn drop_stray_known(&mut self) -> bool {
+        let before = self.hidhide_known.len();
+        self.hidhide_known
+            .retain(|k| k.kind != ControllerKind::XboxNano.slug() || crate::hidhide::is_gamepad_collection(&k.id));
+        self.hidhide_known.len() != before
     }
 
     /// Give every controller slug without a table the default table.
@@ -248,11 +355,31 @@ impl Config {
         }
     }
 
-    pub fn mapping_enabled_for(&self, kind: crate::gamepad::ControllerKind) -> bool {
-        self.mapping_enabled
-            .get(kind.slug())
-            .copied()
-            .unwrap_or_else(|| kind.default_mapping_enabled())
+    /// `output_mode[slug]`, else the pre-v3.6.0 `mapping_enabled[slug]`
+    /// (true → Kbm; false → Pad, which was the virtual Xbox pad for the
+    /// Switch 2 Pro), else Kbm. A pad with no native Windows driver has no
+    /// `Pad` mode: it resolves to `Xbox`. The Xbox Nano is the reverse: Xbox
+    /// and 手把 are one output for it (no virtual pad is ever plugged), so a
+    /// stored `Xbox` resolves to `Pad`. Normalised here, on every read, so a
+    /// hand-edited file and a legacy value behave the same as the IPC path.
+    pub fn output_mode_for(&self, kind: ControllerKind) -> OutputMode {
+        let mode = match (self.output_mode.get(kind.slug()), self.mapping_enabled.get(kind.slug())) {
+            (Some(&m), _) => m,
+            (None, Some(false)) => OutputMode::Pad,
+            (None, _) => OutputMode::Kbm,
+        };
+        if mode == OutputMode::Pad && !kind.has_native_driver() {
+            OutputMode::Xbox
+        } else if mode == OutputMode::Xbox && kind == ControllerKind::XboxNano {
+            OutputMode::Pad
+        } else {
+            mode
+        }
+    }
+
+    /// Buttons go through this mapping (`output_mode_for` is `Kbm`).
+    pub fn mapping_enabled_for(&self, kind: ControllerKind) -> bool {
+        self.output_mode_for(kind) == OutputMode::Kbm
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -317,6 +444,11 @@ impl Config {
                 bail!("mapping_enabled has unknown controller slug {slug:?}");
             }
         }
+        for slug in self.output_mode.keys() {
+            if ControllerKind::from_slug(slug).is_none() {
+                bail!("output_mode has unknown controller slug {slug:?}");
+            }
+        }
         for slug in self.pads.keys() {
             if ControllerKind::from_slug(slug).is_none() {
                 bail!("pads has unknown controller slug {slug:?}");
@@ -327,6 +459,23 @@ impl Config {
                 bail!("stick_cal has unknown controller slug {slug:?}");
             }
             crate::gamepad::stick_cal::check(cal).map_err(|e| anyhow!("stick_cal.{slug}: {e}"))?;
+        }
+        if self.hidhide_known.len() > HIDHIDE_KNOWN_MAX {
+            bail!("hidhide_known lists {} pads; at most {HIDHIDE_KNOWN_MAX}", self.hidhide_known.len());
+        }
+        for (i, k) in self.hidhide_known.iter().enumerate() {
+            if ControllerKind::from_slug(&k.kind).is_none() {
+                bail!("hidhide_known[{i}] has unknown controller slug {:?}", k.kind);
+            }
+            if k.id.trim().is_empty() {
+                bail!("hidhide_known[{i}] has an empty id");
+            }
+            if k.addr.as_deref().is_some_and(|a| !crate::hidhide::is_bt_addr(a)) {
+                bail!("hidhide_known[{i}] addr {:?} is not 12 upper-case hex digits", k.addr.as_deref().unwrap_or(""));
+            }
+            if self.hidhide_known[..i].iter().any(|x| x.id.eq_ignore_ascii_case(&k.id)) {
+                bail!("hidhide_known lists {:?} twice", k.id);
+            }
         }
         for k in ControllerKind::ALL {
             let slug = k.slug();
@@ -696,10 +845,13 @@ mod tests {
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
             mapping_enabled: Default::default(),
+            output_mode: Default::default(),
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 
@@ -831,10 +983,13 @@ mod tests {
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
             mapping_enabled: Default::default(),
+            output_mode: Default::default(),
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 
@@ -947,6 +1102,115 @@ mod tests {
         assert!(!cfg.mapping_enabled_for(ControllerKind::DualSense));
     }
 
+    /// `minimal_json_with` plus optional raw `mapping_enabled` / `output_mode`.
+    fn json_with_modes(mapping: Option<&str>, output: Option<&str>) -> String {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&minimal_json_with(mapping.unwrap_or(""))).unwrap();
+        if let Some(o) = output {
+            v["output_mode"] = serde_json::from_str(o).unwrap();
+        }
+        serde_json::to_string(&v).unwrap()
+    }
+
+    fn modes(mapping: Option<&str>, output: Option<&str>) -> [OutputMode; 4] {
+        use crate::gamepad::ControllerKind;
+        let cfg = Config::load_from_str(&json_with_modes(mapping, output)).unwrap();
+        ControllerKind::ALL.map(|k| cfg.output_mode_for(k))
+    }
+
+    #[test]
+    fn output_mode_neither_field_is_kbm() {
+        assert_eq!(modes(None, None), [OutputMode::Kbm; 4]);
+    }
+
+    #[test]
+    fn output_mode_from_mapping_enabled_true() {
+        let m = r#"{"dualsense": true, "ns_pro": true, "ns2_pro": true}"#;
+        assert_eq!(modes(Some(m), None), [OutputMode::Kbm; 4]);
+    }
+
+    #[test]
+    fn output_mode_from_mapping_enabled_false() {
+        // false meant "the game reads the pad" for the pads Windows drives
+        // natively, and the virtual Xbox pad for the Switch 2 Pro.
+        let m = r#"{"dualsense": false, "ns_pro": false, "ns2_pro": false, "xbox_nano": false}"#;
+        assert_eq!(
+            modes(Some(m), None),
+            [OutputMode::Pad, OutputMode::Pad, OutputMode::Xbox, OutputMode::Pad]
+        );
+    }
+
+    #[test]
+    fn output_mode_explicit_values() {
+        let o = r#"{"dualsense": "xbox", "ns_pro": "pad", "ns2_pro": "kbm"}"#;
+        assert_eq!(
+            modes(None, Some(o)),
+            [OutputMode::Xbox, OutputMode::Pad, OutputMode::Kbm, OutputMode::Kbm]
+        );
+    }
+
+    #[test]
+    fn output_mode_wins_over_mapping_enabled() {
+        let m = r#"{"dualsense": false, "ns_pro": true, "ns2_pro": false}"#;
+        let o = r#"{"dualsense": "kbm", "ns_pro": "xbox"}"#;
+        // ns2_pro has no output_mode entry: it still falls back.
+        assert_eq!(
+            modes(Some(m), Some(o)),
+            [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Xbox, OutputMode::Kbm]
+        );
+    }
+
+    #[test]
+    fn ns2_pad_mode_resolves_to_xbox() {
+        // No native Windows path for the Switch 2 Pro.
+        let o = r#"{"ns2_pro": "pad"}"#;
+        assert_eq!(modes(None, Some(o))[2], OutputMode::Xbox);
+    }
+
+    #[test]
+    fn xbox_nano_defaults_to_kbm_and_keeps_pad_mode() {
+        // The Nano has a native driver, so `pad` stays `pad` (not Xbox).
+        let o = r#"{"xbox_nano": "pad"}"#;
+        assert_eq!(modes(None, Some(o))[3], OutputMode::Pad);
+        assert_eq!(modes(None, None)[3], OutputMode::Kbm);
+    }
+
+    #[test]
+    fn mapping_enabled_for_is_kbm_mode() {
+        use crate::gamepad::ControllerKind;
+        let o = r#"{"dualsense": "xbox", "ns_pro": "pad", "ns2_pro": "kbm"}"#;
+        let cfg = Config::load_from_str(&json_with_modes(None, Some(o))).unwrap();
+        for k in ControllerKind::ALL {
+            assert_eq!(cfg.mapping_enabled_for(k), cfg.output_mode_for(k) == OutputMode::Kbm, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn output_mode_unknown_value_rejected() {
+        let o = r#"{"dualsense": "joystick"}"#;
+        let err = format!("{:#}", Config::load_from_str(&json_with_modes(None, Some(o))).unwrap_err());
+        assert!(err.contains("joystick"), "got: {err}");
+    }
+
+    #[test]
+    fn output_mode_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&OutputMode::Kbm).unwrap(), "\"kbm\"");
+        assert_eq!(serde_json::to_string(&OutputMode::Xbox).unwrap(), "\"xbox\"");
+        assert_eq!(serde_json::to_string(&OutputMode::Pad).unwrap(), "\"pad\"");
+        for m in [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Pad] {
+            assert_eq!(OutputMode::from_slug(m.slug()), Some(m));
+        }
+        assert_eq!(OutputMode::from_slug("joystick"), None);
+    }
+
+    #[test]
+    fn validate_rejects_unknown_output_mode_slug() {
+        let mut cfg = Config::load_from_str(&minimal_json_with("")).unwrap();
+        cfg.output_mode.insert("ps5".to_string(), OutputMode::Xbox);
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("ps5") && err.contains("output_mode"), "got: {err}");
+    }
+
     /// A v1 (pre-pads) config: top-level `buttons` 0..=24, 24 → Shift.
     fn v1_json() -> String {
         let mut v: serde_json::Value = serde_json::from_str(r#"{
@@ -1010,10 +1274,12 @@ mod tests {
         let mut v = v2_value();
         v["pads"].as_object_mut().unwrap().remove("ns_pro");
         v["pads"].as_object_mut().unwrap().remove("ns2_pro");
+        v["pads"].as_object_mut().unwrap().remove("xbox_nano");
         v["pads"]["dualsense"]["buttons"]["0"] = serde_json::json!({"label": "x", "type": "key", "value": "z"});
         let cfg = Config::load_from_str(&v.to_string()).unwrap();
         assert_eq!(cfg.pad(ControllerKind::NsPro), &default_pad_bindings(ControllerKind::NsPro));
         assert_eq!(cfg.pad(ControllerKind::Ns2Pro), &default_pad_bindings(ControllerKind::Ns2Pro));
+        assert_eq!(cfg.pad(ControllerKind::XboxNano), &default_pad_bindings(ControllerKind::XboxNano));
         assert!(matches!(cfg.pad(ControllerKind::DualSense).buttons["0"].binding, Binding::Key(ref s) if s == "z"));
     }
 

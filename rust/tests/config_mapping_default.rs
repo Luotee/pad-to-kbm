@@ -1,10 +1,11 @@
 //! v3.2.0: every pad defaults to keyboard/mouse output (鍵鼠). Existing
-//! configs keep what they say: an explicit `"ns2_pro": false` stays Xbox.
+//! configs keep what they say: an explicit legacy `mapping_enabled`
+//! `"ns2_pro": false` stays Xbox (v3.6.0: read through `output_mode_for`).
 
 #[allow(dead_code)]
 mod test_helpers;
 
-use dualsense_mapper::config::Config;
+use dualsense_mapper::config::{Config, OutputMode};
 use dualsense_mapper::gamepad::ControllerKind;
 
 #[test]
@@ -27,9 +28,12 @@ fn explicit_false_still_wins() {
 
 #[test]
 fn example_config_maps_every_pad() {
+    // v3.6.0: the example says `output_mode` (kbm) for every pad and no
+    // longer carries the legacy `mapping_enabled`.
     let text = include_str!("../config.example.json");
     let cfg = Config::load_from_str(text).expect("example parses");
+    assert!(cfg.mapping_enabled.is_empty(), "{:?}", cfg.mapping_enabled);
     for k in ControllerKind::ALL {
-        assert_eq!(cfg.mapping_enabled.get(k.slug()), Some(&true), "{k:?}");
+        assert_eq!(cfg.output_mode.get(k.slug()), Some(&OutputMode::Kbm), "{k:?}");
     }
 }

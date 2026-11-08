@@ -11,7 +11,7 @@
 <p align="center"><sub>The key-binding board: drag a key, mouse button or macro tile onto a button's slot to bind it. The pressed button and the key it sends light up.</sub></p>
 
 PadToKBM (formerly DualSense Mapper) is a small Windows app: one ~11 MB `PadToKBM.exe`, no installer, no bundled driver.
-It supports **DualSense (PS5), Switch Pro and Switch 2 Pro**, each with its own set of bindings.
+It supports **DualSense (PS5), Switch Pro, Switch 2 Pro and Xbox Nano**, each with its own set of bindings.
 It was first written so my wife could play MapleStory Worlds Artale with a controller on a laptop.
 
 The app's interface is in Traditional Chinese; the labels quoted below (「…」) are what you see on screen.
@@ -44,6 +44,7 @@ For the current version see [CHANGELOG.md](CHANGELOG.md).
 | DualSense | Hold PS and Create until the light bar flashes, then add it in Windows "Bluetooth & devices" |
 | Switch Pro | Hold the sync button on top until the lights run, then add it in Windows "Bluetooth & devices" |
 | Switch 2 Pro | Do **not** pair it in Windows. With PadToKBM running, hold the small SYNC button the first time; afterwards any button reconnects |
+| Xbox Nano | Hold the pair button until the Xbox button flashes fast, then add it in Windows "Bluetooth & devices" |
 
 **3. Double-click `PadToKBM.exe`**: once the window is open, press buttons; the keys go to the program in the foreground.
 The first run writes a config file `padtokbm.json` next to the exe; the whole folder can be moved to another PC.
@@ -70,6 +71,9 @@ The first run writes a config file `padtokbm.json` next to the exe; the whole fo
     <td><sub><b>Settings</b> (gear): config file and recent events (each names the button or macro that sent it), stick calibration, touchpad, key timing; applied with 儲存 (Save).</sub></td>
   </tr>
 </table>
+
+<p><img src="docs/images/readme/battery.png" width="404" alt="The pad tabs: DualSense and Xbox Nano show a three-bar green battery, the Switch 2 Pro a green lamp; hovering the DualSense shows a grey plate reading 80%"></p>
+<p><sub><b>Battery.</b> A connected DualSense, Switch Pro or Xbox Nano shows its battery in its tab (green / yellow / red), a breathing bolt while it charges, and the percentage on hover; the Xbox Nano never shows charging.</sub></p>
 
 <sub>Screenshots use a demo config and can be regenerated with <code>scripts/readme-shots.mjs</code>.</sub>
 
@@ -108,12 +112,17 @@ is renamed to `padtokbm.json`, and a backup `dualsense-mapper.json.bak` is kept.
 
 ### Can I turn the controller off when I'm not using it?
 
-Yes, click the power button next to the controller's name. The pairing is kept; press PS / HOME to reconnect.
+Yes, click the power button next to the controller's name. The pairing is kept; press PS / HOME to reconnect. Not the Xbox Nano: its tab's power button is greyed out (the app cannot turn a Bluetooth LE controller off); hold its Xbox button for about 6 seconds to turn it off, press it again to turn it on.
+
+### The Xbox Nano's Xbox button opens the Xbox Game Bar?
+
+That is Windows, not PadToKBM. To stop it, turn off "Allow your controller to open Game Bar" in Windows Settings → Gaming → Game Bar (Windows 10: "Open Xbox Game Bar using this button on a controller").
+The Xbox button can still be bound in PadToKBM. Share never reaches the computer, so its slot is greyed out and cannot be bound. With Microsoft's Xbox Wireless driver installed, PadToKBM reads the Nano through XInput instead (detected automatically, nothing to set).
 To let the game use the controller directly (no key mapping) pick 手把; to stop it sending anything for a while pick 關.
 
-### USB, DualSense Edge, Xbox controllers or macOS?
+### USB, DualSense Edge, other Xbox controllers or macOS?
 
-Not yet: Bluetooth only, Windows only. A macOS build is planned; until then macOS can use the old Python program in [`legacy-python/`](legacy-python/README.md) (DualSense only).
+Not yet: Bluetooth only, Windows only; of the Xbox controllers only the Xbox Nano. A macOS build is planned; until then macOS can use the old Python program in [`legacy-python/`](legacy-python/README.md) (DualSense only).
 
 ---
 

@@ -1,30 +1,34 @@
-//! Virtual Xbox pad for the Switch 2 Pro while mapping is OFF: the engine
-//! plugs it only for an NS2 Pro session with mapping OFF, feeds it every
-//! event, unplugs it on mapping ON / Disconnected / pause / shutdown, never
-//! retries a failed plug in a loop, and surfaces `vigem_missing` and the BLE
-//! worker's warnings in the controller status.
+//! Virtual Xbox pad for any pad in Xbox output mode: the engine plugs it
+//! only for a session whose `output_mode` is `xbox`, feeds it every event,
+//! unplugs it on another mode / Disconnected / pause / shutdown, never
+//! retries a failed plug in a loop, plugs off the engine thread (a slow or
+//! stuck plug never stalls the loop), and surfaces `vigem_missing` and the
+//! BLE worker's warnings in the controller status.
 
 #[allow(dead_code)] // only load_example() is used here
 mod test_helpers;
 
-use dualsense_mapper::config::Config;
+use dualsense_mapper::config::{Config, OutputMode};
 use dualsense_mapper::engine::{Engine, EngineEvent, Handle};
 use dualsense_mapper::gamepad::{ControllerKind, GamepadEvent};
 use dualsense_mapper::safety::SharedKeyState;
 use dualsense_mapper::virtual_pad::{xbutton, XState};
 use dualsense_mapper::xinput_sink::{PadError, VirtualPad};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const STEP: Duration = Duration::from_millis(100);
 
-/// The example config with the Switch 2 Pro set to Xbox output
-/// (`mapping_enabled.ns2_pro = false`). Since v3.2.0 every pad defaults to
-/// 鍵鼠, so these tests say Xbox explicitly.
-fn ns2_xbox() -> Config {
+/// The example config with `kind` set to Xbox output. Every pad defaults
+/// to 鍵鼠, so these tests say Xbox explicitly.
+fn xbox(kind: ControllerKind) -> Config {
     let mut cfg = test_helpers::load_example();
-    cfg.mapping_enabled.insert("ns2_pro".into(), false);
+    cfg.output_mode.insert(kind.slug().into(), OutputMode::Xbox);
     cfg
+}
+
+fn ns2_xbox() -> Config {
+    xbox(ControllerKind::Ns2Pro)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,9 +48,12 @@ struct Shared {
 }
 
 /// Records every call. `fail` makes every `plug` return that error.
+/// `gate`: each `plug` blocks until a `()` arrives or the sender is dropped
+/// (a slow or stuck ViGEmBus `wait_ready`).
 struct FakePad {
     shared: Arc<Mutex<Shared>>,
     fail: Option<PadError>,
+    gate: Option<mpsc::Receiver<()>>,
 }
 
 impl VirtualPad for FakePad {
@@ -57,6 +64,10 @@ impl VirtualPad for FakePad {
             .as_ref()
             .map_or(0, |k| k.lock().unwrap_or_else(|p| p.into_inner()).len_held());
         s.ops.push(Op::Plug { held });
+        drop(s);
+        if let Some(g) = &self.gate {
+            let _ = g.recv();
+        }
         match &self.fail {
             Some(e) => Err(e.clone()),
             None => Ok(()),
@@ -84,8 +95,16 @@ struct Rig {
 
 impl Rig {
     fn new(cfg: Config, fail: Option<PadError>) -> Self {
+        Self::build(cfg, fail, None)
+    }
+    /// Every plug waits for a `()` on the returned sender.
+    fn gated(cfg: Config) -> (Self, mpsc::Sender<()>) {
+        let (tx, rx) = mpsc::channel();
+        (Self::build(cfg, None, Some(rx)), tx)
+    }
+    fn build(cfg: Config, fail: Option<PadError>, gate: Option<mpsc::Receiver<()>>) -> Self {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        let pad = FakePad { shared: shared.clone(), fail };
+        let pad = FakePad { shared: shared.clone(), fail, gate };
         let engine = Engine::spawn_with_fake_gamepad_and_pad(cfg, Box::new(pad)).expect("spawn");
         let h = engine.handle();
         shared.lock().unwrap().key_state = Some(h.key_state());
@@ -113,8 +132,8 @@ impl Rig {
         self.h.fake_event(ev);
         std::thread::sleep(STEP);
     }
-    fn set_mapping(&self, slug: &str, v: bool) {
-        self.h.config_write().mapping_enabled.insert(slug.into(), v);
+    fn set_mode(&self, slug: &str, m: OutputMode) {
+        self.h.config_write().output_mode.insert(slug.into(), m);
         std::thread::sleep(STEP);
     }
     fn warnings(&self) -> Vec<String> {
@@ -148,7 +167,6 @@ fn status_events(h: &Handle) -> Vec<Vec<String>> {
 
 #[test]
 fn ns2_mapping_off_plugs_and_feeds() {
-    // NS2 Pro defaults to mapping OFF.
     let r = Rig::new(ns2_xbox(), None);
     r.event(GamepadEvent::Connected(ControllerKind::Ns2Pro));
     assert_eq!(r.plugs(), 1, "NS2 Pro + mapping OFF plugs the pad: {:?}", r.ops());
@@ -193,7 +211,7 @@ fn ns2_mapping_on_unplugs_and_synths_keys() {
     r.event(GamepadEvent::Connected(ControllerKind::Ns2Pro));
     assert_eq!(r.plugs(), 1);
 
-    r.set_mapping("ns2_pro", true);
+    r.set_mode("ns2_pro", OutputMode::Kbm);
     assert_eq!(r.unplugs(), 1, "mapping ON unplugs the pad: {:?}", r.ops());
     let n = r.ops().len();
 
@@ -210,9 +228,7 @@ fn ns2_mapping_on_unplugs_and_synths_keys() {
 
 #[test]
 fn toggle_on_off_balanced() {
-    let mut cfg = test_helpers::load_example();
-    cfg.mapping_enabled.insert("ns2_pro".into(), true);
-    let r = Rig::new(cfg, None);
+    let r = Rig::new(test_helpers::load_example(), None);
     r.event(GamepadEvent::Connected(ControllerKind::Ns2Pro));
     assert_eq!(r.plugs(), 0, "mapping ON never plugs");
 
@@ -221,10 +237,10 @@ fn toggle_on_off_balanced() {
         // appears.
         r.event(GamepadEvent::ButtonDown(0));
         assert_eq!(r.h.held_keys_count(), 1);
-        r.set_mapping("ns2_pro", false);
+        r.set_mode("ns2_pro", OutputMode::Xbox);
         assert_eq!(r.h.held_keys_count(), 0, "ON→OFF releases held keys");
         r.event(GamepadEvent::ButtonUp(0));
-        r.set_mapping("ns2_pro", true);
+        r.set_mode("ns2_pro", OutputMode::Kbm);
     }
     let ops = r.ops();
     assert_eq!(r.plugs(), 10, "{ops:?}");
@@ -307,13 +323,13 @@ fn bus_not_found_sets_warning_no_retry_storm() {
     }
 
     // Mapping ON still works.
-    r.set_mapping("ns2_pro", true);
+    r.set_mode("ns2_pro", OutputMode::Kbm);
     r.event(GamepadEvent::ButtonDown(0));
     assert_eq!(r.h.held_keys_count(), 1, "mapping ON works without ViGEmBus");
     r.event(GamepadEvent::ButtonUp(0));
 
     // A mapping OFF edge may retry once.
-    r.set_mapping("ns2_pro", false);
+    r.set_mode("ns2_pro", OutputMode::Xbox);
     std::thread::sleep(STEP);
     assert_eq!(r.plugs(), 2, "OFF edge retries once: {:?}", r.ops());
 
@@ -328,6 +344,8 @@ fn bus_not_found_sets_warning_no_retry_storm() {
     r.engine.shutdown();
 }
 
+/// A pre-v3.6.0 `mapping_enabled: false` on a pad with a native driver
+/// means 手把 (`OutputMode::Pad`): the game reads the pad, nothing is plugged.
 #[test]
 fn dualsense_mapping_off_never_plugs() {
     let mut cfg = test_helpers::load_example();
@@ -340,7 +358,7 @@ fn dualsense_mapping_off_never_plugs() {
         r.event(GamepadEvent::ButtonUp(0));
         r.event(GamepadEvent::Disconnected);
     }
-    assert_eq!(r.ops(), vec![], "only the NS2 Pro gets a virtual pad");
+    assert_eq!(r.ops(), vec![], "手把 mode plugs no virtual pad");
     assert!(r.warnings().is_empty());
     r.engine.shutdown();
 }
@@ -399,5 +417,167 @@ fn retry_virtual_pad_respects_keys_mode() {
     r.h.retry_virtual_pad();
     std::thread::sleep(STEP);
     assert_eq!(r.plugs(), 0, "鍵鼠 mode never plugs");
+    r.engine.shutdown();
+}
+
+#[test]
+fn every_pad_in_xbox_mode_plugs_and_feeds() {
+    // The Xbox Nano is the exception: its Xbox is 手把 (`nano_never_plugs_a_virtual_pad`).
+    for kind in ControllerKind::ALL.into_iter().filter(|k| *k != ControllerKind::XboxNano) {
+        let r = Rig::new(xbox(kind), None);
+        r.event(GamepadEvent::Connected(kind));
+        assert_eq!(r.plugs(), 1, "{kind:?} in Xbox mode plugs: {:?}", r.ops());
+        // Ids 0..=14 are positional and shared by every pad (DualSense 0 =
+        // Cross, NS 0 = B): bottom face button → Xbox A.
+        r.event(GamepadEvent::ButtonDown(0));
+        r.h.fake_event(GamepadEvent::Stick { axis: 0, value: -1.0 });
+        std::thread::sleep(STEP);
+        let s = r.last_update().expect("state pushed");
+        assert_eq!((s.buttons, s.lx), (xbutton::A, -32767), "{kind:?}");
+        assert_eq!(r.h.held_keys_count(), 0, "{kind:?}: Xbox mode synthesizes no key");
+        r.event(GamepadEvent::ButtonUp(0));
+        assert_eq!(r.last_update().unwrap().buttons, 0);
+        let shared = r.shared.clone();
+        r.engine.shutdown();
+        let ops = shared.lock().unwrap().ops.clone();
+        assert_eq!(ops.iter().filter(|o| matches!(o, Op::Unplug)).count(), 1, "{kind:?}: {ops:?}");
+        assert_balanced(&ops);
+    }
+}
+
+#[test]
+fn kbm_and_pad_modes_never_plug() {
+    for kind in [ControllerKind::DualSense, ControllerKind::NsPro] {
+        for mode in [OutputMode::Kbm, OutputMode::Pad] {
+            let mut cfg = test_helpers::load_example();
+            cfg.output_mode.insert(kind.slug().into(), mode);
+            let r = Rig::new(cfg, None);
+            r.event(GamepadEvent::Connected(kind));
+            r.event(GamepadEvent::ButtonDown(0));
+            r.event(GamepadEvent::ButtonUp(0));
+            assert_eq!(r.ops(), vec![], "{kind:?} {mode:?} plugs nothing");
+            r.engine.shutdown();
+        }
+    }
+    // The Switch 2 Pro has no 手把 path: `pad` is Xbox for it.
+    let mut cfg = test_helpers::load_example();
+    cfg.output_mode.insert("ns2_pro".into(), OutputMode::Pad);
+    let r = Rig::new(cfg, None);
+    r.event(GamepadEvent::Connected(ControllerKind::Ns2Pro));
+    assert_eq!(r.plugs(), 1, "{:?}", r.ops());
+    r.engine.shutdown();
+}
+
+#[test]
+fn slow_plug_does_not_stall_the_engine() {
+    // vigem-client's `wait_ready` can block (for good, in the worst case).
+    // The plug runs off the engine thread: the status and the button
+    // events keep coming while it waits.
+    let (r, gate) = Rig::gated(xbox(ControllerKind::DualSense));
+    r.event(GamepadEvent::Connected(ControllerKind::DualSense));
+    assert_eq!(r.plugs(), 1, "plug started");
+    assert!(r.h.current_status().is_some(), "status published while the plug is pending");
+    r.h.drain_events();
+    r.event(GamepadEvent::ButtonDown(0));
+    assert!(
+        r.h.drain_events().iter().any(|e| matches!(e, EngineEvent::ButtonDown { id: 0 })),
+        "events keep flowing while the plug is pending"
+    );
+
+    // No second plug while one is in flight: not on a retry, not on a new
+    // session.
+    r.h.retry_virtual_pad();
+    r.event(GamepadEvent::Disconnected);
+    r.event(GamepadEvent::Connected(ControllerKind::DualSense));
+    r.event(GamepadEvent::ButtonDown(0));
+    assert_eq!(r.plugs(), 1, "{:?}", r.ops());
+    assert_eq!(r.last_update(), None, "nothing pushed before the plug returns");
+
+    // The plug returns: the state fed meanwhile is pushed.
+    gate.send(()).unwrap();
+    std::thread::sleep(STEP);
+    assert_eq!(r.last_update().map(|s| s.buttons), Some(xbutton::A), "{:?}", r.ops());
+    assert_balanced(&r.ops());
+    drop(gate);
+    r.engine.shutdown();
+}
+
+#[test]
+fn leaving_xbox_mode_while_plugging_unplugs_after() {
+    let (r, gate) = Rig::gated(xbox(ControllerKind::DualSense));
+    r.event(GamepadEvent::Connected(ControllerKind::DualSense));
+    assert_eq!(r.plugs(), 1);
+    r.set_mode("dualsense", OutputMode::Kbm);
+    assert_eq!(r.unplugs(), 0, "nothing plugged yet: {:?}", r.ops());
+
+    // 鍵鼠 works while the plug is still pending.
+    r.event(GamepadEvent::ButtonDown(0));
+    assert_eq!(r.h.held_keys_count(), 1);
+    r.event(GamepadEvent::ButtonUp(0));
+
+    gate.send(()).unwrap();
+    std::thread::sleep(STEP);
+    assert_eq!(r.ops(), vec![Op::Plug { held: 0 }, Op::Unplug], "unplugged once the plug returned");
+    std::thread::sleep(STEP);
+    assert_eq!(r.plugs(), 1, "no new plug in 鍵鼠 mode");
+    drop(gate);
+    r.engine.shutdown();
+}
+
+/// Shut the engine down on another thread; `None` if it took over `limit`.
+fn timed_shutdown(engine: Engine, limit: Duration) -> Option<Duration> {
+    let (tx, rx) = mpsc::channel();
+    let t0 = Instant::now();
+    std::thread::spawn(move || {
+        engine.shutdown();
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(limit).ok().map(|()| t0.elapsed())
+}
+
+#[test]
+fn shutdown_does_not_hang_on_a_stuck_plug() {
+    let (r, gate) = Rig::gated(xbox(ControllerKind::DualSense));
+    r.event(GamepadEvent::Connected(ControllerKind::DualSense));
+    assert_eq!(r.plugs(), 1);
+    let took = timed_shutdown(r.engine, Duration::from_secs(5));
+    drop(gate); // let the stuck plug thread end
+    let took = took.expect("shutdown returned while the plug was stuck");
+    assert!(took < Duration::from_secs(4), "shutdown took {took:?}");
+}
+
+#[test]
+fn shutdown_waits_briefly_for_a_plug_then_unplugs() {
+    let (r, gate) = Rig::gated(xbox(ControllerKind::DualSense));
+    r.event(GamepadEvent::Connected(ControllerKind::DualSense));
+    assert_eq!(r.plugs(), 1);
+    let shared = r.shared.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = gate.send(());
+    });
+    timed_shutdown(r.engine, Duration::from_secs(5)).expect("shutdown returned");
+    let ops = shared.lock().unwrap().ops.clone();
+    assert_eq!(ops.first(), Some(&Op::Plug { held: 0 }));
+    assert_eq!(ops.last(), Some(&Op::Unplug), "a plug that lands during shutdown is unplugged: {ops:?}");
+    assert_balanced(&ops);
+}
+
+/// The Nano's Xbox and 手把 are one output: whatever the config says, no
+/// virtual pad is ever plugged for it.
+#[test]
+fn nano_never_plugs_a_virtual_pad() {
+    let r = Rig::new(xbox(ControllerKind::XboxNano), None);
+    r.event(GamepadEvent::Connected(ControllerKind::XboxNano));
+    r.event(GamepadEvent::ButtonDown(0));
+    r.event(GamepadEvent::ButtonUp(0));
+    for m in [OutputMode::Xbox, OutputMode::Pad, OutputMode::Kbm, OutputMode::Xbox] {
+        r.set_mode("xbox_nano", m);
+        r.event(GamepadEvent::ButtonDown(0));
+        r.event(GamepadEvent::ButtonUp(0));
+    }
+    r.event(GamepadEvent::Disconnected);
+    assert_eq!(r.plugs(), 0, "no virtual pad for the Nano; ops: {:?}", r.ops());
+    assert!(r.warnings().is_empty());
     r.engine.shutdown();
 }

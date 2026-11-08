@@ -120,6 +120,29 @@ fn status_lists_connected_pads() {
 }
 
 #[test]
+fn status_of_a_pad_without_battery_has_an_empty_battery_map() {
+    // A pad that reports no battery (Switch 2 Pro, Xbox Nano) is left out:
+    // the board keeps its green live dot.
+    use dualsense_mapper::gamepad::{ControllerKind, GamepadEvent};
+    let engine = Engine::spawn_with_fake_gamepad(load_minimal_config()).expect("spawn");
+    let h = engine.handle();
+    h.fake_event(GamepadEvent::Connected(ControllerKind::XboxNano));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(h.current_status().unwrap().battery.is_empty());
+    let batteries: Vec<_> = h
+        .drain_events()
+        .into_iter()
+        .filter_map(|e| match e {
+            EngineEvent::ControllerConnected { battery, .. } => Some(battery),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(batteries.len(), 1);
+    assert!(batteries[0].is_empty());
+    engine.shutdown();
+}
+
+#[test]
 fn disconnect_aimed_at_the_owner_reaches_it() {
     use dualsense_mapper::gamepad::{ControllerKind, GamepadEvent};
     let engine = Engine::spawn_with_fake_gamepad(load_minimal_config()).expect("spawn");

@@ -7,6 +7,7 @@
 //! `docs/superpowers/specs/2026-05-17-v2.0.0-raw-hid-dualsense-design.md`
 //! for the design.
 
+pub mod battery;
 pub mod controller;
 pub mod cursor_params;
 pub mod events;
@@ -14,6 +15,7 @@ pub mod ds_protocol;
 pub mod hid_source;
 pub mod hub;
 pub mod lightbar;
+pub mod nano_battery;
 pub mod ns_handshake;
 pub mod ns_protocol;
 pub mod ns2_ble;
@@ -21,7 +23,10 @@ pub mod ns2_protocol;
 pub mod pad;
 pub mod rumble;
 pub mod stick_cal;
+pub mod xbox_protocol;
+pub mod xinput_source;
 
+pub use battery::Battery;
 pub use controller::ControllerKind;
 pub use cursor_params::CursorParams;
 pub use events::GamepadEvent;

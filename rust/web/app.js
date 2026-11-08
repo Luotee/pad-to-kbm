@@ -1,7 +1,7 @@
 // The key-binding board: one 980×640 screen scaled to the window (spec 3).
 
 import { state, init, onRender } from './board/store.js';
-import { render, outputMode, boardLocked } from './board/view.js';
+import { render, outputMode, boardLocked, evenBanners } from './board/view.js';
 import { wire, selectSlot } from './board/events.js';
 import { resetInk } from './board/tags.js';
 import { startLive } from './board/live.js';
@@ -11,7 +11,7 @@ import { startCalibration } from './board/calibration.js';
 import { startVigem, maybeProbe } from './board/vigem.js';
 import { startLightbar } from './board/lightbar.js';
 import { fitKeyLabels } from './board/palette.js';
-import { chromeHTML, fitWindow } from './chrome.js';
+import { chromeHTML, fitWindow, titleText } from './chrome.js';
 import { appWindow } from './ipc.js';
 
 const board = document.getElementById('board');
@@ -49,6 +49,7 @@ function paint() {
   board.className = 'mock' + (outputMode(state, state.pad) !== 'kbm' ? ' off' : '') + (lock ? ' lock' : '');
   board.innerHTML = render(state);
   fitKeyLabels(board);
+  evenBanners(board);
   maybeProbe();
   // A slot waiting for a key, or a picked tile, ends when the board locks.
   if (lock && (state.sel !== null || state.picked)) queueMicrotask(() => selectSlot(null));
@@ -56,12 +57,13 @@ function paint() {
 
 onRender(paint);
 await init();
+tbar.querySelector('.wt').textContent = titleText(state.version);
 wire(board);
 await startLive();
 startMacros(board);
 await startSettings(board);
 startCalibration();
-startVigem();
+await startVigem();
 startLightbar(board);
 paint();
 // Tag ink boxes are measured with the pixel font; re-measure once it loaded.

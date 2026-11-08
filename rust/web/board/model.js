@@ -4,8 +4,8 @@
 // Tiles: palette key names ('Q', '↑', 'LShift'), mouse tiles ('左鍵' …) and
 // macros as 'M:<name>' (a macro's identity is its name, spec 8).
 
-export const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
-export const PAD_NAMES = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro' };
+export const PADS = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'];
+export const PAD_NAMES = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro', xbox_nano: 'Xbox Nano' };
 export const QUICK_IDS = [0, 1, 2, 3, 11, 12, 13, 14];
 export const MOUSE_TILE = { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '上滾', 'wheel-down': '下滾' };
 const MOUSE_VALUE = Object.fromEntries(Object.entries(MOUSE_TILE).map(([v, t]) => [t, v]));
@@ -79,6 +79,13 @@ export function tileToKey(tile) {
   if (ARROW_KEY[tile]) return ARROW_KEY[tile];
   if ([...tile].length === 1) return tile.toLowerCase();
   return tile;
+}
+
+// Slots the board never binds: the reason (its title), or '' when the slot is usable. The Xbox Nano's
+// Share (29) reaches neither the XInput state nor the HID report, so a binding there could never fire.
+const OFF_SLOTS = { xbox_nano: { 29: 'Xbox Nano 的 Share 鍵目前不會送給電腦' } };
+export function slotOff(pad, key) {
+  return OFF_SLOTS[pad]?.[String(key)] || '';
 }
 
 // The label stored with an entry: the base entry's label for that id.

@@ -3,12 +3,14 @@
 
 import { invoke, listen } from '../ipc.js';
 import { PADS } from './model.js';
+import { batteryFrom } from './battery.js';
 
 export const state = {
   config: null,
   connected: new Set(),
   offPads: new Set(), // pads switched off for this session (header 關; runtime only)
   warnings: [],       // controller status warnings (e.g. vigem_missing)
+  battery: {},        // slug -> { pct, charging } for the connected pads whose battery is readable (v3.8.0)
   pad: 'dualsense',
   sel: null,          // slot waiting for a key (capture)
   picked: null,       // palette tile picked by click, waiting for a slot
@@ -60,7 +62,7 @@ export async function setPad(pad, { save = true } = {}) {
   if (changed) padChangeHooks.forEach(f => f(pad));
   if (save && state.prefs.last_pad !== pad) {
     state.prefs = { ...state.prefs, last_pad: pad };
-    try { await invoke('set_ui_prefs', { prefs: state.prefs }); } catch (e) { console.warn('set_ui_prefs failed', e); }
+    try { await invoke('set_ui_prefs', { prefs: { last_pad: pad } }); } catch (e) { console.warn('set_ui_prefs failed', e); }
   }
 }
 
@@ -80,6 +82,7 @@ export async function init() {
   state.connected = connectedFrom(status);
   state.offPads = offFrom(status);
   state.warnings = (status && status.warnings) || [];
+  state.battery = batteryFrom(status);
   state.prefs = prefs || {};
   state.version = version || '';
   state.configPath = configPath || '';
@@ -96,6 +99,7 @@ export async function init() {
     state.connected = connectedFrom(s);
     state.offPads = offFrom(s, state.offPads);
     state.warnings = (s && s.warnings) || [];
+    state.battery = batteryFrom(s);
     const fresh = [...state.connected].filter(p => !before.has(p));
     if (fresh.length) await setPad(fresh[0]);   // a pad that connects is auto-selected (spec 4.5)
     rerender();

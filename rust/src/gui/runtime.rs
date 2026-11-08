@@ -3,13 +3,16 @@
 //! `run` is the top-level entry point for the GUI binary path.
 //! It starts the engine, builds the Tauri window, then blocks on the
 //! event loop. When the event loop ends (✕, tray Quit or the `quit` IPC),
-//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3), and
-//! the process exits with the event loop's exit code.
+//! the cleanup (`shutdown.rs`) runs: `engine.shutdown()` releases all held
+//! keys (Iron rule #3), then the HidHide worker undoes its hiding, and the
+//! process exits with the event loop's exit code. Windows logging off or
+//! shutting down runs the same cleanup from the main window
+//! (`gui/session_end.rs`), since the loop never returns then.
 
 use crate::config::Config;
-use crate::config_io::ConfigDoc;
 use crate::engine::Engine;
 use crate::safety;
+use crate::shutdown::Cleanup;
 use anyhow::{Context, Result};
 use crossbeam_channel::unbounded;
 use std::path::PathBuf;
@@ -27,9 +30,9 @@ pub struct RunOptions {
 /// built; once the event loop has run, it ends the process itself. The loop
 /// runs through `App::run_return`, not `App::run`: on Windows `App::run`
 /// (tao `EventLoop::run`) calls `std::process::exit` inside and never
-/// returns. After the loop, `engine.shutdown()` runs so that
-/// `KeyboardSink::drop` and `release_all_held` run (Iron rule #3), then the
-/// process exits with the loop's exit code.
+/// returns. After the loop, the cleanup runs `engine.shutdown()` so that
+/// `KeyboardSink::drop` and `release_all_held` run (Iron rule #3), then
+/// stops the HidHide worker, and the process exits with the loop's exit code.
 pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let engine = Engine::spawn(cfg, opts.dry_run)?;
     // The `log_events` file sits beside the config.
@@ -41,7 +44,14 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     safety::register_global(engine.handle().key_state());
     // Same for the virtual Xbox pad: the hook unplugs it.
     crate::xinput_sink::register_global(engine.handle().virtual_pad());
+    // HidHide (Xbox output): hides the real pad from games while it outputs
+    // Xbox; state file beside the config. Not on a dry run, not off Windows.
+    let hider = crate::hider::start_for(&engine.handle(), &opts.config_path, opts.dry_run);
     let handle = engine.handle();
+    // Every exit path below, and a session end, goes through this, once.
+    let cleanup = std::sync::Arc::new(Cleanup::new(engine, hider));
+    #[cfg(windows)]
+    let cleanup_for_setup = cleanup.clone();
 
     // Clone handle before the `move` setup closure so `.manage(handle_for_state)`
     // can still be called on the builder after the closure has captured its copy.
@@ -82,6 +92,17 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
                         tracing::warn!("could not turn the WebView2 browser keys off: {e}");
                     }
                 });
+                // Logoff / shutdown with the window open: undo the hiding
+                // before Windows ends the process.
+                #[cfg(windows)]
+                match w.hwnd() {
+                    Ok(hwnd) => {
+                        if !crate::gui::session_end::install(hwnd.0, cleanup_for_setup.clone()) {
+                            tracing::warn!("could not hook the session end; a logoff leaves the pad hidden until the next start");
+                        }
+                    }
+                    Err(e) => tracing::warn!("no main window handle for the session-end hook: {e}"),
+                }
             }
 
             let tray = crate::gui::tray::build(&app.handle(), handle_for_setup.clone())?;
@@ -110,22 +131,19 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             let path_for_watcher = config_path_for_setup.clone();
             std::thread::spawn(move || {
                 for _ in notify_rx.iter() {
-                    match ConfigDoc::load(&path_for_watcher) {
-                        // Our own IPC writes come back here too; the engine
-                        // already has them and the IPC command emitted
-                        // config-changed, so only a real external edit goes on.
-                        Ok(doc) if *handle_for_watcher.config_read() == *doc.typed() => {}
-                        Ok(doc) => {
-                            *handle_for_watcher.config_write() = doc.typed().clone();
+                    // Under the config file lock (`file_watcher::reload`).
+                    match crate::gui::file_watcher::reload(&handle_for_watcher, &path_for_watcher) {
+                        crate::gui::file_watcher::Reload::Same => {}
+                        crate::gui::file_watcher::Reload::Applied => {
                             let _ = app_for_watcher.emit(
                                 "config-changed",
                                 serde_json::json!({ "source": "file" }),
                             );
                         }
-                        Err(e) => {
+                        crate::gui::file_watcher::Reload::Invalid(message) => {
                             let _ = app_for_watcher.emit(
                                 "validation-error",
-                                serde_json::json!({ "message": format!("{e:#}") }),
+                                serde_json::json!({ "message": message }),
                             );
                         }
                     }
@@ -147,10 +165,15 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
             crate::gui::commands::rename_macro,
             crate::gui::commands::set_settings,
             crate::gui::commands::reset_settings,
-            crate::gui::commands::set_mapping_enabled,
+            crate::gui::commands::set_output_mode,
             crate::gui::commands::set_pad_off,
             crate::gui::commands::get_vigem_status,
             crate::gui::commands::install_vigem,
+            crate::gui::commands::get_xbox_status,
+            crate::gui::commands::install_hidhide,
+            crate::gui::commands::get_present_pad_ids,
+            crate::gui::commands::forget_hidden_pad,
+            crate::gui::commands::forget_all_hidden_pads,
             crate::gui::commands::pause_mapper,
             crate::gui::commands::open_config_in_editor,
             crate::gui::commands::open_config_folder,
@@ -174,8 +197,9 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
         .on_window_event(|window, event| {
             // Clicking ✕ now fully exits the process (Windows convention).
             // `app.exit(0)` ends the Tauri event loop; `run_return` hands
-            // back to `runtime::run`, which calls `engine.shutdown()` so held
-            // keys release before the process exits (Iron rule #3). Users who want
+            // back to `runtime::run`, whose `cleanup.run("exit")` (shutdown.rs)
+            // runs `engine.shutdown()` so held keys release, and undoes the
+            // HidHide entries, before the process exits (Iron rule #3). Users who want
             // background mapping while the window is hidden should
             // minimise to the taskbar instead, or use the tray's Open
             // entry to re-show the window after this exits.
@@ -197,7 +221,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let app = match app {
         Ok(app) => app,
         Err(e) => {
-            engine.shutdown();
+            cleanup.run("app build failed");
             return Err(e).context("building the Tauri app");
         }
     };
@@ -207,7 +231,10 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
 
     // Iron rule #3: shut the engine down before the process exits, so held
     // keys and mouse buttons are released (and the lightbar exit frame written).
-    engine.shutdown();
+    // Then the real pad comes back: the virtual one is already gone, so a
+    // game never sees both. Waits at most ~2 s; a crash is undone at the
+    // next start from the state file. A no-op after a session end ran it.
+    cleanup.run("exit");
     std::process::exit(code);
 }
 

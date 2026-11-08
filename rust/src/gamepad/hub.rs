@@ -1,8 +1,10 @@
 //! `SourceHub`: one controller owns the session at a time.
 //!
-//! The engine polls a single source. Since v2.6.0 two workers can produce
-//! events — the HID worker (DualSense, Switch Pro) and the NS2 Pro BLE
-//! worker — so the hub arbitrates between them:
+//! The engine polls a single source. Since v2.6.0 several workers can
+//! produce events — the HID worker (DualSense, Switch Pro), the NS2 Pro BLE
+//! worker and, since v3.7.0, the Xbox Nano's own HID worker — so the hub
+//! arbitrates between them (the rules below say "the other source"; with
+//! three, a waiting source is promoted in polling order):
 //!
 //! * The first source to emit `Connected` becomes the owner. While an owner
 //!   exists, every event from the other source is dropped, its
@@ -33,17 +35,25 @@
 //!   BLE worker) is told to stop scanning: a continuous BLE scan shares the
 //!   radio with the DualSense's Bluetooth link, and its finds would be
 //!   ignored anyway.
+//! * `Battery` readings (v3.8.0) are kept per source, owner or waiting,
+//!   and never passed on as events: the engine reads `batteries()` (one
+//!   entry per connected pad that reports one). A source's `Disconnected`
+//!   or a `Battery(None)` clears its reading. A reading never opens or closes a session
+//!   (iron rule 11).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 
+use super::battery::Battery;
 use super::controller::ControllerKind;
 use super::cursor_params::CursorParams;
 use super::events::GamepadEvent;
-use super::hid_source::HidSource;
+use super::hid_source::{HidPads, HidSource};
 use super::lightbar::LightbarLive;
 use super::stick_cal::{StickCalTable, StickPositions, StickProbe};
 use super::{HubCmd, SourceCmd};
@@ -76,16 +86,19 @@ struct Slot {
     /// non-owner with `Some` is connected but ignored: promoted when the
     /// owner leaves.
     session: Option<ControllerKind>,
+    /// The source's last battery reading, cleared by its `Disconnected`.
+    battery: Option<Battery>,
 }
 
 impl Slot {
     fn new(src: Src, cmd_tx: Option<Sender<SourceCmd>>, suspend: Option<Arc<AtomicBool>>) -> Self {
-        Slot { src, cmd_tx, suspend, session: None }
+        Slot { src, cmd_tx, suspend, session: None, battery: None }
     }
 }
 
 pub struct SourceHub {
-    /// Polled in order each tick; `[0]` is the HID worker.
+    /// Polled in order each tick: the DualSense / Switch Pro HID worker,
+    /// the Xbox Nano HID worker, the NS2 Pro BLE worker.
     slots: Vec<Slot>,
     owner: Option<usize>,
     /// Commands from the engine handle (manual disconnect, rumble).
@@ -98,7 +111,8 @@ pub struct SourceHub {
 }
 
 impl SourceHub {
-    /// Spawn the HID worker and the NS2 Pro BLE worker. `cmd_rx`
+    /// Spawn the HID workers (DualSense / Switch Pro, and the Xbox Nano)
+    /// and the NS2 Pro BLE worker. `cmd_rx`
     /// carries the engine's commands (routed to the owner);
     /// `warn_tx` receives status warnings from the BLE worker; `lightbar`
     /// carries the live lightbar settings to the HID worker.
@@ -109,13 +123,18 @@ impl SourceHub {
         warn_tx: Sender<String>,
     ) -> Result<Self> {
         let (hid_tx, hid_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
-        let hid = HidSource::new(params, lightbar, hid_rx)?;
+        let hid = HidSource::new(params.clone(), lightbar.clone(), hid_rx, HidPads::Classic)?;
+        // The Xbox Nano has its own HID worker: idle, it sends nothing and
+        // keeps its session open, which must not keep a DualSense closed.
+        let (nano_tx, nano_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
+        let nano = HidSource::new(params, lightbar, nano_rx, HidPads::Nano)?;
         let (ble_tx, ble_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
         let ble = Ns2BleSource::new(ble_rx, warn_tx)?;
         let suspend = ble.suspend_flag();
         Ok(Self::from_slots(
             vec![
                 Slot::new(Src::Hid(hid), Some(hid_tx), None),
+                Slot::new(Src::Hid(nano), Some(nano_tx), None),
                 Slot::new(Src::Ble(ble), Some(ble_tx), Some(suspend)),
             ],
             Some(cmd_rx),
@@ -134,15 +153,21 @@ impl SourceHub {
 
     /// Test-only: `fake` plus command routing — commands on `cmd_rx`
     /// are forwarded to `source_cmd_tx` while the fake source owns the
-    /// session.
+    /// session — and a second fake source `rx2`, polled after `rx`, for a
+    /// pad that waits while the first owns (its commands go to the same
+    /// `source_cmd_tx`).
     #[doc(hidden)]
     pub fn fake_with_disconnect(
         rx: Receiver<GamepadEvent>,
+        rx2: Receiver<GamepadEvent>,
         cmd_rx: Receiver<HubCmd>,
         source_cmd_tx: Sender<SourceCmd>,
     ) -> Self {
         Self::from_slots(
-            vec![Slot::new(Src::Hid(HidSource::fake(rx)), Some(source_cmd_tx), None)],
+            vec![
+                Slot::new(Src::Hid(HidSource::fake(rx)), Some(source_cmd_tx.clone()), None),
+                Slot::new(Src::Hid(HidSource::fake(rx2)), Some(source_cmd_tx), None),
+            ],
             Some(cmd_rx),
         )
     }
@@ -228,6 +253,12 @@ impl SourceHub {
         owner.into_iter().chain(waiting).collect()
     }
 
+    /// The last battery reading of each connected pad (owner or waiting)
+    /// that reports one.
+    pub fn batteries(&self) -> BTreeMap<ControllerKind, Battery> {
+        self.slots.iter().filter_map(|s| Some((s.session?, s.battery?))).collect()
+    }
+
     /// Forward each pending command to its slot: the owner's, or the one
     /// whose open session is the named pad.
     fn route_commands(&mut self) {
@@ -265,8 +296,13 @@ impl SourceHub {
                     }
                 }
             }
+            GamepadEvent::Battery(b) => {
+                self.slots[i].battery = b;
+                return;
+            }
             GamepadEvent::Disconnected => {
                 self.slots[i].session = None;
+                self.slots[i].battery = None;
                 if self.owner == Some(i) {
                     out.push(ev);
                     self.owner = None;
@@ -386,6 +422,37 @@ mod tests {
         send(&b, &[NS2, GamepadEvent::ButtonDown(1)]);
         send(&a, &[DS, GamepadEvent::ButtonDown(2)]);
         assert_eq!(poll(&mut hub), vec![DS, GamepadEvent::ButtonDown(2)]);
+    }
+
+    #[test]
+    fn an_idle_nano_and_a_dualsense_are_both_connected() {
+        // v3.7.0: the Nano has its own HID worker (slot `n`). An idle Nano
+        // that connected first owns; the DualSense opens anyway and waits,
+        // both are listed as connected, and the DualSense takes over when
+        // the Nano leaves. Ownership rules are unchanged.
+        let (a, a_rx) = unbounded();
+        let (n, n_rx) = unbounded();
+        let (_b, b_rx) = unbounded::<GamepadEvent>();
+        let mut hub = SourceHub::from_slots(
+            vec![
+                Slot::new(Src::Hid(HidSource::fake(a_rx)), None, None),
+                Slot::new(Src::Hid(HidSource::fake(n_rx)), None, None),
+                Slot::new(Src::Hid(HidSource::fake(b_rx)), None, Some(Arc::new(AtomicBool::new(false)))),
+            ],
+            None,
+        );
+        let nano = GamepadEvent::Connected(ControllerKind::XboxNano);
+        send(&n, &[nano]);
+        assert_eq!(poll(&mut hub), vec![nano]);
+        send(&a, &[DS, GamepadEvent::ButtonDown(0)]);
+        assert_eq!(poll(&mut hub), vec![], "the waiting DualSense is not forwarded");
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::XboxNano, ControllerKind::DualSense]);
+        send(&n, &[GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29), OFF]);
+        assert_eq!(
+            poll(&mut hub),
+            vec![GamepadEvent::ButtonDown(29), GamepadEvent::ButtonUp(29), OFF, DS]
+        );
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::DualSense]);
     }
 
     #[test]
@@ -845,5 +912,65 @@ mod tests {
         table.replace_from(&cfg);
         assert_eq!(table.get(ControllerKind::NsPro), None);
     }
-}
 
+    #[test]
+    fn battery_kept_per_connected_pad_and_never_passed_on() {
+        use crate::gamepad::Battery;
+        let r = rig();
+        let mut hub = r.hub;
+        let b80 = Battery { pct: 80, charging: false };
+        let b75 = Battery { pct: 75, charging: true };
+
+        send(&r.a, &[DS, GamepadEvent::Battery(Some(b80))]);
+        assert_eq!(poll(&mut hub), vec![DS], "the reading is not an event");
+        send(&r.b, &[GamepadEvent::Connected(ControllerKind::NsPro), GamepadEvent::Battery(Some(b75))]);
+        assert_eq!(poll(&mut hub), vec![]);
+        assert_eq!(
+            hub.batteries(),
+            BTreeMap::from([(ControllerKind::DualSense, b80), (ControllerKind::NsPro, b75)]),
+            "the waiting pad's reading is kept too"
+        );
+
+        // The waiting pad leaves: its reading goes, the owner keeps the session.
+        send(&r.b, &[OFF]);
+        assert_eq!(poll(&mut hub), vec![]);
+        assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b80)]));
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::DualSense]);
+
+        // It reconnects: no reading until it sends one.
+        send(&r.b, &[GamepadEvent::Connected(ControllerKind::NsPro)]);
+        poll(&mut hub);
+        assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b80)]));
+    }
+
+    #[test]
+    fn battery_reading_that_disappears_is_dropped() {
+        use crate::gamepad::Battery;
+        let r = rig();
+        let mut hub = r.hub;
+        let b = Battery { pct: 40, charging: false };
+        send(&r.a, &[DS, GamepadEvent::Battery(Some(b))]);
+        poll(&mut hub);
+        assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b)]));
+        send(&r.a, &[GamepadEvent::Battery(None)]);
+        assert_eq!(poll(&mut hub), vec![], "not an event");
+        assert!(hub.batteries().is_empty(), "the tab goes back to the lamp");
+        assert_eq!(hub.connected_kinds(), vec![ControllerKind::DualSense], "still connected");
+    }
+
+    #[test]
+    fn battery_never_opens_a_session() {
+        use crate::gamepad::Battery;
+        let r = rig();
+        let mut hub = r.hub;
+        let b = Battery { pct: 50, charging: false };
+        // A reading that comes before `Connected` is shown once it connects.
+        send(&r.a, &[GamepadEvent::Battery(Some(b))]);
+        assert_eq!(poll(&mut hub), vec![]);
+        assert!(hub.connected_kinds().is_empty());
+        assert!(hub.batteries().is_empty());
+        send(&r.a, &[DS]);
+        assert_eq!(poll(&mut hub), vec![DS]);
+        assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b)]));
+    }
+}

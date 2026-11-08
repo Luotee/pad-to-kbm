@@ -86,6 +86,10 @@ pub fn decode_31(buf: &[u8]) -> Option<PadState> {
     s.finger0_x = x_lo | (x_hi << 8);
     s.finger0_y = y_lo | (y_hi << 4);
 
+    // Status byte: report byte 52 in `hid-playstation`, +2 here (report id
+    // and the BT sub-id byte).
+    s.battery = super::battery::from_dualsense_status(buf[54]);
+
     Some(s)
 }
 

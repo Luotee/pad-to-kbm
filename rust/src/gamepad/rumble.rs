@@ -56,6 +56,8 @@ impl RumblePlan {
                 steps.extend((0..17).map(|i| (i * 12, Step::Buzz)));
                 steps.extend([(204, Step::Stop), (216, Step::Stop), (228, Step::Stop)]);
             }
+            // The Nano gets no rumble writes.
+            ControllerKind::XboxNano => {}
         }
         Self { kind, start, steps, next: 0, taken: None, buzzed: false, stopped: false }
     }

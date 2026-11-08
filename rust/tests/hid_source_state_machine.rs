@@ -346,3 +346,57 @@ fn byte_stream_ignores_other_kinds_reports() {
     ds.poll(&mut out);
     assert!(out.is_empty(), "foreign reports must not decode: {out:?}");
 }
+
+// ── Xbox Nano (Bluetooth LE report 0x01) ────────────────────────────────
+
+/// The recorded A press (`tests/fixtures/xbox_nano/a.hex`).
+fn nano_fixture(name: &str) -> Vec<Vec<u8>> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/xbox_nano")
+        .join(format!("{name}.hex"));
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect())
+        .collect()
+}
+
+#[test]
+fn nano_byte_stream_connected_and_a() {
+    let (tx, rx) = unbounded::<Vec<u8>>();
+    let mut src = HidSource::new_from_byte_stream_for(ControllerKind::XboxNano, rx);
+    for r in nano_fixture("a") {
+        tx.send(r).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let mut out = Vec::new();
+    src.poll(&mut out);
+    assert_eq!(out.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)),
+        "expected Connected(XboxNano) first, got {out:?}");
+    let buttons: Vec<&GamepadEvent> = out.iter()
+        .filter(|e| matches!(e, GamepadEvent::ButtonDown(_) | GamepadEvent::ButtonUp(_)))
+        .collect();
+    assert_eq!(buttons, vec![&GamepadEvent::ButtonDown(0), &GamepadEvent::ButtonUp(0)], "{out:?}");
+    assert!(!out.iter().any(|e| matches!(e,
+        GamepadEvent::TouchpadHover { .. } | GamepadEvent::TouchpadClick { .. }
+        | GamepadEvent::MouseDelta { .. })),
+        "no touchpad processing for the Nano: {out:?}");
+}
+
+#[test]
+fn nano_and_dualsense_workers_ignore_each_others_reports() {
+    let (tx, rx) = unbounded::<Vec<u8>>();
+    let mut nano = HidSource::new_from_byte_stream_for(ControllerKind::XboxNano, rx);
+    tx.send(neutral_report()).unwrap();
+    let (tx2, rx2) = unbounded::<Vec<u8>>();
+    let mut ds = HidSource::new_from_byte_stream(rx2);
+    tx2.send(nano_fixture("a")[1].clone()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let mut out = Vec::new();
+    nano.poll(&mut out);
+    ds.poll(&mut out);
+    assert!(out.is_empty(), "foreign reports must not decode: {out:?}");
+}

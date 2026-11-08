@@ -3,7 +3,7 @@
 
 import { state, rerender, setPad } from './store.js';
 import * as act from './actions.js';
-import { boardBinds } from './model.js';
+import { boardBinds, slotOff } from './model.js';
 import { macroPages, dragGhostHTML } from './palette.js';
 import { boardLocked } from './view.js';
 
@@ -33,6 +33,8 @@ export function wire(board) {
     const el = ev.target.closest('[data-slot],[data-tile],[data-act],[data-pad]');
     if (!el) return;
     if (el.dataset.pad) { setPad(el.dataset.pad).then(rerender); return; }
+    // A slot the pad never sends (slotOff) is never bound, cleared or selected.
+    if (el.dataset.slot && slotOff(state.pad, el.dataset.slot)) return;
     // The first click re-renders the board, so a native dblclick never reaches
     // the slot: count clicks instead (as the mockup does).
     if (el.dataset.slot && ev.detail >= 2) { act.clearSlot(el.dataset.slot); return; }
@@ -50,7 +52,7 @@ export function wire(board) {
     }
     const a = el.dataset.act, c = state.config;
     if (a === 'rumble') act.setRumble(c.rumble_on_connect === false);
-    else if (a === 'mode') act.setMode(el.dataset.mode);
+    else if (a === 'mode') { if (el.getAttribute('aria-disabled') !== 'true') act.setMode(el.dataset.mode); }
     else if (a === 'tp') act.setTouchpadCursor(c.touchpad_cursor_enabled === false);
     else if (a === 'reset') act.resetPad();
     else if (a === 'clear') act.clearPad();
@@ -79,7 +81,7 @@ export function wire(board) {
     const s = ev.target.closest('[data-slot]');
     if (s) {
       const key = s.dataset.slot;
-      if (!boardBinds(state.config, state.pad)[key]) { ev.preventDefault(); return; }
+      if (!boardBinds(state.config, state.pad)[key] || slotOff(state.pad, key)) { ev.preventDefault(); return; }
       drag.from = key; drag.key = null; drag.dropped = false;
       try { ev.dataTransfer.setData('text/plain', 'slot:' + key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) { /* ignore */ }
     }
@@ -94,6 +96,8 @@ export function wire(board) {
     if (!s) return;
     ev.preventDefault();
     const key = s.dataset.slot;
+    // Dropped on a slot that is never bound: nothing happens (a dragged slot is not cleared either).
+    if (slotOff(state.pad, key)) { if (drag.from !== null) drag.dropped = true; drag.key = null; return; }
     if (drag.from !== null) {
       drag.dropped = true;
       const from = drag.from; drag.from = null;

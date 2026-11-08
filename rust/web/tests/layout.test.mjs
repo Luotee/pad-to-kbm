@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { layoutFor, slotsOf, lint, routeHTML, groupSlots } from '../board/layout.js';
 
 const MODES = [{ l: 'page', r: 'page' }, { l: 'key', r: 'key' }, { l: 'page', r: 'key' }];
-const PADS = ['dualsense', 'ns_pro', 'ns2_pro'];
+const PADS = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'];
 
 test('layouts_have_no_crossings_or_overlaps', () => {
   for (const pad of PADS) for (const modes of MODES) {
@@ -75,4 +75,69 @@ test('stick_cross_keeps_its_middle_slot', () => {
 // Reskin Q18: the touchpad-cursor switch lives in the header, not on the pad art.
 test('pad_art_has_no_switch_group', () => {
   for (const pad of PADS) assert.ok(!layoutFor(pad, MODES[0]).groups.some(g => g.kind === 'tpsw'), pad);
+});
+
+// v3.7.0: the three photo-traced pads end every line at the key's photo position (padart.js padAnchors,
+// pad units; the pad sits at (340, 150) on the board, ends on half units). R-side lines mirror the left anchor.
+test('photo_routes_end_at_the_pad_anchors', async () => {
+  const { padAnchors } = await import('../board/padart.js');
+  assert.equal(typeof padAnchors, 'function', 'padart.js exports padAnchors');
+  const MIRROR = { zr: 'zl', r1: 'l1', gr: 'gl' };
+  // A straight drop from a slot keeps the slot's column when the key is just off it: C and PS by 1; Cap and
+  // Home by 3 (Switch Pro) / 4 (Switch 2 Pro), their keys being closer together than two slots.
+  const DX = { c: 1, ps: 1, cap: 4, home: 4 };
+  for (const pad of PADS) for (const modes of MODES) {
+    const A = padAnchors(pad);
+    for (const rt of layoutFor(pad, modes).routes) {
+      const a = A[rt.id] || (MIRROR[rt.id] && [300 - A[MIRROR[rt.id]][0], A[MIRROR[rt.id]][1]]);
+      assert.ok(a, `${pad} ${rt.id} has an anchor`);
+      // The end may round by up to half a unit (whole-pixel legs, half-unit ends).
+      const end = rt.pts[rt.pts.length - 1], want = [a[0] + 340, a[1] + 150];
+      assert.ok(Math.abs(end[1] - want[1]) <= 0.5 && Math.abs(end[0] - want[0]) <= (DX[rt.id] || 0.5), `${pad} ${rt.id} ends ${end} want ${want}`);
+    }
+  }
+  // DualSense Create / Options lines stop at the key's top edge (r 2.5 + 4 short of its centre, top at y 44).
+  for (const id of ['share', 'opt']) assert.equal(layoutFor('dualsense', MODES[0]).routes.find(r => r.id === id).r, 2.5, id);
+  // Switch 2 Pro: GL / GR beside the grips, one level line to the back key's visible corner.
+  const ns2 = layoutFor('ns2_pro', MODES[0]);
+  assert.deepEqual(ns2.routes.find(r => r.id === 'gl').pts, [[319, 362], [401, 362]]);
+  assert.deepEqual(ns2.routes.find(r => r.id === 'gr').pts, [[661, 362], [579, 362]]);
+  assert.deepEqual(['cap', 'home'].map(id => ns2.groups.find(g => g.id === id).x), [468, 512]);
+});
+
+// The approved mockup switched art with window.__* flags; the shipped board keeps only the chosen art.
+test('board_art_has_no_window_switches', async () => {
+  const fs = await import('node:fs');
+  for (const f of ['padart.js', 'layout.js', 'lightbar.js']) {
+    const src = fs.readFileSync(new URL('../board/' + f, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /window\.__/, f);
+  }
+});
+
+// routeHTML draws each leg at +0.5 with a 3-wide stroke: a leg is crisp at 1x only when its perpendicular
+// coordinate (x of a vertical leg, y of a level one) is a whole unit. Ends may sit on half units.
+test('route_legs_sit_on_whole_pixels', () => {
+  for (const pad of PADS) for (const modes of MODES) {
+    for (const rt of layoutFor(pad, modes).routes) {
+      for (let i = 0; i + 1 < rt.pts.length; i++) {
+        const [a, b] = [rt.pts[i], rt.pts[i + 1]], perp = a[0] === b[0] ? a[0] : a[1];
+        assert.ok(Number.isInteger(perp), `${pad} ${JSON.stringify(modes)} ${rt.id} leg ${i} at ${perp}`);
+      }
+    }
+  }
+});
+
+// v3.7.0 Xbox Nano (traced art, variant 1): LB / RB sit level with their shoulder key's end, one level line
+// each; the Xbox key and Share drop straight down / up to the key centre.
+test('nano_routes_meet_its_traced_keys', async () => {
+  const { padAnchors } = await import('../board/padart.js');
+  const A = padAnchors('xbox_nano'), L = layoutFor('xbox_nano', MODES[0]);
+  assert.ok(A, 'padAnchors(xbox_nano)');
+  for (const [id, g, x] of [['l1', 'b1L', A.l1[0]], ['r1', 'b1R', 300 - A.l1[0]]]) {
+    const r = L.routes.find(q => q.id === id), grp = L.groups.find(q => q.id === g);
+    assert.equal(grp.y, A.l1[1] + 150, `${g} level with the LB / RB end`);
+    assert.deepEqual(r.pts, [[id === 'l1' ? 330 : 650, A.l1[1] + 150], [x + 340, A.l1[1] + 150]], id);
+  }
+  assert.deepEqual(L.routes.find(r => r.id === 'xg').pts, [[490, 108], [A.xg[0] + 340, A.xg[1] + 150]]);
+  assert.deepEqual(L.routes.find(r => r.id === 'share').pts, [[490, 353], [A.share[0] + 340, A.share[1] + 150]]);
 });

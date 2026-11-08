@@ -11,15 +11,19 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
         loop {
             for ev in engine.drain_events() {
                 let _ = match ev {
-                    EngineEvent::ControllerConnected { name, transport, kind, warnings, connected, off_pads } => {
+                    EngineEvent::ControllerConnected { name, transport, kind, warnings, connected, off_pads, battery } => {
                         // Spec §10: tray icon swaps to "connected" on plug-in.
-                        // Also re-sent when `warnings` change (idempotent here).
+                        // Also re-sent when `warnings`, the connected pads or a
+                        // battery reading change (idempotent here). `battery`:
+                        // `{ "<slug>": { "pct", "charging" } }`, connected pads
+                        // that report one.
                         if let Some(tray) = app.try_state::<TrayIcon<R>>() {
                             let _ = crate::gui::tray::set_connected(&tray, true);
                         }
                         app.emit("controller-status", serde_json::json!({
                             "connected": true, "name": name, "transport": transport, "kind": kind,
-                            "warnings": warnings, "connected_pads": connected, "off_pads": off_pads
+                            "warnings": warnings, "connected_pads": connected, "off_pads": off_pads,
+                            "battery": battery
                         }))
                     }
                     EngineEvent::ControllerDisconnected => {
@@ -28,7 +32,8 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
                         }
                         app.emit("controller-status", serde_json::json!({
                             "connected": false, "name": "", "transport": "", "kind": null,
-                            "warnings": [], "connected_pads": [], "off_pads": engine.off_pads()
+                            "warnings": [], "connected_pads": [], "off_pads": engine.off_pads(),
+                            "battery": {}
                         }))
                     }
                     EngineEvent::ButtonDown { id } =>
@@ -56,6 +61,9 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
                         app.emit("touchpad-hover", serde_json::json!({
                             "raw_x": raw_x, "raw_y": raw_y, "quadrant": quadrant
                         })),
+                    // Not a settings change the user made (`ui`: no 設定已變更 row).
+                    EngineEvent::ConfigChanged { source } =>
+                        app.emit("config-changed", serde_json::json!({ "source": source, "ui": true })),
                 };
             }
             std::thread::sleep(std::time::Duration::from_millis(8));

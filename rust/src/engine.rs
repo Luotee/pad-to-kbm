@@ -8,11 +8,12 @@
 //!   * `Handle`      — what the GUI holds; clones cheaply (`Arc` inside).
 //!   * `EngineEvent` — what the loop emits for the activity log.
 
-use crate::config::Config;
+use crate::config::{Config, OutputMode};
 use crate::event_log::{self, EventLog};
 use crate::gamepad::lightbar::LightbarLive;
 use crate::gamepad::stick_cal::{StickCalTable, StickPositions, StickProbe};
-use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
+use crate::gamepad::{Battery, ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
+use crate::hider::HiderLink;
 use crate::keyboard::KeyboardSink;
 use crate::macro_engine::MacroEngine;
 use crate::mapper::{KeyAction, Mapper, Source};
@@ -22,18 +23,19 @@ use crate::virtual_pad::XState;
 use crate::xinput_sink::{self, PadError, SharedPad, VirtualPad};
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ─── Public event type ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
     /// A controller connected. Sent again, unchanged otherwise, whenever its
-    /// status `warnings` or the `connected` pads change.
+    /// status `warnings`, the `connected` pads or a `battery` reading change.
     ControllerConnected {
         name: String,
         transport: String,
@@ -43,6 +45,8 @@ pub enum EngineEvent {
         connected: Vec<ControllerKind>,
         /// Pads switched off for this session (`Handle::set_pad_off`).
         off_pads: Vec<ControllerKind>,
+        /// The battery of each connected pad that reports one (v3.8.0).
+        battery: BTreeMap<ControllerKind, Battery>,
     },
     ControllerDisconnected,
     ButtonDown { id: u32 },
@@ -58,6 +62,9 @@ pub enum EngineEvent {
     /// Diagnostic — emitted per HID frame on touchpad hover quadrant change.
     /// `quadrant = 255` is the sentinel for "finger lifted, clear UI hover".
     TouchpadHover { raw_x: u16, raw_y: u16, quadrant: u32 },
+    /// The config was written outside the IPC (the hider remembered a pad,
+    /// v3.6.0): the GUI emits `config-changed` (iron rule 10).
+    ConfigChanged { source: &'static str },
 }
 
 /// Snapshot of the controller's current connection state. Polled by the GUI
@@ -74,6 +81,9 @@ pub struct ControllerStatus {
     pub connected: Vec<ControllerKind>,
     /// Pads switched off for this session (runtime only, `set_pad_off`).
     pub off_pads: Vec<ControllerKind>,
+    /// The battery of each connected pad that reports one, by slug (v3.8.0).
+    /// Display only: never part of the connection state (iron rule 11).
+    pub battery: BTreeMap<ControllerKind, Battery>,
 }
 
 // ─── ConfigWriteGuard — bumps generation on drop ─────────────────────────────
@@ -125,6 +135,10 @@ struct HandleInner {
     /// Test-only: sender for the fake gamepad source. `None` in production.
     #[doc(hidden)]
     fake_tx: Mutex<Option<crossbeam_channel::Sender<crate::gamepad::GamepadEvent>>>,
+    /// Test-only: sender for the second fake source (a pad that waits while
+    /// the first owns). `None` in production.
+    #[doc(hidden)]
+    fake_tx2: Mutex<Option<crossbeam_channel::Sender<crate::gamepad::GamepadEvent>>>,
     /// Test-only: commands the fake source received (routed by the hub to
     /// it as owner). `None` in production.
     #[doc(hidden)]
@@ -157,14 +171,67 @@ struct HandleInner {
     stick_cal: StickCalTable,
     /// The session owner's latest stick positions (raw + corrected).
     stick_probe: StickProbe,
-    /// The virtual Xbox pad. `Weak`: the engine thread owns it, so it is
-    /// dropped (and unplugged) when that thread ends, even by unwinding.
+    /// The virtual Xbox pad. `Weak`: the engine thread owns it (a plug in
+    /// flight holds a second reference until it returns), so it is dropped
+    /// (and unplugged) when that thread ends, even by unwinding.
     virtual_pad: Weak<Mutex<Box<dyn VirtualPad>>>,
     /// Folder for the `log_events` file, handed to the engine thread on its
     /// next tick (`Handle::set_log_dir`).
     pending_log_dir: Mutex<Option<PathBuf>>,
     /// One more virtual-pad plug attempt requested (`retry_virtual_pad`).
     retry_pad: AtomicBool,
+    /// The HidHide worker (`hider.rs`), when one runs (Windows, not dry run).
+    hider: RwLock<Option<HiderLink>>,
+    /// A worker was just attached: the engine sends it the current inputs.
+    hider_fresh: AtomicBool,
+    /// Powers Bluetooth links off by address (the automatic power-off).
+    power_off: PowerOffFn,
+    /// The automatic power-offs' results (links dropped per power-off).
+    power_log: PowerOffLog,
+    /// Set by `spawn_with_fake_gamepad`: the power-off records instead.
+    fake_power_off: Arc<FakePowerOff>,
+    /// Pads the app powered off this launch because they needed a replug,
+    /// not back since (`get_xbox_status.auto_off`, per kind: any of them).
+    auto_off: RwLock<Vec<AutoOff>>,
+}
+
+/// A pad the app powered off (`HandleInner::auto_off`), by Bluetooth address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AutoOff {
+    kind: ControllerKind,
+    addr: u64,
+    /// The hider has seen it gone; seen present again, the entry goes.
+    away: bool,
+}
+
+/// The link-level power-off by Bluetooth address
+/// (`platform::power_off_addrs`; a recorder in tests).
+type PowerOffFn = Arc<dyn Fn(&[u64]) -> anyhow::Result<usize> + Send + Sync>;
+
+/// What each automatic power-off did: the pad (kind, address) and the
+/// number of Bluetooth links it dropped (0: none went down, or the call
+/// failed). Written by the power-off's own thread, drained by the engine.
+#[derive(Debug, Clone, Default)]
+struct PowerOffLog(Arc<Mutex<Vec<(ControllerKind, u64, usize)>>>);
+
+impl PowerOffLog {
+    fn record(&self, kind: ControllerKind, addr: u64, links: usize) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).push((kind, addr, links));
+    }
+
+    /// Every result since the last call, oldest first.
+    fn take(&self) -> Vec<(ControllerKind, u64, usize)> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
+/// The fake power-off's record (`Engine::spawn_with_fake_gamepad`).
+#[derive(Default)]
+struct FakePowerOff {
+    /// The addresses of each call, oldest first.
+    calls: Mutex<Vec<Vec<u64>>>,
+    /// Links each call reports dropped; `None`: one per address.
+    links: Mutex<Option<usize>>,
 }
 
 // ─── Handle (GUI-side) ───────────────────────────────────────────────────────
@@ -172,6 +239,16 @@ struct HandleInner {
 #[derive(Clone)]
 pub struct Handle {
     inner: Arc<HandleInner>,
+}
+
+/// [`Handle::downgrade`]: for workers that must not keep the engine alive.
+#[derive(Clone)]
+pub struct WeakHandle(std::sync::Weak<HandleInner>);
+
+impl WeakHandle {
+    pub fn upgrade(&self) -> Option<Handle> {
+        self.0.upgrade().map(|inner| Handle { inner })
+    }
 }
 
 impl Handle {
@@ -228,10 +305,60 @@ impl Handle {
     }
 
     /// Allow one more plug of the virtual Xbox pad (after ViGEmBus was
-    /// installed). Plugs only if the owner still wants it (NS2 Pro, Xbox
-    /// mode, not paused / off); clears `vigem_missing` until a plug fails again.
+    /// installed). Plugs only if the owner still wants it (Xbox mode, not
+    /// paused / off); clears `vigem_missing` until a plug fails again.
     pub fn retry_virtual_pad(&self) {
         self.inner.retry_pad.store(true, Ordering::SeqCst);
+    }
+
+    /// Feed the HidHide worker from now on: the engine sends it the kinds
+    /// wanted hidden and the connected kinds whenever either changes.
+    pub fn attach_hider(&self, link: HiderLink) {
+        *self.inner.hider.write().unwrap_or_else(|p| p.into_inner()) = Some(link);
+        self.inner.hider_fresh.store(true, Ordering::SeqCst);
+    }
+
+    /// The HidHide worker's link (`None`: no worker, e.g. dry run or not
+    /// Windows).
+    pub fn hider(&self) -> Option<HiderLink> {
+        self.inner.hider.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// The app powered pad `kind` off this launch because it needed a
+    /// replug (its power-off dropped a Bluetooth link), and it has not
+    /// reconnected since.
+    pub fn auto_off(&self, kind: ControllerKind) -> bool {
+        self.inner.auto_off.read().unwrap_or_else(|p| p.into_inner()).iter().any(|a| a.kind == kind)
+    }
+
+    /// One more HidHide round now (after HidHide was installed).
+    pub fn retry_hiding(&self) {
+        if let Some(link) = self.hider() {
+            link.retry();
+        }
+    }
+
+    /// Tell the GUI the config changed (`EngineEvent::ConfigChanged`), for
+    /// a write that did not come through an IPC command.
+    pub fn announce_config_change(&self, source: &'static str) {
+        let _ = self.inner.event_tx.send(EngineEvent::ConfigChanged { source });
+    }
+
+    /// A handle that does not keep the engine alive.
+    pub fn downgrade(&self) -> WeakHandle {
+        WeakHandle(Arc::downgrade(&self.inner))
+    }
+
+    /// A callback that re-sends the current controller status unchanged
+    /// (the frontend then re-probes `get_xbox_status`). Holds the engine
+    /// weakly; a no-op once it is gone or while no controller is connected.
+    pub fn status_notifier(&self) -> impl Fn() + Send + Sync + 'static {
+        let weak = Arc::downgrade(&self.inner);
+        move || {
+            if let Some(h) = weak.upgrade() {
+                republish_status(&h, |_| {});
+            }
+        }
     }
 
     pub fn set_paused(&self, v: bool) {
@@ -305,6 +432,18 @@ impl Handle {
         }
     }
 
+    /// Inject an event into the second fake source, polled after the first
+    /// (a pad that waits while the first owns the session). Works only when
+    /// spawned via `Engine::spawn_with_fake_gamepad*`; no-op otherwise.
+    #[doc(hidden)]
+    pub fn fake_event_second(&self, ev: crate::gamepad::GamepadEvent) {
+        if let Ok(guard) = self.inner.fake_tx2.lock() {
+            if let Some(ref tx) = *guard {
+                let _ = tx.send(ev);
+            }
+        }
+    }
+
     /// How many manual disconnects reached the fake source since the last
     /// call. Works only when spawned via `Engine::spawn_with_fake_gamepad`;
     /// 0 otherwise.
@@ -334,6 +473,21 @@ impl Handle {
         let before = buf.len();
         buf.retain(|c| *c != kind);
         before - buf.len()
+    }
+
+    /// The addresses of each automatic power-off since the last call. Works
+    /// only when spawned via `Engine::spawn_with_fake_gamepad`; empty
+    /// otherwise.
+    #[doc(hidden)]
+    pub fn fake_power_offs(&self) -> Vec<Vec<u64>> {
+        std::mem::take(&mut *self.inner.fake_power_off.calls.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+
+    /// How many links the fake power-off reports dropped per call (`None`:
+    /// one per address, the default). Test hook.
+    #[doc(hidden)]
+    pub fn set_fake_power_off_links(&self, links: Option<usize>) {
+        *self.inner.fake_power_off.links.lock().unwrap_or_else(|p| p.into_inner()) = links;
     }
 
     /// Inject a status warning as a gamepad worker would. Works only when
@@ -398,11 +552,12 @@ impl Engine {
         // Before the HID worker starts: it must never play the default
         // (自訂) settings to a 原廠燈 / 關閉 user.
         lightbar.set_config(cfg.lightbar);
-        let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx)?.with_stick_cal(cal.clone(), probe.clone());
+        let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx)?
+            .with_stick_cal(cal.clone(), probe.clone());
         // Dry run synthesizes no OS input: that includes the virtual pad.
         let pad: Box<dyn VirtualPad> =
             if dry_run { Box::new(xinput_sink::NullPad) } else { xinput_sink::platform_pad() };
-        Self::spawn_inner(cfg, dry_run, src, cursor_params, lightbar, cmd_tx, warn_rx, pad, cal, probe)
+        Self::spawn_inner(cfg, dry_run, src, cursor_params, lightbar, cmd_tx, warn_rx, pad, cal, probe, false)
     }
 
     /// Spawn with a fake gamepad source. Events are injected via
@@ -426,16 +581,19 @@ impl Engine {
             cfg.touchpad_midpoint_y,
         );
         let (fake_tx, fake_rx) = unbounded::<crate::gamepad::GamepadEvent>();
+        let (fake_tx2, fake_rx2) = unbounded::<crate::gamepad::GamepadEvent>();
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<HubCmd>(4);
         let (source_cmd_tx, source_cmd_rx) = unbounded::<SourceCmd>();
         let (cal, probe) = (StickCalTable::default(), StickProbe::default());
-        let src = GamepadSource::fake_with_disconnect(fake_rx, cmd_rx, source_cmd_tx).with_stick_cal(cal.clone(), probe.clone());
+        let src = GamepadSource::fake_with_disconnect(fake_rx, fake_rx2, cmd_rx, source_cmd_tx).with_stick_cal(cal.clone(), probe.clone());
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let engine = Self::spawn_inner(
             cfg, /*dry_run=*/true, src, cursor_params, LightbarLive::default(), cmd_tx, warn_rx, pad, cal, probe,
+            /*fake_power_off=*/true,
         )?;
         // Install the sender into HandleInner.
         *engine.handle.inner.fake_tx.lock().unwrap() = Some(fake_tx);
+        *engine.handle.inner.fake_tx2.lock().unwrap() = Some(fake_tx2);
         *engine.handle.inner.fake_warn_tx.lock().unwrap() = Some(warn_tx);
         *engine.handle.inner.fake_cmd_rx.lock().unwrap() = Some(source_cmd_rx);
         Ok(engine)
@@ -452,12 +610,23 @@ impl Engine {
         pad: Box<dyn VirtualPad>,
         stick_cal: StickCalTable,
         stick_probe: StickProbe,
+        fake_power_off: bool,
     ) -> Result<Self> {
         stick_cal.replace_from(&cfg);
         lightbar.set_config(cfg.lightbar);
         let key_state = safety::shared();
         let pad: SharedPad = Arc::new(Mutex::new(pad));
         let (event_tx, event_rx) = unbounded::<EngineEvent>();
+        let fake = Arc::new(FakePowerOff::default());
+        let power_off: PowerOffFn = if fake_power_off {
+            let f = fake.clone();
+            Arc::new(move |addrs: &[u64]| {
+                f.calls.lock().unwrap_or_else(|p| p.into_inner()).push(addrs.to_vec());
+                Ok(f.links.lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(addrs.len()))
+            })
+        } else {
+            Arc::new(crate::platform::power_off_addrs)
+        };
 
         let inner = Arc::new(HandleInner {
             config: RwLock::new(cfg),
@@ -470,6 +639,7 @@ impl Engine {
             event_rx,
             key_state: key_state.clone(),
             fake_tx: Mutex::new(None),
+            fake_tx2: Mutex::new(None),
             fake_cmd_rx: Mutex::new(None),
             fake_cmd_buf: Mutex::new(Vec::new()),
             current_status: RwLock::new(None),
@@ -483,6 +653,12 @@ impl Engine {
             virtual_pad: Arc::downgrade(&pad),
             pending_log_dir: Mutex::new(None),
             retry_pad: AtomicBool::new(false),
+            hider: RwLock::new(None),
+            hider_fresh: AtomicBool::new(false),
+            power_off,
+            power_log: PowerOffLog::default(),
+            fake_power_off: fake,
+            auto_off: RwLock::new(Vec::new()),
         });
 
         let handle = Handle { inner: inner.clone() };
@@ -535,22 +711,38 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     let mut last_paused = false;
     let mut gp_events: Vec<crate::gamepad::GamepadEvent> = Vec::with_capacity(32);
 
-    // Per-controller mapping gate. `None` (no controller seen yet, or after
-    // Disconnected) means mapping ON.
+    // Per-controller output mode; mapping (key synth) is ON only in Kbm.
+    // `None` (no controller seen yet, or after Disconnected) means Kbm.
     let mut current_kind: Option<ControllerKind> = None;
+    let mut mode = OutputMode::Kbm;
     let mut mapping_on = true;
     // The owner is switched off (header 關): synthesize nothing, no virtual
     // pad. Polling goes on, so connects / disconnects are still seen.
     let mut pad_off = false;
     let mut last_off_pads: Vec<ControllerKind> = Vec::new();
 
-    // Virtual Xbox pad (NS2 Pro, mapping OFF) and the status warnings.
+    // Virtual Xbox pad (Xbox output mode) and the status warnings.
     let mut pad = PadLink::new(pad);
     let mut worker_warnings: Vec<String> = Vec::new();
-    // The connected pads last published in the status.
+    // The connected pads and their battery readings last published in the
+    // status.
     let mut last_connected: Vec<ControllerKind> = Vec::new();
+    let mut last_battery: BTreeMap<ControllerKind, Battery> = BTreeMap::new();
     // The `log_events` file (no folder until `Handle::set_log_dir`).
     let mut elog = EventLog::new(None);
+    // HidHide inputs: the kinds wanted hidden (from the live config) and the
+    // connected kinds last sent to the worker (`None`: not sent yet).
+    let mut hide_wanted = hide_wanted_kinds(&h.config.read().unwrap());
+    let mut hider_sent: Option<(Vec<ControllerKind>, Vec<ControllerKind>)> = None;
+    // The remembered pads' ids (`hidhide_known`) and those last sent.
+    let mut hide_known = hide_known_ids(&h.config.read().unwrap());
+    let mut known_sent: Option<Vec<String>> = None;
+    // A pad hidden while connected is powered off once per launch, by its
+    // Bluetooth address: the addresses tried, the kinds logged as having
+    // none, and the connected kinds at the previous tick.
+    let mut auto_tried: Vec<u64> = Vec::new();
+    let mut auto_no_addr: Vec<ControllerKind> = Vec::new();
+    let mut prev_connected: Vec<ControllerKind> = Vec::new();
 
     while !h.shutdown.load(Ordering::SeqCst) {
         if let Some(dir) = h.pending_log_dir.lock().unwrap_or_else(|p| p.into_inner()).take() {
@@ -591,17 +783,23 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             h.stick_cal.replace_from(&cfg);
             h.lightbar.set_config(cfg.lightbar);
             mapper.replace_config(cfg.clone());
+            hide_wanted = hide_wanted_kinds(&cfg);
+            hide_known = hide_known_ids(&cfg);
             last_config_gen = current_gen;
         }
 
         // ── Mapping ON→OFF edge: release everything ──────────────────────────
-        let now_on = mapping_enabled(&h, current_kind);
+        let now_mode = output_mode(&h, current_kind);
+        let now_on = now_mode == OutputMode::Kbm;
         if mapping_on && !now_on {
             drain_and_release(&mut macros, &macro_rx, &mut sink, &mut mouse_sink, mapper.config(), &h.event_tx, &mut elog);
             mapper.reset_input_state();
-            // An OFF edge may retry a plug that failed earlier this session.
+        }
+        if now_mode == OutputMode::Xbox && mode != OutputMode::Xbox {
+            // An edge into Xbox may retry a plug that failed earlier this session.
             pad.rearm();
         }
+        mode = now_mode;
         mapping_on = now_on;
 
         // ── Per-pad 關: on→off edge releases everything ──────────────────────
@@ -629,10 +827,10 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             }
         }
 
-        // ── Virtual pad: plugged only for an NS2 Pro with mapping OFF ────────
+        // ── Virtual pad: plugged only in Xbox mode ───────────────────────────
         // After the OFF edge's release above (keys up, then the pad appears);
         // before polling on the ON edge (pad gone, then keys resume).
-        warnings_changed |= pad.sync(wants_pad(paused || pad_off, mapping_on, current_kind));
+        warnings_changed |= pad.sync(wants_pad(paused || pad_off, mode, current_kind));
         if warnings_changed {
             publish_warnings(&h, status_warnings(&worker_warnings, &pad));
         }
@@ -647,6 +845,23 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             // ── Poll gamepad ─────────────────────────────────────────────────
             gp_events.clear();
             source.poll(&mut gp_events);
+            // Before the events, so a result that came before its pad's
+            // `Disconnected` is set before the frontend hears of the leave;
+            // the status is re-sent either way, for it to re-probe.
+            for (kind, addr, links) in h.power_log.take() {
+                if links > 0 {
+                    tracing::info!(?kind, "HidHide: powered off; it comes back hidden");
+                    let mut v = h.auto_off.write().unwrap_or_else(|p| p.into_inner());
+                    if !v.iter().any(|a| a.addr == addr) {
+                        v.push(AutoOff { kind, addr, away: false });
+                    }
+                    drop(v);
+                    republish_status(&h, |_| {});
+                } else {
+                    // No link went down: the pad stays, a game may still hold it.
+                    tracing::info!(?kind, "HidHide: the power-off dropped no link; one reconnect still needed");
+                }
+            }
 
             for ev in gp_events.drain(..) {
                 // Always emit raw gamepad events (even when capture_active).
@@ -662,7 +877,8 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         current_kind = Some(kind);
                         // From now on presses use this pad's table.
                         mapper.set_pad(Some(kind));
-                        let now_on = mapping_enabled(&h, current_kind);
+                        mode = output_mode(&h, current_kind);
+                        let now_on = mode == OutputMode::Kbm;
                         if mapping_on && !now_on {
                             drain_and_release(&mut macros, &macro_rx, &mut sink, &mut mouse_sink, mapper.config(), &h.event_tx, &mut elog);
                             mapper.reset_input_state();
@@ -676,8 +892,9 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         pad_off = now_off;
                         // A fresh session: neutral pad state, one plug attempt.
                         pad.reset_session();
-                        pad.sync(wants_pad(paused || pad_off, mapping_on, current_kind));
+                        pad.sync(wants_pad(paused || pad_off, mode, current_kind));
                         last_connected = source.connected_kinds();
+                        last_battery = source.batteries();
                         let status = ControllerStatus {
                             name: kind.display_name().to_string(),
                             transport: "BT".to_string(),
@@ -685,6 +902,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                             warnings: status_warnings(&worker_warnings, &pad),
                             connected: last_connected.clone(),
                             off_pads: last_off_pads.clone(),
+                            battery: last_battery.clone(),
                         };
                         *h.current_status.write().unwrap() = Some(status.clone());
                         let _ = h.event_tx.send(connected_event(&status));
@@ -701,6 +919,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         current_kind = None;
                         pad_off = false;
                         last_connected.clear();
+                        last_battery.clear();
                         // The pad is gone: so is its virtual twin.
                         pad.sync(false);
                         pad.reset_session();
@@ -719,12 +938,10 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                     _ => {}
                 }
 
-                // The virtual pad mirrors every NS2 Pro event, whatever the
-                // mapping state (it is pushed only while plugged), and is not
-                // gated on key capture: it types nothing.
-                if current_kind.map_or(false, ControllerKind::needs_virtual_pad) {
-                    pad.feed(&ev);
-                }
+                // The virtual pad mirrors every event, whatever the mode (it
+                // is pushed only while plugged), and is not gated on key
+                // capture: it types nothing.
+                pad.feed(&ev);
 
                 // Gate synth on capture_active.
                 if h.capture_active.load(Ordering::SeqCst) {
@@ -762,12 +979,99 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             }
         }
 
-        // ── Connected pads: re-publish the status when the list changes ─────
-        // (a second pad connects or leaves while the owner keeps the session).
+        // ── Connected pads / battery: re-publish the status on a change ─────
+        // (a second pad connects or leaves while the owner keeps the session,
+        // or a reading changes). One event carries both, so a pad that leaves
+        // takes its battery with it in the same status.
         let now_connected = source.connected_kinds();
-        if now_connected != last_connected {
+        let now_battery = source.batteries();
+        if now_connected != last_connected || now_battery != last_battery {
             last_connected = now_connected;
-            republish_status(&h, |s| s.connected = last_connected.clone());
+            last_battery = now_battery;
+            republish_status(&h, |s| {
+                s.connected = last_connected.clone();
+                s.battery = last_battery.clone();
+            });
+        }
+
+        // ── HidHide worker: send its inputs when they change ────────────────
+        // Unbounded channel: never blocks the tick.
+        // The remembered list goes first, so the first round already has it.
+        if h.hider_fresh.swap(false, Ordering::SeqCst) {
+            hider_sent = None;
+            known_sent = None;
+        }
+        // A pad the app powered off is back: its auto_off goes. Back = the
+        // hider saw it gone and then present again, or its kind joined the
+        // engine (a pad turned back on before the hider looked).
+        let joined: Vec<ControllerKind> =
+            last_connected.iter().copied().filter(|k| !prev_connected.contains(k)).collect();
+        prev_connected = last_connected.clone();
+        let present_addrs = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref().map(|l| l.present_addrs());
+        let changed = {
+            let mut v = h.auto_off.write().unwrap_or_else(|p| p.into_inner());
+            let before = v.len();
+            v.retain(|a| !joined.contains(&a.kind));
+            if let Some(present) = &present_addrs {
+                for a in v.iter_mut() {
+                    a.away |= !present.iter().any(|(_, p)| *p == a.addr);
+                }
+                v.retain(|a| !(a.away && present.iter().any(|(_, p)| *p == a.addr)));
+            }
+            v.len() != before
+        };
+        if changed {
+            republish_status(&h, |_| {});
+        }
+        if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            // Hidden while connected: drop the Bluetooth link of each pad that
+            // was hidden while present (not every pad of the kind, as the ⏻
+            // does: another one may be in use), so it comes back hidden. Once
+            // per pad per launch, on its own thread (the call may block). The
+            // HID session ends by the link drop alone (iron rule 11). A pad
+            // with no address to drop (USB, or a Bluetooth LE pad such as
+            // the Xbox Nano) keeps the reconnect hint.
+            let addrs = link.replug_addrs();
+            for kind in link.needs_replug() {
+                if !last_connected.contains(&kind) {
+                    continue;
+                }
+                let of_kind: Vec<u64> = addrs.iter().filter(|(k, _)| *k == kind).map(|(_, a)| *a).collect();
+                if of_kind.is_empty() {
+                    if !auto_no_addr.contains(&kind) {
+                        auto_no_addr.push(kind);
+                        tracing::info!(?kind, "HidHide: hidden while connected, no classic Bluetooth address; one reconnect needed");
+                    }
+                    continue;
+                }
+                let fresh: Vec<u64> = of_kind.into_iter().filter(|a| !auto_tried.contains(a)).collect();
+                if fresh.is_empty() {
+                    continue;
+                }
+                auto_tried.extend(&fresh);
+                tracing::info!(?kind, pads = fresh.len(), "HidHide: hidden while connected; powering it off once");
+                let (power_off, log) = (h.power_off.clone(), h.power_log.clone());
+                let spawned = thread::Builder::new().name("auto-power-off".into()).spawn(move || {
+                    for addr in fresh {
+                        let links = power_off(&[addr]).unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "HidHide: power-off failed");
+                            0
+                        });
+                        log.record(kind, addr, links);
+                    }
+                });
+                if let Err(e) = spawned {
+                    tracing::warn!("HidHide: could not start the power-off: {e}");
+                }
+            }
+            if known_sent.as_ref() != Some(&hide_known) {
+                link.set_known(hide_known.clone());
+                known_sent = Some(hide_known.clone());
+            }
+            if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
+                link.update(hide_wanted.clone());
+                hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
+            }
         }
 
         // One pad report per tick at most.
@@ -777,7 +1081,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     }
 
     // ── Graceful shutdown ────────────────────────────────────────────────────
-    pad.sync(false);
+    pad.shutdown();
     macros.stop_all();
     // Drain any final macro releases.
     while let Ok(action) = macro_rx.try_recv() {
@@ -790,11 +1094,27 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     Ok(())
 }
 
-/// Whether mapping is ON for the connected controller. Reads the live config
-/// (not the mapper's snapshot) so an IPC toggle takes effect on the next tick.
-/// No known controller → ON.
-fn mapping_enabled(h: &HandleInner, kind: Option<ControllerKind>) -> bool {
-    kind.map_or(true, |k| h.config.read().unwrap().mapping_enabled_for(k))
+/// The connected controller's output mode. Reads the live config (not the
+/// mapper's snapshot) so an IPC toggle takes effect on the next tick. No
+/// known controller → Kbm.
+fn output_mode(h: &HandleInner, kind: Option<ControllerKind>) -> OutputMode {
+    kind.map_or(OutputMode::Kbm, |k| h.config.read().unwrap().output_mode_for(k))
+}
+
+/// The kinds HidHide should hide: in 鍵鼠 or Xbox output mode (whether
+/// connected or not, so a reconnect arrives hidden; 手把 mode never hides) and driven natively by Windows (the
+/// Switch 2 Pro is not, so a game cannot see it anyway).
+fn hide_wanted_kinds(cfg: &Config) -> Vec<ControllerKind> {
+    ControllerKind::ALL
+        .into_iter()
+        .filter(|k| k.has_native_driver() && matches!(cfg.output_mode_for(*k), OutputMode::Kbm | OutputMode::Xbox))
+        .collect()
+}
+
+/// The remembered pads' instance ids (`hidhide_known`): hidden while their
+/// kind is wanted, even when absent.
+fn hide_known_ids(cfg: &Config) -> Vec<String> {
+    cfg.hidhide_known.iter().map(|k| k.id.clone()).collect()
 }
 
 /// Whether the session owner `kind` is switched off.
@@ -802,11 +1122,11 @@ fn is_off(off: &[ControllerKind], kind: Option<ControllerKind>) -> bool {
     kind.map_or(false, |k| off.contains(&k))
 }
 
-/// The virtual Xbox pad is plugged only for a connected NS2 Pro with mapping
-/// OFF, and not while paused (no input is forwarded then, so a plugged pad
-/// would freeze whatever it last reported).
-fn wants_pad(paused: bool, mapping_on: bool, kind: Option<ControllerKind>) -> bool {
-    !paused && !mapping_on && kind.map_or(false, ControllerKind::needs_virtual_pad)
+/// The virtual Xbox pad is plugged only for a connected pad (any kind) in
+/// Xbox mode, and not while paused or off (no input is forwarded then, so a
+/// plugged pad would freeze whatever it last reported).
+fn wants_pad(paused_or_off: bool, mode: OutputMode, kind: Option<ControllerKind>) -> bool {
+    !paused_or_off && mode == OutputMode::Xbox && kind.is_some()
 }
 
 /// Warnings for `ControllerStatus`: the workers' (process lifetime), then
@@ -843,66 +1163,172 @@ fn connected_event(status: &ControllerStatus) -> EngineEvent {
         warnings: status.warnings.clone(),
         connected: status.connected.clone(),
         off_pads: status.off_pads.clone(),
+        battery: status.battery.clone(),
     }
 }
 
-/// Status warning: ViGEmBus is not installed, so the NS2 Pro gets no virtual
-/// Xbox pad (mapping ON still works).
+/// Status warning: ViGEmBus is not installed, so a pad in Xbox mode gets no
+/// virtual Xbox pad (鍵鼠 still works).
 pub const WARN_VIGEM_MISSING: &str = "vigem_missing";
 
-/// The virtual Xbox pad's lifecycle (NS2 Pro with mapping OFF). Owned by the
-/// engine thread; the `SharedPad` is shared only with the panic hook.
+/// A plug still running after this long is logged (once).
+const PLUG_SLOW_WARN: Duration = Duration::from_secs(5);
+/// Shutdown waits at most this long for a plug in flight.
+const PLUG_SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+
+/// A `plug()` running on its own thread.
+struct Plugging {
+    rx: Receiver<Result<(), PadError>>,
+    since: Instant,
+    warned: bool,
+}
+
+/// The virtual Xbox pad's lifecycle (Xbox output mode). Owned by the engine
+/// thread; the `SharedPad` is shared only with the panic hook and a plug in
+/// flight.
+///
+/// `plug()` runs on a short-lived thread: vigem-client's `wait_ready` can
+/// block (forever, in the worst case), and the engine thread must keep
+/// polling and publishing the status meanwhile. `update` / `unplug` use
+/// `try_lock`, so they never wait on it either.
 struct PadLink {
     pad: SharedPad,
     plugged: bool,
-    /// A plug failed this session. No retry until a fresh `Connected` or a
-    /// mapping ON→OFF edge: a missing bus must not be retried every tick.
+    /// A plug failed this session. No retry until a fresh `Connected` or an
+    /// edge into Xbox mode: a missing bus must not be retried every tick.
     plug_failed: bool,
     /// Session warning: ViGEmBus is not installed.
     bus_missing: bool,
     state: XState,
     /// `state` changed since the pad last accepted it.
     dirty: bool,
+    /// The plug in flight, if any. Never more than one.
+    plugging: Option<Plugging>,
 }
 
 impl PadLink {
     fn new(pad: SharedPad) -> Self {
-        PadLink { pad, plugged: false, plug_failed: false, bus_missing: false, state: XState::default(), dirty: false }
+        PadLink {
+            pad,
+            plugged: false,
+            plug_failed: false,
+            bus_missing: false,
+            state: XState::default(),
+            dirty: false,
+            plugging: None,
+        }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn VirtualPad>> {
-        self.pad.lock().unwrap_or_else(|p| p.into_inner())
+    /// The pad's lock if free now (a poisoned one is taken anyway).
+    fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn VirtualPad>>> {
+        match self.pad.try_lock() {
+            Ok(g) => Some(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
     }
 
     /// Plug or unplug to match `want`. Returns whether the session warnings
     /// changed.
     fn sync(&mut self, want: bool) -> bool {
-        if want && !self.plugged && !self.plug_failed {
-            let result = self.lock().plug();
-            match result {
-                Ok(()) => {
-                    self.plugged = true;
-                    self.dirty = true; // report the current state right away
+        let changed = self.poll_plug();
+        if want && !self.plugged && !self.plug_failed && self.plugging.is_none() {
+            self.start_plug();
+        } else if !want && self.plugged {
+            // A plug that returned after `want` turned false lands here too.
+            self.unplug();
+        }
+        changed
+    }
+
+    fn start_plug(&mut self) {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let pad = self.pad.clone();
+        let spawned = thread::Builder::new().name("virtual-pad-plug".into()).spawn(move || {
+            let result = pad.lock().unwrap_or_else(|p| p.into_inner()).plug();
+            let _ = tx.send(result);
+        });
+        match spawned {
+            Ok(_) => self.plugging = Some(Plugging { rx, since: Instant::now(), warned: false }),
+            Err(e) => {
+                tracing::warn!(error = %e, "virtual pad: could not start the plug thread");
+                self.plug_failed = true;
+            }
+        }
+    }
+
+    /// Take the result of a plug in flight, if it has returned. Returns
+    /// whether the session warnings changed.
+    fn poll_plug(&mut self) -> bool {
+        let Some(p) = self.plugging.as_mut() else { return false };
+        match p.rx.try_recv() {
+            Ok(result) => {
+                self.plugging = None;
+                self.plug_done(result)
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                if !p.warned && p.since.elapsed() >= PLUG_SLOW_WARN {
+                    p.warned = true;
+                    tracing::warn!("virtual pad: plug still running after 5 s (ViGEmBus not answering?)");
                 }
-                Err(e) => {
-                    self.plug_failed = true;
-                    match e {
-                        PadError::BusNotFound => {
-                            tracing::warn!("ViGEmBus is not installed: no virtual Xbox pad");
-                            let changed = !self.bus_missing;
-                            self.bus_missing = true;
-                            return changed;
-                        }
-                        PadError::Unsupported => tracing::debug!("no virtual pad on this platform"),
-                        PadError::Other(msg) => tracing::warn!(error = %msg, "virtual pad plug failed"),
+                false
+            }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                // The plug thread panicked inside the backend.
+                self.plugging = None;
+                self.plug_done(Err(PadError::Other("plug thread ended without a result".into())))
+            }
+        }
+    }
+
+    fn plug_done(&mut self, result: Result<(), PadError>) -> bool {
+        match result {
+            Ok(()) => {
+                self.plugged = true;
+                self.dirty = true; // report the current state right away
+            }
+            Err(e) => {
+                self.plug_failed = true;
+                match e {
+                    PadError::BusNotFound => {
+                        tracing::warn!("ViGEmBus is not installed: no virtual Xbox pad");
+                        let changed = !self.bus_missing;
+                        self.bus_missing = true;
+                        return changed;
                     }
+                    PadError::Unsupported => tracing::debug!("no virtual pad on this platform"),
+                    PadError::Other(msg) => tracing::warn!(error = %msg, "virtual pad plug failed"),
                 }
             }
-        } else if !want && self.plugged {
-            self.lock().unplug();
-            self.plugged = false;
         }
         false
+    }
+
+    /// Unplug now if the lock is free; otherwise stay plugged and let the
+    /// next `sync` retry.
+    fn unplug(&mut self) {
+        let done = self.try_lock().map(|mut p| p.unplug()).is_some();
+        if done {
+            self.plugged = false;
+        }
+    }
+
+    /// Engine shutdown: wait a little for a plug in flight (a stuck one is
+    /// left behind: the process exit removes its target), then unplug.
+    fn shutdown(&mut self) {
+        if let Some(p) = self.plugging.take() {
+            match p.rx.recv_timeout(PLUG_SHUTDOWN_WAIT) {
+                Ok(result) => {
+                    self.plug_done(result);
+                }
+                Err(_) => tracing::warn!("virtual pad: plug still running at shutdown; not waiting"),
+            }
+        }
+        if self.plugged {
+            // The plug thread, if any, has returned and released the lock.
+            self.pad.lock().unwrap_or_else(|p| p.into_inner()).unplug();
+            self.plugged = false;
+        }
     }
 
     /// Allow one more plug attempt after a failure.
@@ -911,7 +1337,7 @@ impl PadLink {
     }
 
     /// A controller session starts or ends: neutral state, no failed plug,
-    /// no session warning.
+    /// no session warning. A plug in flight keeps running (no second one).
     fn reset_session(&mut self) {
         self.state = XState::default();
         self.dirty = true;
@@ -927,11 +1353,12 @@ impl PadLink {
 
     /// Push the state if it changed. A refused report stays dirty and is
     /// retried (with the latest state) next tick, so a transient bus refusal
-    /// cannot leave a button pressed in the game.
+    /// cannot leave a button pressed in the game. A busy lock is skipped the
+    /// same way.
     fn flush(&mut self) {
         if self.plugged && self.dirty {
             let s = self.state;
-            let accepted = self.lock().update(&s).is_ok();
+            let accepted = self.try_lock().is_some_and(|mut p| p.update(&s).is_ok());
             self.dirty = !accepted;
         }
     }
@@ -1044,6 +1471,55 @@ fn execute_action(
                 raw_y: *raw_y,
                 quadrant: *quadrant,
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::OutputMode;
+
+    #[test]
+    fn nano_pad_mode_is_not_hidden() {
+        let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        cfg.output_mode.clear();
+        cfg.mapping_enabled.clear();
+        assert!(hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "鍵鼠 hides the Nano");
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano));
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Xbox);
+        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "a stray xbox is 手把 for the Nano");
+    }
+
+    #[test]
+    fn hide_wanted_kinds_are_native_pads_in_kbm_or_xbox() {
+        let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        cfg.output_mode.clear();
+        cfg.mapping_enabled.clear();
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro, ControllerKind::XboxNano], "default 鍵鼠 is hidden");
+        for k in ControllerKind::ALL {
+            cfg.output_mode.insert(k.slug().into(), OutputMode::Pad);
+        }
+        assert!(hide_wanted_kinds(&cfg).is_empty(), "手把 is never hidden");
+        cfg.output_mode.insert("dualsense".into(), OutputMode::Xbox);
+        cfg.output_mode.insert("ns2_pro".into(), OutputMode::Kbm);
+        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense], "Switch 2 Pro has no native driver");
+    }
+
+    #[test]
+    fn wants_pad_truth_table() {
+        let modes = [OutputMode::Kbm, OutputMode::Xbox, OutputMode::Pad];
+        for kind in ControllerKind::ALL {
+            for mode in modes {
+                for paused_or_off in [false, true] {
+                    let want = !paused_or_off && mode == OutputMode::Xbox;
+                    assert_eq!(wants_pad(paused_or_off, mode, Some(kind)), want, "{kind:?} {mode:?} {paused_or_off}");
+                }
+            }
+        }
+        for mode in modes {
+            assert!(!wants_pad(false, mode, None), "no controller, no pad ({mode:?})");
         }
     }
 }

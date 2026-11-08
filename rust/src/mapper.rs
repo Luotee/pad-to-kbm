@@ -152,7 +152,9 @@ impl Mapper {
 
     pub fn handle(&mut self, ev: GamepadEvent) -> Vec<KeyAction> {
         match ev {
-            GamepadEvent::Connected(_) | GamepadEvent::Disconnected => Vec::new(),
+            GamepadEvent::Connected(_) | GamepadEvent::Disconnected | GamepadEvent::Battery(_) => {
+                Vec::new()
+            }
             GamepadEvent::ButtonDown(id) => match trigger_side(id) {
                 Some(side) => {
                     self.trigger_digital[side_index(side)] = true;
@@ -390,10 +392,13 @@ mod tests {
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
             mapping_enabled: Default::default(),
+            output_mode: Default::default(),
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+            hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
+            hidhide_known: Vec::new(),
         }
     }
 

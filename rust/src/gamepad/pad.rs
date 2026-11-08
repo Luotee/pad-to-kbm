@@ -2,6 +2,7 @@
 //! (DualSense 0x31, Switch Pro, ...). Diffing two of these yields the
 //! `GamepadEvent` stream.
 
+use super::battery::Battery;
 use super::events::GamepadEvent;
 use crossbeam_channel::Sender;
 
@@ -28,6 +29,8 @@ pub struct PadState {
     pub finger0_y: u16,
     /// Whole-touchpad physical click switch.
     pub touchpad_btn: bool,
+    /// Battery, when the report carries one (DualSense, Switch Pro).
+    pub battery: Option<Battery>,
 }
 
 // Hand-written: std only derives `Default` for arrays up to 32 elements and
@@ -46,6 +49,7 @@ impl Default for PadState {
             finger0_x: 0,
             finger0_y: 0,
             touchpad_btn: false,
+            battery: None,
         }
     }
 }
@@ -88,6 +92,11 @@ pub(crate) fn emit_pad_diff(
         }
     }
     prev_buttons.copy_from_slice(&cur.buttons);
+    // First frame: only a reading. Later: any change, a reading that
+    // disappears (Some -> None) included.
+    if prev.map_or(cur.battery.is_some(), |p| p.battery != cur.battery) {
+        let _ = tx.send(GamepadEvent::Battery(cur.battery));
+    }
 }
 
 #[cfg(test)]
@@ -113,5 +122,40 @@ mod tests {
 
         emit_pad_diff(Some(&cur), &cur, &mut prev_buttons, &tx);
         assert_eq!(rx.try_iter().count(), 0, "identical frame emits nothing");
+    }
+
+    #[test]
+    fn emit_pad_diff_sends_battery_on_first_frame_and_on_change_only() {
+        use crate::gamepad::Battery;
+        let (tx, rx) = unbounded();
+        let mut prev_buttons = [false; BUTTON_SLOTS];
+        let mut cur = PadState::default();
+        cur.battery = Some(Battery { pct: 80, charging: false });
+
+        emit_pad_diff(None, &cur, &mut prev_buttons, &tx);
+        let batt = |evs: Vec<GamepadEvent>| -> Vec<GamepadEvent> {
+            evs.into_iter().filter(|e| matches!(e, GamepadEvent::Battery(_))).collect()
+        };
+        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(cur.battery)]);
+
+        emit_pad_diff(Some(&cur), &cur, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().count(), 0, "same reading: nothing");
+
+        let mut next = cur.clone();
+        next.battery = Some(Battery { pct: 80, charging: true });
+        emit_pad_diff(Some(&cur), &next, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![GamepadEvent::Battery(next.battery)]);
+
+        // The reading disappears (DualSense error status mid-session): say so.
+        let gone = PadState::default();
+        emit_pad_diff(Some(&next), &gone, &mut prev_buttons, &tx);
+        assert_eq!(batt(rx.try_iter().collect()), vec![GamepadEvent::Battery(None)]);
+        emit_pad_diff(Some(&gone), &gone, &mut prev_buttons, &tx);
+        assert_eq!(rx.try_iter().count(), 0, "still none: nothing");
+
+        // A pad without a reading sends none.
+        let none = PadState::default();
+        emit_pad_diff(None, &none, &mut [false; BUTTON_SLOTS], &tx);
+        assert!(batt(rx.try_iter().collect()).is_empty());
     }
 }

@@ -11,7 +11,7 @@
 <p align="center"><sub>按鍵設定畫面：把鍵盤、滑鼠或巨集方塊拖到按鈕的格子上就綁好了。按下的按鈕和它送出的鍵會亮起來。</sub></p>
 
 PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 MB 的 `PadToKBM.exe`，不用安裝、不附驅動。
-支援 **DualSense（PS5）、Switch Pro、Switch 2 Pro** 三種手把，每支各自一套按鍵設定。
+支援 **DualSense（PS5）、Switch Pro、Switch 2 Pro、Xbox Nano** 四種手把，每支各自一套按鍵設定。
 最初是為了讓我太太在筆電上用手把玩 MapleStory Worlds Artale 而寫的。
 
 目前版本見 [CHANGELOG.md](CHANGELOG.md)。
@@ -28,7 +28,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 | 一鍵連發、固定招式要按很多下 | **巨集**：錄一串按下／放開，可以循環；每一步的延遲都是「最短～最長」的範圍 |
 | 怕被當成腳本或外掛 | 所有按鍵時間都帶隨機，沒有固定節拍；只用 Windows 一般的按鍵輸入，不注入、不改遊戲 |
 | 鍵卡住放不開 | 手把斷線、關掉程式、程式當掉時，按著的鍵都會放開 |
-| 有時想直接用手把玩 | 右上角每支手把各自選「關｜鍵鼠｜手把」：手把就是程式不送東西、遊戲直接用手把（Switch 2 Pro 變成 Xbox 手把） |
+| 有時想直接用手把玩 | 右上角每支手把各自選「關｜鍵鼠｜Xbox｜手把」：手把就是程式不送東西、遊戲直接用手把；Xbox 是讓遊戲看到一支 Xbox 手把（Switch 2 Pro 只能選 Xbox；Xbox Nano 本來就是 Xbox 手把，Xbox 和手把是同一個選項） |
 
 ---
 
@@ -43,6 +43,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 | DualSense | 同時按住 PS 鍵和 Create 鍵到燈條閃爍，再到 Windows「藍牙與裝置」加入 |
 | Switch Pro | 按住頂端的配對鍵到燈號跑動，再到 Windows「藍牙與裝置」加入 |
 | Switch 2 Pro | **不要**在 Windows 裡配對。開著 PadToKBM，第一次按住手把上的小 SYNC 鍵；之後按任一鍵就會連上 |
+| Xbox Nano | 按住配對鍵到 Xbox 鍵快速閃爍，再到 Windows「藍牙與裝置」加入 |
 
 **3. 雙擊 `PadToKBM.exe`**：視窗打開後按手把試試，對應的鍵會送到目前在前景的程式。
 第一次執行會在 exe 旁邊寫一份設定檔 `padtokbm.json`；整個資料夾可以直接搬到別台電腦用。
@@ -76,7 +77,18 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
     <td><sub><b>燈條</b>（DualSense）。選「自訂」後，鍵鼠時和非鍵鼠時各設一種效果：關燈、固定、呼吸或彩虹。切到手把或關，燈跟著換。</sub></td>
     <td><sub><b>自訂顏色。</b>點「＋」，拖色相和飽和兩條色帶，或直接打色碼。</sub></td>
   </tr>
+  <tr>
+    <td><img src="docs/images/readme/xbox-nano.png" alt="Xbox Nano 分頁：按住 Xbox 鍵，Xbox 格子和鍵盤的 F12 亮起；Share 格子是灰的"></td>
+    <td><img src="docs/images/readme/known-pads.png" alt="設定的記住的手把分頁：DualSense 藍牙 23:D2，Xbox Nano 藍牙 F9:A8 連線中"></td>
+  </tr>
+  <tr>
+    <td><sub><b>Xbox Nano。</b>Xbox 鍵也能綁（這裡送 F12）；Share 鍵不會送給電腦，格子是灰的。四支手把的圖都照實物描的。</sub></td>
+    <td><sub><b>記住的手把。</b>藏過的手把會留在這裡，藍牙手把附上位址末四碼；連線中的不能刪。</sub></td>
+  </tr>
 </table>
+
+<p><img src="docs/images/readme/battery.png" width="404" alt="手把分頁：DualSense 和 Xbox Nano 顯示三格綠色電池，Switch 2 Pro 是綠燈；滑鼠移到 DualSense 上，灰色說明牌寫 80%"></p>
+<p><sub><b>電量。</b>連上的 DualSense、Switch Pro、Xbox Nano 在分頁上顯示電池（綠／黃／紅），充電時閃電一明一暗，滑鼠移上去看百分比；Xbox Nano 不會顯示充電中。</sub></p>
 
 <sub>截圖用的是示範設定，可用 <code>scripts/readme-shots.mjs</code> 重新產生。</sub>
 
@@ -92,7 +104,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 
 ### Switch 2 Pro 連上了，遊戲卻沒反應？
 
-先看畫面右上的「關｜鍵鼠｜手把」（Switch 2 Pro 的第三格寫「Xbox」）：
+先看畫面右上的「關｜鍵鼠｜Xbox｜手把」（Switch 2 Pro 的「手把」是灰的：Windows 認不得它）：
 
 - **鍵鼠**（預設）：按鍵送出鍵盤、滑鼠，不需要其他東西。
 - **Xbox**：PadToKBM 把它變成一支虛擬 Xbox 手把給遊戲用，這需要
@@ -103,6 +115,22 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 不是「鍵鼠」的時候，下面的按鍵設定會鎖住不能改；要改先切回鍵鼠。
 
 建議用 Windows 11（Windows 10 的藍牙會把它限制在約 17 Hz）。
+
+### 遊戲只認 Xbox 手把，或讀 DualSense／Switch Pro 讀得不好？
+
+選「Xbox」：遊戲會看到一支虛擬 Xbox 手把。DualSense／Switch Pro 另外需要
+[HidHide 1.5.230](https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0)，把原本的手把對遊戲藏起來，遊戲才不會同時讀到兩支。
+「鍵鼠」模式也會用 HidHide 藏住 DualSense／Switch Pro／Xbox Nano（遊戲只看到鍵盤滑鼠）；沒裝 HidHide 時鍵鼠照常運作，第一次會提示安裝一次（按「稍後」就不再自動跳出），之後齒輪旁留一個「!」可隨時點開。「手把」模式不藏，遊戲可直接讀。
+缺什麼，選 Xbox 時的提示會列出來，按一下就下載官方安裝程式、核對檔案後執行（會要求系統管理員權限）。
+連過一次的手把會被記住，之後先開 PadToKBM 再開手把就直接藏好；如果開程式時手把已經開著，程式會先把它關機，按 PS／HOME 鍵打開就好。只有需要重連的那一支會被關機：有兩支同型號的手把時，正在用的那支不受影響。記住的手把可以在「設定 → 記住的手把」刪除；藍牙手把會顯示藍牙位址末四碼（例如 23:D2），同型號的兩支分得出來。
+畫面出現「再連一次」時，要按分頁上的電源鍵斷開、再按 PS／HOME 鍵連回來一次；手把用 USB 線連著時，畫面會改說拔掉 USB 線再插回去。從 Xbox 切到鍵鼠，手把仍然藏著；切到「手把」或關掉程式，手把就不再藏起來（切到「關」不會放回來）。
+Xbox Nano 不需要這些：它本來就是 Xbox 手把，選「Xbox」或「手把」都是讓遊戲直接讀它。它走低功耗藍牙，PadToKBM 沒辦法替它關機，所以它分頁上的電源鍵是灰的、按不動；鍵鼠模式出現「再連一次」時，長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開。
+遊戲的震動目前還不會轉給手把。
+
+### Xbox Nano 按 Xbox 鍵會跳出 Xbox Game Bar？
+
+那是 Windows 自己的功能，不是 PadToKBM 送的。不想要的話，到 Windows「設定 → 遊戲 → Game Bar」把「允許您的控制器開啟 Game Bar」關掉（Windows 10 叫「使用控制器上的這個按鈕開啟 Xbox Game Bar」）。
+Xbox 鍵在 PadToKBM 裡一樣可以綁鍵；Share 鍵目前不會送給電腦，所以它的格子是灰的、不能綁。裝了微軟的 Xbox 無線驅動程式時，PadToKBM 改從 XInput 讀 Nano（自動判斷，不用設定）。
 
 ### 設定檔在哪？可以直接改嗎？
 
@@ -115,7 +143,7 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 
 ### 不想用的時候可以把手把關掉嗎？
 
-可以，點手把名稱旁的電源鍵。配對會保留，按 PS／HOME 鍵就能再連上。
+可以，點手把名稱旁的電源鍵。配對會保留，按 PS／HOME 鍵就能再連上。Xbox Nano 例外：它分頁上的電源鍵是灰的，要長按 Xbox 鍵約 6 秒關機。
 只想讓遊戲直接用手把（不轉鍵鼠）就選「手把」；暫時不想讓它送東西就選「關」。
 
 ### 想讓遊戲或 Steam 控制燈條，怎麼辦？
@@ -123,9 +151,9 @@ PadToKBM（舊名 DualSense Mapper）是一個 Windows 小程式：一個約 11 
 把「燈條」選成「原廠燈」，PadToKBM 就一個位元組都不寫，燈交給遊戲或 Steam。
 從別的選項切回原廠燈後，要重新連線手把，燈才會恢復。
 
-### 支援 USB、DualSense Edge、Xbox 手把或 macOS 嗎？
+### 支援 USB、DualSense Edge、其他 Xbox 手把或 macOS 嗎？
 
-目前不支援：只走藍牙，Windows 限定。macOS 版還在計畫中；那之前 macOS 可以用 [`legacy-python/`](legacy-python/README.md) 的舊版 Python 程式（只支援 DualSense）。
+目前不支援：只走藍牙，Windows 限定；Xbox 手把只支援 Xbox Nano。macOS 版還在計畫中；那之前 macOS 可以用 [`legacy-python/`](legacy-python/README.md) 的舊版 Python 程式（只支援 DualSense）。
 
 ---
 

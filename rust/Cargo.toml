@@ -1,6 +1,6 @@
 [package]
 name = "dualsense-mapper"
-version = "3.5.1"
+version = "3.8.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Map gamepad buttons and analog inputs to keyboard and mouse."
@@ -43,13 +43,18 @@ tauri = { version = "2", features = ["tray-icon", "image-ico"], optional = true 
 tauri-plugin-single-instance = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Devices_Bluetooth", "Win32_System_IO", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Input_XboxController", "Win32_System_Com_Urlmon", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Devices_Bluetooth", "Win32_System_IO", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Input", "Win32_UI_Input_XboxController", "Win32_System_Com_Urlmon", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_HumanInterfaceDevice", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
 # Switch 2 Pro BLE worker (gamepad/ns2_ble.rs). btleplug 0.13.4 is the
 # version proven on Win11 hardware; the worker runs its own current-thread
 # tokio runtime on a dedicated std thread.
 btleplug = "0.13.4"
 tokio = { version = "1", features = ["rt", "time", "macros"] }
 futures = "0.3"
+# Xbox Nano battery over Bluetooth GATT (gamepad/nano_battery.rs): WinRT
+# BluetoothLEDevice / GATT. 0.62 is the version btleplug already builds with
+# these features, so it adds no second copy of the bindings.
+windows = { version = "0.62", features = ["Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Foundation", "Storage_Streams"] }
+windows-future = "0.3"
 # Virtual Xbox 360 pad for the Switch 2 Pro in no-mapping mode
 # (xinput_sink.rs). User-mode client of an externally installed ViGEmBus.
 vigem-client = "0.1"

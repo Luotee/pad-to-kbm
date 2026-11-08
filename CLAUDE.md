@@ -158,15 +158,25 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `get_stick_positions`; mutators `set_binding`, `swap_bindings`,
 `set_trigger_mode`, `clear_pad`, `reset_pad`, `set_pad_tables`,
 `set_macro`, `rename_macro`, `delete_macro`, `set_settings`,
-`set_mapping_enabled`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
-`reset_stick_cal`, `set_ui_prefs`; runtime-only `set_pad_off` (header 關,
-returns the off pads, no `config-changed`); ViGEmBus `get_vigem_status`,
-`install_vigem`; fire-and-forget
+`set_output_mode`, `set_rumble_on_connect`, `set_lightbar`, `save_stick_cal`,
+`reset_stick_cal`, `set_ui_prefs` (it and `get_ui_prefs` also carry `hidhide_prompt_dismissed`,
+written to the config only once true); runtime-only `set_pad_off` (header 關,
+returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
+at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered a pad of that kind off for its reconnect and it is not back yet; the board shows that banner only while no pad of the kind is connected; `replug_usb`: a pad of that kind needing the reconnect is on USB, so the reconnect banner says unplug it instead of ⏻ then PS),
+`get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
+(`hidhide_known` in the config; a Bluetooth entry carries `addr`, shown as its last four digits) `get_present_pad_ids` (pads present at the
+hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
+present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
 `open_config_folder`. Events the board listens for: `controller-status`
-(`connected` bool + `connected_pads` + `off_pads` + `warnings`),
+(`connected` bool + `connected_pads` + `off_pads` + `warnings` + `battery`
+`{ "<slug>": { pct, charging } }` for the connected pads that report one —
+DualSense, Switch Pro, Xbox Nano (over GATT, never `charging`); re-sent when a reading changes, never part of the
+connection state; the pad slugs are `dualsense`, `ns_pro`, `ns2_pro`,
+`xbox_nano`; `get_controller_status` carries the same `battery`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
-`{button}` / `{macro}`), `config-changed`.
+`{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
+hider remembers a pad).
 
 What a PASS requires, captured as evidence:
 - Every header / slot / palette / footer / editor / settings control
@@ -216,7 +226,7 @@ non-zero on any FAIL. Logs: `rust/target/verify/<layer>.log`.
 |---|---|
 | `linux` | `cargo test`, all suites, on the Linux dev host |
 | `windows-tests` | `cargo xwin test --no-run` (MSVC target); every test exe runs natively on Windows via WSL interop |
-| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept); closed gracefully (WM_CLOSE), which must log the engine shutdown, then cleaned up by PID (a launch whose exe PID is lost is killed by temp-dir path and FAILs); temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
+| `gui-smoke` | GUI exe build; launched alone (`--dry-run`) from a fresh `%LOCALAPPDATA%\Temp` dir: titled window up, first-run `padtokbm.json` written, survives a valid and an invalid config hot-edit; closed gracefully (WM_CLOSE), which must log `cleanup (exit): engine shut down`; a second launch beside a pre-v3.1.0 `dualsense-mapper.json` must adopt it byte for byte (`.bak` kept), then gets a simulated logoff (`WM_QUERYENDSESSION` + `WM_ENDSESSION` through `SendMessageTimeoutW`, so a hang FAILs) and must log `cleanup (session end): engine shut down`, and its close afterwards must not repeat it (one `cleanup (` line, no panic); each launch is cleaned up by PID (a launch whose exe PID is lost is killed by temp-dir path and FAILs); temp dirs removed. SKIPs if the user's copy (new or old exe name) is running |
 | `web` | the click-through recipe above, automated: `scripts/verify/web-smoke.mjs` (Playwright + cached Chromium, mocked `__TAURI__`); screenshots in `rust/target/verify/` |
 
 Flags: `--quick` (linux + windows-tests), `--skip-gui`, `--skip-web`,
@@ -247,8 +257,8 @@ These are project-specific invariants. Breaking any of them silently
 regresses real, observed bugs the codebase already fixed once:
 
 1. **`config.rs::Config::validate` must reject any config in which a
-   pad's `buttons` table (`pads.dualsense`, `pads.ns_pro`, `pads.ns2_pro`)
-   does not list every button id `0..=32` (the union of all supported
+   pad's `buttons` table (`pads.dualsense`, `pads.ns_pro`, `pads.ns2_pro`,
+   `pads.xbox_nano`) does not list every button id `0..=32` (the union of all supported
    pads' ids).** Missing ids are a user error, not a silent skip — except
    for the v2.1.0 touchpad-quadrant additions and the v2.5.0 Capture
    button and the v2.6.0 Switch 2 Pro additions (25..=32), which the load
@@ -272,8 +282,8 @@ regresses real, observed bugs the codebase already fixed once:
    against stuck keys / stuck mouse buttons when the process dies or the
    controller drops. `release_all_held` releases every held key **and**
    every held mouse button, and never waits on `min_press_ms` —
-   shutdown beats anti-cheat profile. The virtual Xbox pad (Switch 2 Pro,
-   no-mapping mode) is likewise unplugged on Disconnected, pause, shutdown
+   shutdown beats anti-cheat profile. The virtual Xbox pad (any pad in
+   Xbox output mode) is likewise unplugged on Disconnected, pause, shutdown
    and in the panic hook (`emergency_unplug`); `vigem-client` also unplugs
    on Drop.
 4. **Macro threads drain every unmatched `Press` as `Release` on every
@@ -292,23 +302,54 @@ regresses real, observed bugs the codebase already fixed once:
    etc.) or a hat axis (`Axis::DPadX/Y`), and that triggers can be
    reported in `[-1, 1]` or `[0, 1]`. Mapper / keyboard see one
    uniform event surface. Per-kind protocol modules (DualSense, Switch
-   Pro, Switch 2 Pro) and the BLE transport (`ns2_ble.rs`) live in this
+   Pro, Switch 2 Pro, Xbox Nano `xbox_protocol.rs`) and the BLE transport
+   (`ns2_ble.rs`) live in this
    gamepad layer too, and `SourceHub` arbitrates so that one controller
    owns the session at a time. The user stick calibration (`stick_cal`,
    `gamepad/stick_cal.rs`) is applied in `SourceHub` to the owner's stick
-   events, on top of the pad's factory calibration. New platform quirks
-   live here.
+   events, on top of the pad's factory calibration. The Xbox Nano has two
+   readers, picked when its worker finds it: with Microsoft's Xbox driver
+   (its HID path carries `&IG_`, and that collection sends no report) it is
+   read through XInput (`gamepad/xinput_source.rs`, Windows only: its slot
+   by `XInputGetCapabilitiesEx` 045E:0B4F, never our ViGEm pad), otherwise
+   through its HID report. Its Share is in neither, so the board greys that
+   slot out (`model.js` `slotOff`). New platform quirks live here.
 7. **No process hooking, no DLL injection, no driver.** User-mode
    `SendInput` (Windows) / `CGEvent` (macOS) only, via the `enigo`
    crate. Anything else lands us in actual cheat-software territory.
-   Single exception (v2.6.0): a virtual Xbox 360 pad through an
-   externally installed ViGEmBus, used only for a controller Windows
-   cannot use natively (the Switch 2 Pro, `ControllerKind::needs_virtual_pad`)
-   and only while its mapping is OFF. The app never ships a driver. On the
-   user's click it may download the pinned official ViGEmBus installer,
-   verify size + sha256, and run it; the user goes through the installer's
-   own elevation prompt (`vigem_setup.rs`, v3.2.0). Hooking and injection
-   stay forbidden.
+   Single exception (v2.6.0, widened in v3.6.0): two externally installed
+   Nefarius drivers, ViGEmBus (a virtual Xbox 360 pad) and HidHide (hides
+   the real pad from games). ViGEmBus is used only while the pad is on
+   Xbox (`output_mode` `xbox`); HidHide only while it is on 鍵鼠 or Xbox
+   (`kbm` or `xbox`, never 手把) and only for a pad with a native driver
+   (`ControllerKind::has_native_driver`). The app never ships a
+   driver. On the user's click it may download each pinned official
+   installer, verify size + sha256, and run it; the user goes through the
+   installer's own elevation prompt (`vigem_setup.rs`, `hidhide_setup.rs`).
+   User-mode client calls only: the ViGEm client, and HidHide's
+   control-device IOCTLs (`hidhide.rs`). HidHide changes are limited to the
+   pad's own HID instance ids on the blacklist and our exe on the
+   whitelist, merged with the user's existing lists, and undone when the
+   pad leaves 鍵鼠 / Xbox, when the app exits (GUI: including Windows
+   logoff / shutdown), and at the next start after a crash (the state file
+   `padtokbm.hidhide.json`). A pad hidden once is
+   remembered (`hidhide_known`, at most 16) and hidden at start even while
+   it is off; that changes nothing about when the entries are undone. A pad
+   hidden while connected needs one reconnect: the app then drops that
+   pad's Bluetooth link itself, by its address (read from the device tree,
+   `hidhide::bt_addr_of_instance`; never another pad of the same kind),
+   once per pad per launch (`platform::power_off_addrs`, the ⏻'s
+   `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
+   address (USB) is not touched, nor is a Bluetooth LE pad (the Xbox Nano:
+   its address is shown, but that IOCTL is a classic-Bluetooth disconnect;
+   its tab's ⏻ is greyed out). Of the Nano only the gamepad collection
+   (`&Col01`, in both id formats: `…_REV&0609_<addr>&Col01` and, with
+   Microsoft's Xbox driver, `…&REV_0619&<addr>&COL01&IG_00`) is hidden and
+   remembered.
+   Connection state still comes from the HID
+   stream (iron rule 11) or, for a Nano under Microsoft's driver, from
+   XInput.
+   Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window
    opens. That means:
@@ -350,16 +391,32 @@ regresses real, observed bugs the codebase already fixed once:
     `hidapi` against the DualSense BT 0x31 report. The HID
     worker thread's state machine (Searching → Handshaking →
     Streaming) emits `Connected` on the first decoded input
-    frame and `Disconnected` on either read-error or a per-kind
+    frame (the Xbox Nano, which reports only on change, also on its
+    read-only initial GET_REPORT reply; it has
+    its own HID worker so an idle Nano never blocks a DualSense / Switch
+    Pro) and `Disconnected` on either read-error or a per-kind
     report-stream deadline (DualSense 800 ms, Switch Pro
     1000 ms; the Switch 2 Pro over BLE uses the BLE disconnect event or
-    1000 ms without a decoded report). `SourceHub` forwards only the
-    owner's events. No more `is_connected()` cache, no
+    1000 ms without a decoded report; the Xbox Nano reports only on
+    change, so it has no deadline: read error, manual disconnect, or —
+    after 2 s without a report — its HID device path no longer
+    enumerated; present but silent keeps the session). A Nano under
+    Microsoft's Xbox driver is read through XInput instead, and XInput's
+    connection state is the ground truth there: its slot's first
+    successful read → `Connected`, `ERROR_DEVICE_NOT_CONNECTED` →
+    `Disconnected` (`gamepad/xinput_source.rs`). The two HID
+    workers share hidapi's C library, whose global state has no lock:
+    every `HidApi::new` / `refresh_devices` / `open_device` goes through
+    `hid_source::with_hidapi`.
+    `SourceHub` forwards only the owner's events. No more `is_connected()` cache, no
     more "must press a button to confirm" UX hack — the radio
     link presence is observed directly via report stream
     presence/absence. The worker that owns the session may also write
     rumble and lightbar output reports to its pad (on connect and while
-    streaming); these writes never affect connection state.
+    streaming); these writes never affect connection state. The Xbox
+    Nano's battery is read over Bluetooth GATT (Battery Level 0x2A19,
+    `gamepad/nano_battery.rs`) on its own thread per session, display
+    only: a reading or a failed read never opens or ends a session.
 
 ## Anti-cheat self-discipline
 
@@ -371,9 +428,9 @@ is the README FAQ「會不會被當成外掛？」):
 - Macro step delays are always `[min, max]` ranges, never constants.
 - Synthesized keys honor `min_press_ms` (randomized minimum down/up gap).
 - Simultaneous events on the same gamepad tick are spread by `tick_jitter_ms`.
-- No process hooking, DLL injection, or driver (the ViGEmBus exception
-  in iron rule 7 aside: never bundled, only the verified official
-  installer on the user's click). User-mode `SendInput` / `CGEvent` only.
+- No process hooking, DLL injection, or driver (the ViGEmBus + HidHide
+  exception in iron rule 7 aside: never bundled, only the verified
+  official installers on the user's click). User-mode `SendInput` / `CGEvent` only.
 - `log_events: true` writes every synthesized event with a timestamp
   so the user can self-audit.
 
@@ -485,5 +542,6 @@ shipped three broken releases under admin override — don't repeat it.
   for the other (Phase 2 macOS is the explicit target — don't add
   Windows-only behaviour without a `#[cfg(target_os = "macos")]`
   counterpart or a deliberate "Phase 2 TBD" CHANGELOG note). The Switch 2
-  Pro (BLE + virtual pad) is such a Phase 2 TBD item on macOS.
+  Pro (BLE + virtual pad), Xbox output (ViGEmBus + HidHide) and the Xbox
+  Nano (HID over GATT, XInput) are such Phase 2 TBD items on macOS.
 - Tracking `docs/superpowers/` content.

@@ -1,7 +1,9 @@
 //! Controller kinds the mapper can drive. Standalone: no dependency on
 //! `config` so the gamepad layer stays self-contained.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ControllerKind {
     #[serde(rename = "dualsense")]
     DualSense,
@@ -9,6 +11,8 @@ pub enum ControllerKind {
     NsPro,
     #[serde(rename = "ns2_pro")]
     Ns2Pro,
+    #[serde(rename = "xbox_nano")]
+    XboxNano,
 }
 
 /// Button ids 0..=28 (the full DualSense surface).
@@ -28,11 +32,17 @@ const NS2_PRO_CAPS: [u32; 29] = [
     30, 31, 32,
 ];
 
+/// Xbox Nano: 0..=24 plus 29 (Share: listed, but never sent to the PC, so
+/// the board greys it out). Same set as the
+/// Switch Pro; the ids keep the DualSense numbering.
+const XBOX_NANO_CAPS: [u32; 26] = NS_PRO_CAPS;
+
 impl ControllerKind {
-    pub const ALL: [ControllerKind; 3] = [
+    pub const ALL: [ControllerKind; 4] = [
         ControllerKind::DualSense,
         ControllerKind::NsPro,
         ControllerKind::Ns2Pro,
+        ControllerKind::XboxNano,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -40,6 +50,7 @@ impl ControllerKind {
             ControllerKind::DualSense => "dualsense",
             ControllerKind::NsPro => "ns_pro",
             ControllerKind::Ns2Pro => "ns2_pro",
+            ControllerKind::XboxNano => "xbox_nano",
         }
     }
 
@@ -52,6 +63,7 @@ impl ControllerKind {
             ControllerKind::DualSense => "DualSense",
             ControllerKind::NsPro => "Switch Pro Controller",
             ControllerKind::Ns2Pro => "Switch 2 Pro Controller",
+            ControllerKind::XboxNano => "Xbox Nano",
         }
     }
 
@@ -60,18 +72,21 @@ impl ControllerKind {
             ControllerKind::DualSense => &DUALSENSE_CAPS,
             ControllerKind::NsPro => &NS_PRO_CAPS,
             ControllerKind::Ns2Pro => &NS2_PRO_CAPS,
+            ControllerKind::XboxNano => &XBOX_NANO_CAPS,
         }
     }
 
-    /// Every pad defaults to keyboard / mouse output (v3.2.0; until then the
-    /// Switch 2 Pro defaulted to the virtual Xbox pad). A config that says
-    /// `false` keeps it.
-    pub fn default_mapping_enabled(self) -> bool {
-        true
+    /// Windows has a driver games understand for this pad, so it can be left
+    /// to the game (`OutputMode::Pad`). The Switch 2 Pro has none: its only
+    /// non-keyboard output is the virtual Xbox pad.
+    pub fn has_native_driver(self) -> bool {
+        !matches!(self, ControllerKind::Ns2Pro)
     }
 
+    /// The pad's only non-keyboard output is the virtual Xbox pad (no driver
+    /// games understand): the opposite of `has_native_driver`.
     pub fn needs_virtual_pad(self) -> bool {
-        matches!(self, ControllerKind::Ns2Pro)
+        !self.has_native_driver()
     }
 }
 
@@ -88,17 +103,10 @@ mod tests {
     }
 
     #[test]
-    fn every_kind_defaults_to_mapping_on() {
-        for k in ControllerKind::ALL {
-            assert!(k.default_mapping_enabled(), "{k:?}");
-        }
-    }
-
-    #[test]
-    fn only_ns2_needs_virtual_pad() {
-        assert!(!ControllerKind::DualSense.needs_virtual_pad());
-        assert!(!ControllerKind::NsPro.needs_virtual_pad());
-        assert!(ControllerKind::Ns2Pro.needs_virtual_pad());
+    fn only_ns2_lacks_a_native_driver() {
+        assert!(ControllerKind::DualSense.has_native_driver());
+        assert!(ControllerKind::NsPro.has_native_driver());
+        assert!(!ControllerKind::Ns2Pro.has_native_driver());
     }
 
     #[test]
@@ -138,5 +146,31 @@ mod tests {
             serde_json::to_string(&ControllerKind::NsPro).unwrap(),
             "\"ns_pro\""
         );
+    }
+
+    #[test]
+    fn xbox_nano_slug_roundtrip() {
+        assert_eq!(ControllerKind::XboxNano.slug(), "xbox_nano");
+        assert_eq!(ControllerKind::from_slug("xbox_nano"), Some(ControllerKind::XboxNano));
+        assert_eq!(ControllerKind::XboxNano.display_name(), "Xbox Nano");
+        let k: ControllerKind = serde_json::from_str("\"xbox_nano\"").unwrap();
+        assert_eq!(k, ControllerKind::XboxNano);
+    }
+
+    #[test]
+    fn xbox_nano_capabilities() {
+        let want: Vec<u32> = (0..=24).chain([29]).collect();
+        assert_eq!(ControllerKind::XboxNano.capabilities(), want);
+    }
+
+    #[test]
+    fn xbox_nano_has_native_driver_and_no_virtual_pad() {
+        assert!(ControllerKind::XboxNano.has_native_driver());
+        assert!(!ControllerKind::XboxNano.needs_virtual_pad());
+        assert!(ControllerKind::Ns2Pro.needs_virtual_pad());
+        assert!(!ControllerKind::DualSense.needs_virtual_pad());
+        for k in ControllerKind::ALL {
+            assert_eq!(k.needs_virtual_pad(), !k.has_native_driver(), "{k:?}");
+        }
     }
 }

@@ -3,6 +3,229 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-11-09
+
+This release also carries v3.6.0 and v3.7.0 (below), which were not
+released on their own.
+
+### Added
+
+- **Pad battery in the tabs.** Each connected DualSense, Switch Pro and Xbox
+  Nano shows a small pixel battery in place of its green lamp: three green
+  bars above 66 %, two yellow at 34–66 %, one red at 11–33 %, none at 10 %
+  or less. While a pad charges a bolt breathes over the battery (still when
+  Windows asks for less motion). Hovering the tab shows a grey plate with
+  the battery doubled and the percentage (`80%`, `60% 充電中`). The Switch
+  Pro reports in quarters (0 / 25 / 50 / 75 / 100 %). A DualSense full and
+  still plugged in shows three green bars, no bolt.
+- **The Xbox Nano's battery comes over Bluetooth GATT** (Battery Service,
+  Battery Level), read when its session starts and every 60 seconds, on its
+  own thread; it works with and without Microsoft's Xbox driver. Battery
+  Level carries no charging state, so **the Nano never shows the bolt**.
+- `controller-status` and `get_controller_status` carry `battery`
+  (`{ "<slug>": { pct, charging } }`, connected pads that report one); the
+  status is re-sent only when a reading changes. A battery reading never
+  connects or disconnects a pad.
+- `examples/nano_battery_probe.rs`: a read-only one-shot check of the
+  Nano's battery on a given Bluetooth address.
+
+### Notes
+
+- A pad with no reading keeps the green lamp: the Switch 2 Pro (its report
+  has no battery we decode yet), and a DualSense reporting a battery error
+  (its tab goes back to the lamp mid-session too).
+- macOS: Phase 2 TBD for the Xbox Nano's battery (its GATT read uses
+  WinRT, Windows only); the DualSense / Switch Pro decoding is not
+  platform-specific.
+
+## [3.7.0] - 2026-11-09
+
+### Added
+
+- **Xbox Nano support** (Bluetooth, VID 045E / PID 0B4F). A fourth tab, Xbox
+  Nano, with its own bindings: A / B / X / Y, LB / RB, LT / RT (analog, with
+  快捷頁 / 單鍵 like the other triggers), View / Xbox / Menu, both sticks and
+  their clicks and the D-pad. The keys are named as on the pad (LT／RT,
+  LB／RB, View／Xbox／Menu, Share).
+- **The Xbox Nano under Microsoft's Xbox driver is read through XInput.**
+  With Microsoft's Xbox Wireless driver installed, Windows owns the Nano's
+  gamepad device and sends it no reports; its input goes to XInput instead.
+  PadToKBM sees this on the device id (`&IG_`) and then reads the Nano's
+  XInput slot (the one that says 045E:0B4F, never its own virtual Xbox pad),
+  Xbox key included. It is connected while XInput says so. Without that
+  driver it keeps reading the Nano's Bluetooth reports.
+- **Share on the Xbox Nano is greyed out** (title 「Xbox Nano 的 Share
+  鍵目前不會送給電腦」): Share is in neither the Bluetooth report nor XInput,
+  so it cannot be bound.
+- The Nano has its own HID reader, so it can be connected together with a
+  DualSense or a Switch Pro, in either order; one of them is in use at a
+  time, as before. A Nano that is on but idle shows as connected at once when
+  it answers the read of its current state, otherwise on its first input.
+- **鍵鼠 hides the Xbox Nano** with HidHide, like the DualSense / Switch Pro:
+  its gamepad device only, under both device ids (with Microsoft's Xbox driver
+  the id reads `…&DEV&VID_045E&PID_0B4F&REV_…&<address>&COL01&IG_00`; both
+  forms may be remembered for one Nano).
+  記住的手把 lists it as `Xbox Nano 藍牙 F9:A8` (its Bluetooth address's last
+  four digits; the row's tooltip has the whole address).
+- A Nano that drops off without a read error (Windows keeps its device for a
+  while) is let go once nothing has come from it for 2 seconds and its
+  device is gone: the keys it held are released. A Nano that is still there
+  but idle stays connected.
+- **The title bar shows the version**: `PAD TO KBM v3.7.0`.
+- **Pad art traced from the product photos** for all four controllers:
+  bodies, panels and keys where they are on the real pad, labels inside their
+  key faces, and every line ends at its key.
+
+### Changed
+
+- **Xbox and 手把 are one option on the Xbox Nano.** It already is an Xbox
+  controller, so both let the game read the Nano itself (no virtual pad, no
+  ViGEmBus prompt) and light up together. An `output_mode` of `xbox` for the
+  Nano reads as `pad`.
+- The Xbox Nano tab shows the ⏻ greyed out and not clickable (title 「Xbox Nano
+  無法從電腦關機：請長按 Xbox 鍵約 6 秒」): the app cannot turn a Bluetooth LE
+  controller off (it would only reconnect). Turn it off on the controller
+  (hold the Xbox button for about 6 seconds).
+
+### Migration
+
+- Older configs load with the Xbox Nano's default table (`pads.xbox_nano`);
+  a missing `output_mode.xbox_nano` reads as 鍵鼠 (nothing is written for it).
+  To let a game read the Nano directly, pick 手把.
+- The Xbox Nano is not turned off by the app: it uses Bluetooth LE, and the
+  automatic power-off only drops a classic Bluetooth link.
+  When it was on while it got hidden, the 鍵鼠 「再連一次」 banner says 「再連一次
+  Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開」
+  (⏻ greyed out).
+- The Xbox key may open the Xbox Game Bar: that is Windows (Settings →
+  Gaming → Game Bar), not PadToKBM.
+- A config written by a v3.7.0 test build may remember all four of the
+  Nano's HID devices in `hidhide_known`; the extra ones (keyboard, mouse,
+  vendor) are dropped on load and the next write leaves them out, and the
+  next HidHide round takes them out of HidHide.
+- macOS: Phase 2 TBD for the Xbox Nano. It is Windows only (XInput is
+  Windows only).
+- How HidHide hiding acts on a Nano read through XInput (Microsoft's Xbox
+  driver) has not been tried on hardware yet.
+
+## [3.6.0] - 2026-11-09
+
+### Added
+
+- **Xbox output for the DualSense and the Switch Pro.** Any controller can
+  now be shown to games as a virtual Xbox 360 pad, for games that only read
+  XInput or read the controller badly. The real DualSense / Switch Pro is
+  hidden from games with HidHide, so a game does not get the same input
+  twice. PadToKBM hides only that controller's own HID devices, lets itself
+  through on HidHide's whitelist, keeps any entries you made in HidHide, and
+  takes its own entries out again when the controller leaves 鍵鼠 / Xbox, when the
+  app exits (also when Windows logs off or shuts down with it open), and at the
+  next start after a crash.
+- **關｜鍵鼠｜Xbox｜手把 in the header**, per controller. On the Switch 2 Pro
+  手把 is greyed out and does nothing: Windows has no driver for it, so a
+  game cannot read it directly. Its tooltip says to pick Xbox.
+- **One-click installers.** Picking Xbox on a PC that lacks a driver opens a
+  prompt with one row per driver (ViGEmBus, plus HidHide for the DualSense /
+  Switch Pro) and one button: 安裝這兩個, or 安裝 ViGEmBus / 安裝 HidHide
+  when only one is missing. Each is the pinned official installer (ViGEmBus
+  1.22.0, HidHide 1.5.230), downloaded from its GitHub release, checked for
+  size and sha256 and then run (Windows asks for administrator rights). An
+  installer that fails leaves the prompt open with the reason. Until the
+  drivers are in, the controller sends nothing.
+- **鍵鼠 hides the DualSense / Switch Pro too**, with HidHide, so a game
+  does not read the real pad next to the keys. Without HidHide 鍵鼠 works as
+  before; the install prompt opens once on its own, 「稍後」 is remembered,
+  and a gold 「!」 stays next to the gear until HidHide is in (it reopens the
+  prompt; so does picking 鍵鼠 in the header). Nothing shows where HidHide is
+  unsupported. The 「再連一次」 banner also shows in 鍵鼠.
+- **Reconnect hint.** A controller that was already connected when it was
+  hidden stays visible to games until it reconnects. A white banner says
+  so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
+  PS 鍵連回來」. On USB it says 「再連一次 DualSense，遊戲才看不到原本的手把：
+  拔掉 USB 線再插回去」 instead: only unplugging makes a game let go of it, and
+  the ⏻ would also turn off a Bluetooth controller of the same model. It goes
+  away once that controller has gone and come back.
+- **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
+  a 「這次不再提醒」 button (per controller, until the next time the app is
+  opened; nothing is written to the config). The Xbox banner is unchanged.
+- **PadToKBM turns the controller off when it needs that reconnect.** A
+  DualSense / Switch Pro that is on when it gets hidden (on when the app
+  opens, connected for the first time, turned on while another one of the
+  same model is in use, or switched from 手把 to 鍵鼠 / Xbox while on) is
+  turned off by the app itself, at most once per controller each time the
+  app is opened. Only that controller is turned off: its Bluetooth link is
+  dropped by its address, so a second DualSense already in use keeps
+  playing (the tab's ⏻ still turns off every connected controller of that
+  model). No administrator rights, no device restart. PadToKBM looks for
+  newly turned-on controllers every 2 seconds, so one turned on while
+  another of its model is connected is hidden (and, if needed, turned off)
+  right away.
+  While it is off and no other controller of that model is connected, a
+  white banner says 「已替你把 DualSense 關機，好讓遊戲看不到它。按 PS 鍵打開就能
+  用了」 (HOME on the Switch Pro), with no 「這次不再提醒」; it goes when that
+  controller is back on, already hidden. A USB controller cannot be turned
+  off: the USB 「再連一次」 banner shows instead, until it is unplugged.
+  `get_xbox_status` reports this as `auto_off`, and a controller on USB that
+  needs the reconnect as `replug_usb`.
+- **Controllers are remembered for hiding.** A DualSense / Switch Pro that
+  PadToKBM has hidden once is remembered, and from the next start it is
+  hidden as soon as the app opens, even while it is still off: turned on
+  later, it reaches the game already hidden, with no reconnect. The entries
+  still come out when the app exits. A new 設定 tab, 「記住的手把」, lists
+  them (name, 藍牙 / USB, and for a Bluetooth controller the last four
+  digits of its Bluetooth address, e.g. `23:D2`, so two of one model can be
+  told apart; the row's tooltip has the whole address) with 刪除 and 全部刪除.
+  Entries remembered without an address get it at the next start. At most
+  16 are kept, the oldest goes first. A controller that is on right now is
+  marked 連線中 and cannot be deleted until it is turned off; 全部刪除 skips it.
+- New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`,
+  `get_present_pad_ids`, `forget_hidden_pad`, `forget_all_hidden_pads`;
+  `get_ui_prefs` / `set_ui_prefs` carry `hidhide_prompt_dismissed`.
+
+### Changed
+
+- The header is tighter (it fits three pads and the 「!」), and the power key
+  (⏻) shows only on the selected tab.
+- **`output_mode` replaces `mapping_enabled`** in `padtokbm.json`:
+  `{ "dualsense": "kbm" | "xbox" | "pad", … }` per controller. The bundled
+  first-run config has `output_mode` and no `mapping_enabled`.
+  `set_output_mode` replaces the `set_mapping_enabled` IPC.
+- The virtual pad is now plugged in off the engine thread. A ViGEmBus that
+  does not answer no longer freezes the window (no status, no events).
+- Iron rule 7 (CLAUDE.md) covers both drivers: never bundled, only the
+  verified official installers on the user's click, user-mode client calls
+  only, and the HidHide changes are limited to the pad's own devices and
+  undone when the pad leaves 鍵鼠 / Xbox.
+
+### Migration
+
+- Old configs keep working. A controller missing from `output_mode` falls
+  back to `mapping_enabled`: `true` is 鍵鼠, `false` is 手把 (Xbox on the
+  Switch 2 Pro). `output_mode` wins when both are there. The old key for a
+  controller is removed the first time you change that controller's mode.
+- A DualSense / Switch Pro on 手把 stays on 手把; pick Xbox to get the
+  virtual pad.
+- A DualSense / Switch Pro on 鍵鼠 is hidden from games too, if HidHide is
+  installed. The first time the app opens after the upgrade with the
+  controller on, the app turns it off once so it comes back hidden (on USB
+  it asks you to unplug and replug it instead); after that, a controller
+  turned on after the app is open arrives hidden. The Switch 2 Pro is never
+  hidden (no native driver). To let a game read the pad directly, pick 手把.
+- Rumble from games is not passed from the virtual Xbox pad to the real
+  controller yet.
+- Xbox output (ViGEmBus + HidHide) and hiding the pad in 鍵鼠 (HidHide) are Windows only; macOS is Phase 2 TBD.
+- New optional `hidhide_known` in `padtokbm.json`:
+  `[{ "kind": "dualsense", "id": "<HID instance id>", "addr": "7C66EF8223D2" }, …]`,
+  written by the app when it hides a controller; absent while empty. Older
+  configs read as before. `addr` is there for Bluetooth controllers only and
+  is optional: 12 hex digits, upper-cased on load. An `addr` in another
+  format, more than 16 entries or the same id twice make the config fail
+  validation.
+- With `--cli`, only closing the console window is sure to take the HidHide
+  entries out on the way out: Windows does not send the logoff / shutdown
+  events to a process that loads user32, so after a logoff or shutdown they
+  come out at the next start.
+
 ## [3.5.1] - 2026-10-30
 
 ### Fixed
