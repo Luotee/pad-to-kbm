@@ -183,6 +183,7 @@ pub fn decode_30(buf: &[u8], cal: &StickCal) -> Option<PadState> {
     s.stick_ly = norm(ly, &cal.ly);
     s.stick_rx = norm(rx, &cal.rx);
     s.stick_ry = norm(ry, &cal.ry);
+    s.battery = Some(super::battery::from_switch_pro(buf[2]));
     Some(s)
 }
 

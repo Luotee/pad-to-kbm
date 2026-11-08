@@ -2,6 +2,7 @@
 //! (DualSense 0x31, Switch Pro, ...). Diffing two of these yields the
 //! `GamepadEvent` stream.
 
+use super::battery::Battery;
 use super::events::GamepadEvent;
 use crossbeam_channel::Sender;
 
@@ -28,6 +29,8 @@ pub struct PadState {
     pub finger0_y: u16,
     /// Whole-touchpad physical click switch.
     pub touchpad_btn: bool,
+    /// Battery, when the report carries one (DualSense, Switch Pro).
+    pub battery: Option<Battery>,
 }
 
 // Hand-written: std only derives `Default` for arrays up to 32 elements and
@@ -46,6 +49,7 @@ impl Default for PadState {
             finger0_x: 0,
             finger0_y: 0,
             touchpad_btn: false,
+            battery: None,
         }
     }
 }
