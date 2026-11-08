@@ -48,7 +48,7 @@ use super::events::GamepadEvent;
 use super::hid_source::{HidPads, HidSource};
 use super::lightbar::LightbarLive;
 use super::stick_cal::{StickCalTable, StickPositions, StickProbe};
-use super::{HubCmd, PowerOffLog, SourceCmd};
+use super::{HubCmd, SourceCmd};
 use super::ns2_ble::Ns2BleSource;
 
 /// A worker the hub drains.
@@ -105,21 +105,19 @@ impl SourceHub {
     /// and the NS2 Pro BLE worker. `cmd_rx`
     /// carries the engine's commands (routed to the owner);
     /// `warn_tx` receives status warnings from the BLE worker; `lightbar`
-    /// carries the live lightbar settings to the HID worker; `power_log`
-    /// receives the HID worker's Turn Off results.
+    /// carries the live lightbar settings to the HID worker.
     pub fn new(
         params: CursorParams,
         lightbar: LightbarLive,
         cmd_rx: Receiver<HubCmd>,
         warn_tx: Sender<String>,
-        power_log: PowerOffLog,
     ) -> Result<Self> {
         let (hid_tx, hid_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
-        let hid = HidSource::new(params.clone(), lightbar.clone(), hid_rx, power_log.clone(), HidPads::Classic)?;
+        let hid = HidSource::new(params.clone(), lightbar.clone(), hid_rx, HidPads::Classic)?;
         // The Xbox Nano has its own HID worker: idle, it sends nothing and
         // keeps its session open, which must not keep a DualSense closed.
         let (nano_tx, nano_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
-        let nano = HidSource::new(params, lightbar, nano_rx, power_log, HidPads::Nano)?;
+        let nano = HidSource::new(params, lightbar, nano_rx, HidPads::Nano)?;
         let (ble_tx, ble_rx) = crossbeam_channel::bounded::<SourceCmd>(4);
         let ble = Ns2BleSource::new(ble_rx, warn_tx)?;
         let suspend = ble.suspend_flag();

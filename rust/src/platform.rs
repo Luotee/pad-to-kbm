@@ -26,6 +26,9 @@
 //!
 //! The same link-level disconnect serves the Switch Pro Controller (matched
 //! by its "Pro Controller" Bluetooth name); see [`power_off_connected`].
+//! [`power_off_addrs`] drops given links only: the automatic power-off of a
+//! pad that was just hidden (v3.6.0), which must leave another pad of the
+//! same kind alone.
 
 /// `IOCTL_BTH_DISCONNECT_DEVICE` from bthioctl.h:
 /// `CTL_CODE(FILE_DEVICE_BLUETOOTH=0x41, function=0x03, METHOD_BUFFERED=0,
@@ -49,12 +52,9 @@ use crate::gamepad::ControllerKind;
 pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
     use std::mem::{size_of, zeroed};
     use windows_sys::Win32::Devices::Bluetooth::{
-        BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
-        BluetoothFindNextDevice, BluetoothFindNextRadio, BluetoothFindRadioClose,
-        BLUETOOTH_DEVICE_INFO, BLUETOOTH_DEVICE_SEARCH_PARAMS, BLUETOOTH_FIND_RADIO_PARAMS,
+        BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindNextDevice, BLUETOOTH_DEVICE_INFO,
+        BLUETOOTH_DEVICE_SEARCH_PARAMS,
     };
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::IO::DeviceIoControl;
 
     let matches: fn(&str) -> bool = match kind {
         ControllerKind::DualSense => is_dualsense_name,
@@ -101,11 +101,49 @@ pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
             BluetoothFindDeviceClose(find);
         }
 
-        if targets.is_empty() {
-            return Ok(0);
-        }
+        Ok(disconnect_links(&targets, kind.display_name()))
+    }
+}
 
-        // ── 2. Send IOCTL_BTH_DISCONNECT_DEVICE on each local radio ─────
+/// Disconnect the Bluetooth links to the devices at `addrs` (`BTH_ADDR`s,
+/// `hidhide::bt_addr_value`), pairing kept, whatever their name: the
+/// automatic power-off of a pad hidden while connected drops that pad's link
+/// only. Returns the number of links dropped; an address with no link now
+/// counts 0.
+#[cfg(target_os = "windows")]
+pub fn power_off_addrs(addrs: &[u64]) -> anyhow::Result<usize> {
+    Ok(disconnect_links(addrs, "pad"))
+}
+
+/// macOS: Phase 2 TBD, as [`power_off_connected`].
+#[cfg(target_os = "macos")]
+pub fn power_off_addrs(_addrs: &[u64]) -> anyhow::Result<usize> {
+    anyhow::bail!("controller power-off is not yet implemented on macOS (Phase 2 TBD)")
+}
+
+/// Other platforms (the Linux dev host): no Bluetooth management path.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+pub fn power_off_addrs(_addrs: &[u64]) -> anyhow::Result<usize> {
+    anyhow::bail!("controller power-off is only supported on Windows")
+}
+
+/// Send `IOCTL_BTH_DISCONNECT_DEVICE` for each of `targets` on each local
+/// radio; returns how many went down. `label` names them in the log.
+#[cfg(target_os = "windows")]
+fn disconnect_links(targets: &[u64], label: &str) -> usize {
+    use std::mem::{size_of, zeroed};
+    use windows_sys::Win32::Devices::Bluetooth::{
+        BluetoothFindFirstRadio, BluetoothFindNextRadio, BluetoothFindRadioClose, BLUETOOTH_FIND_RADIO_PARAMS,
+    };
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    if targets.is_empty() {
+        return 0;
+    }
+    // SAFETY: the radio search struct is zero-initialised with its `dwSize`
+    // set; each radio handle is closed once; the IOCTL input is one u64.
+    unsafe {
         // A device belongs to exactly one radio; issuing the IOCTL on the
         // wrong radio just fails harmlessly, so we try every radio and
         // count an address as done on its first success.
@@ -116,7 +154,7 @@ pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
         let rfind = BluetoothFindFirstRadio(&rparams, &mut radio);
         if !rfind.is_null() {
             loop {
-                for &addr in &targets {
+                for &addr in targets {
                     let mut returned = 0u32;
                     let ok = DeviceIoControl(
                         radio,
@@ -130,7 +168,7 @@ pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
                     );
                     if ok != 0 {
                         done.insert(addr);
-                        tracing::info!("disconnected {} Bluetooth link (pairing kept)", kind.display_name());
+                        tracing::info!("disconnected {label} Bluetooth link (pairing kept)");
                     }
                 }
                 CloseHandle(radio);
@@ -149,7 +187,7 @@ pub fn power_off_connected(kind: ControllerKind) -> anyhow::Result<usize> {
                 "some controller links could not be disconnected"
             );
         }
-        Ok(done.len())
+        done.len()
     }
 }
 

@@ -79,6 +79,17 @@ pub struct KnownPad {
     pub kind: String,
     /// Its HID device instance id, as HidHide's blacklist holds it.
     pub id: String,
+    /// Its Bluetooth address, 12 upper-case hex digits (`7C66EF8223D2`),
+    /// read from the device tree when it was learned
+    /// (`hidhide::bt_addr_of_instance`); the settings show its last four as
+    /// the pad's serial. `None`: USB, or not found. Read upper-cased (the
+    /// same address in either case); `validate` still wants 12 hex digits.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "upper_addr")]
+    pub addr: Option<String>,
+}
+
+fn upper_addr<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.map(|a| a.to_ascii_uppercase()))
 }
 
 /// At most this many remembered pads; the oldest goes first.
@@ -86,12 +97,18 @@ pub const HIDHIDE_KNOWN_MAX: usize = 16;
 
 /// `list` with the pads of `found` it lacks appended (ids compare
 /// case-insensitively, as HidHide's), then cut to the newest
-/// [`HIDHIDE_KNOWN_MAX`].
+/// [`HIDHIDE_KNOWN_MAX`]. A pad already listed without an address gets the
+/// one `found` has; an address already listed is kept.
 pub fn remember_known(list: &[KnownPad], found: &[KnownPad]) -> Vec<KnownPad> {
     let mut out = list.to_vec();
     for k in found {
-        if !out.iter().any(|x| x.id.eq_ignore_ascii_case(&k.id)) {
-            out.push(k.clone());
+        match out.iter_mut().find(|x| x.id.eq_ignore_ascii_case(&k.id)) {
+            Some(x) => {
+                if x.addr.is_none() {
+                    x.addr = k.addr.clone();
+                }
+            }
+            None => out.push(k.clone()),
         }
     }
     let excess = out.len().saturating_sub(HIDHIDE_KNOWN_MAX);
@@ -439,6 +456,9 @@ impl Config {
             }
             if k.id.trim().is_empty() {
                 bail!("hidhide_known[{i}] has an empty id");
+            }
+            if k.addr.as_deref().is_some_and(|a| !crate::hidhide::is_bt_addr(a)) {
+                bail!("hidhide_known[{i}] addr {:?} is not 12 upper-case hex digits", k.addr.as_deref().unwrap_or(""));
             }
             if self.hidhide_known[..i].iter().any(|x| x.id.eq_ignore_ascii_case(&k.id)) {
                 bail!("hidhide_known lists {:?} twice", k.id);

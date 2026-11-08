@@ -12,7 +12,7 @@ use crate::config::{Config, OutputMode};
 use crate::event_log::{self, EventLog};
 use crate::gamepad::lightbar::LightbarLive;
 use crate::gamepad::stick_cal::{StickCalTable, StickPositions, StickProbe};
-use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, PowerOffLog, SourceCmd};
+use crate::gamepad::{ControllerKind, CursorParams, GamepadSource, HubCmd, SourceCmd};
 use crate::hider::HiderLink;
 use crate::keyboard::KeyboardSink;
 use crate::macro_engine::MacroEngine;
@@ -174,11 +174,54 @@ struct HandleInner {
     hider: RwLock<Option<HiderLink>>,
     /// A worker was just attached: the engine sends it the current inputs.
     hider_fresh: AtomicBool,
-    /// The HID worker's Turn Off results (links dropped per power-off).
+    /// Powers Bluetooth links off by address (the automatic power-off).
+    power_off: PowerOffFn,
+    /// The automatic power-offs' results (links dropped per power-off).
     power_log: PowerOffLog,
+    /// Set by `spawn_with_fake_gamepad`: the power-off records instead.
+    fake_power_off: Arc<FakePowerOff>,
     /// Pads the app powered off this launch because they needed a replug,
-    /// not reconnected since (`get_xbox_status.auto_off`).
-    auto_off: RwLock<Vec<ControllerKind>>,
+    /// not back since (`get_xbox_status.auto_off`, per kind: any of them).
+    auto_off: RwLock<Vec<AutoOff>>,
+}
+
+/// A pad the app powered off (`HandleInner::auto_off`), by Bluetooth address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AutoOff {
+    kind: ControllerKind,
+    addr: u64,
+    /// The hider has seen it gone; seen present again, the entry goes.
+    away: bool,
+}
+
+/// The link-level power-off by Bluetooth address
+/// (`platform::power_off_addrs`; a recorder in tests).
+type PowerOffFn = Arc<dyn Fn(&[u64]) -> anyhow::Result<usize> + Send + Sync>;
+
+/// What each automatic power-off did: the pad (kind, address) and the
+/// number of Bluetooth links it dropped (0: none went down, or the call
+/// failed). Written by the power-off's own thread, drained by the engine.
+#[derive(Debug, Clone, Default)]
+struct PowerOffLog(Arc<Mutex<Vec<(ControllerKind, u64, usize)>>>);
+
+impl PowerOffLog {
+    fn record(&self, kind: ControllerKind, addr: u64, links: usize) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).push((kind, addr, links));
+    }
+
+    /// Every result since the last call, oldest first.
+    fn take(&self) -> Vec<(ControllerKind, u64, usize)> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
+/// The fake power-off's record (`Engine::spawn_with_fake_gamepad`).
+#[derive(Default)]
+struct FakePowerOff {
+    /// The addresses of each call, oldest first.
+    calls: Mutex<Vec<Vec<u64>>>,
+    /// Links each call reports dropped; `None`: one per address.
+    links: Mutex<Option<usize>>,
 }
 
 // ─── Handle (GUI-side) ───────────────────────────────────────────────────────
@@ -275,7 +318,7 @@ impl Handle {
     /// replug (its power-off dropped a Bluetooth link), and it has not
     /// reconnected since.
     pub fn auto_off(&self, kind: ControllerKind) -> bool {
-        self.inner.auto_off.read().unwrap_or_else(|p| p.into_inner()).contains(&kind)
+        self.inner.auto_off.read().unwrap_or_else(|p| p.into_inner()).iter().any(|a| a.kind == kind)
     }
 
     /// One more HidHide round now (after HidHide was installed).
@@ -410,11 +453,19 @@ impl Handle {
         before - buf.len()
     }
 
-    /// Record a Turn Off result as the HID worker does (send the pad's
-    /// `Disconnected` after it). Test hook.
+    /// The addresses of each automatic power-off since the last call. Works
+    /// only when spawned via `Engine::spawn_with_fake_gamepad`; empty
+    /// otherwise.
     #[doc(hidden)]
-    pub fn fake_power_off(&self, kind: ControllerKind, links: usize) {
-        self.inner.power_log.record(kind, links);
+    pub fn fake_power_offs(&self) -> Vec<Vec<u64>> {
+        std::mem::take(&mut *self.inner.fake_power_off.calls.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+
+    /// How many links the fake power-off reports dropped per call (`None`:
+    /// one per address, the default). Test hook.
+    #[doc(hidden)]
+    pub fn set_fake_power_off_links(&self, links: Option<usize>) {
+        *self.inner.fake_power_off.links.lock().unwrap_or_else(|p| p.into_inner()) = links;
     }
 
     /// Inject a status warning as a gamepad worker would. Works only when
@@ -479,13 +530,12 @@ impl Engine {
         // Before the HID worker starts: it must never play the default
         // (自訂) settings to a 原廠燈 / 關閉 user.
         lightbar.set_config(cfg.lightbar);
-        let power_log = PowerOffLog::default();
-        let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx, power_log.clone())?
+        let src = GamepadSource::new(cursor_params.clone(), lightbar.clone(), cmd_rx, warn_tx)?
             .with_stick_cal(cal.clone(), probe.clone());
         // Dry run synthesizes no OS input: that includes the virtual pad.
         let pad: Box<dyn VirtualPad> =
             if dry_run { Box::new(xinput_sink::NullPad) } else { xinput_sink::platform_pad() };
-        Self::spawn_inner(cfg, dry_run, src, cursor_params, lightbar, cmd_tx, warn_rx, pad, cal, probe, power_log)
+        Self::spawn_inner(cfg, dry_run, src, cursor_params, lightbar, cmd_tx, warn_rx, pad, cal, probe, false)
     }
 
     /// Spawn with a fake gamepad source. Events are injected via
@@ -516,7 +566,7 @@ impl Engine {
         let (warn_tx, warn_rx) = crossbeam_channel::bounded::<String>(8);
         let engine = Self::spawn_inner(
             cfg, /*dry_run=*/true, src, cursor_params, LightbarLive::default(), cmd_tx, warn_rx, pad, cal, probe,
-            PowerOffLog::default(),
+            /*fake_power_off=*/true,
         )?;
         // Install the sender into HandleInner.
         *engine.handle.inner.fake_tx.lock().unwrap() = Some(fake_tx);
@@ -536,13 +586,23 @@ impl Engine {
         pad: Box<dyn VirtualPad>,
         stick_cal: StickCalTable,
         stick_probe: StickProbe,
-        power_log: PowerOffLog,
+        fake_power_off: bool,
     ) -> Result<Self> {
         stick_cal.replace_from(&cfg);
         lightbar.set_config(cfg.lightbar);
         let key_state = safety::shared();
         let pad: SharedPad = Arc::new(Mutex::new(pad));
         let (event_tx, event_rx) = unbounded::<EngineEvent>();
+        let fake = Arc::new(FakePowerOff::default());
+        let power_off: PowerOffFn = if fake_power_off {
+            let f = fake.clone();
+            Arc::new(move |addrs: &[u64]| {
+                f.calls.lock().unwrap_or_else(|p| p.into_inner()).push(addrs.to_vec());
+                Ok(f.links.lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(addrs.len()))
+            })
+        } else {
+            Arc::new(crate::platform::power_off_addrs)
+        };
 
         let inner = Arc::new(HandleInner {
             config: RwLock::new(cfg),
@@ -570,7 +630,9 @@ impl Engine {
             retry_pad: AtomicBool::new(false),
             hider: RwLock::new(None),
             hider_fresh: AtomicBool::new(false),
-            power_log,
+            power_off,
+            power_log: PowerOffLog::default(),
+            fake_power_off: fake,
             auto_off: RwLock::new(Vec::new()),
         });
 
@@ -648,11 +710,11 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     // The remembered pads' ids (`hidhide_known`) and those last sent.
     let mut hide_known = hide_known_ids(&h.config.read().unwrap());
     let mut known_sent: Option<Vec<String>> = None;
-    // A pad that needs a replug is powered off once per launch (the ⏻'s
-    // path): kinds tried, kinds whose result has not come yet, and the
-    // connected kinds at the previous tick (a kind joining clears auto_off).
-    let mut auto_tried: Vec<ControllerKind> = Vec::new();
-    let mut auto_waiting: Vec<ControllerKind> = Vec::new();
+    // A pad hidden while connected is powered off once per launch, by its
+    // Bluetooth address: the addresses tried, the kinds logged as having
+    // none, and the connected kinds at the previous tick.
+    let mut auto_tried: Vec<u64> = Vec::new();
+    let mut auto_no_addr: Vec<ControllerKind> = Vec::new();
     let mut prev_connected: Vec<ControllerKind> = Vec::new();
 
     while !h.shutdown.load(Ordering::SeqCst) {
@@ -756,25 +818,21 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             // ── Poll gamepad ─────────────────────────────────────────────────
             gp_events.clear();
             source.poll(&mut gp_events);
-            // Before the events: a power-off result is recorded before its
-            // pad's `Disconnected`, so auto_off is set before the frontend
-            // hears of the leave and re-probes.
-            for (kind, links) in h.power_log.take() {
-                if !auto_waiting.contains(&kind) {
-                    continue; // the user's own ⏻
-                }
-                auto_waiting.retain(|k| *k != kind);
+            // Before the events, so a result that came before its pad's
+            // `Disconnected` is set before the frontend hears of the leave;
+            // the status is re-sent either way, for it to re-probe.
+            for (kind, addr, links) in h.power_log.take() {
                 if links > 0 {
                     tracing::info!(?kind, "HidHide: powered off; it comes back hidden");
                     let mut v = h.auto_off.write().unwrap_or_else(|p| p.into_inner());
-                    if !v.contains(&kind) {
-                        v.push(kind);
+                    if !v.iter().any(|a| a.addr == addr) {
+                        v.push(AutoOff { kind, addr, away: false });
                     }
-                } else if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
-                    // No link went down (USB, or no Bluetooth match): the pad
-                    // comes straight back, and a game may still hold it.
+                    drop(v);
+                    republish_status(&h, |_| {});
+                } else {
+                    // No link went down: the pad stays, a game may still hold it.
                     tracing::info!(?kind, "HidHide: the power-off dropped no link; one reconnect still needed");
-                    link.still_held(kind);
                 }
             }
 
@@ -906,30 +964,67 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             hider_sent = None;
             known_sent = None;
         }
-        if last_connected != prev_connected {
-            // Back on after the app powered it off: auto_off goes. A pad that
-            // left with no result recorded is not waited for any more.
-            let joined: Vec<ControllerKind> =
-                last_connected.iter().copied().filter(|k| !prev_connected.contains(k)).collect();
-            if !joined.is_empty() {
-                h.auto_off.write().unwrap_or_else(|p| p.into_inner()).retain(|k| !joined.contains(k));
+        // A pad the app powered off is back: its auto_off goes. Back = the
+        // hider saw it gone and then present again, or its kind joined the
+        // engine (a pad turned back on before the hider looked).
+        let joined: Vec<ControllerKind> =
+            last_connected.iter().copied().filter(|k| !prev_connected.contains(k)).collect();
+        prev_connected = last_connected.clone();
+        let present_addrs = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref().map(|l| l.present_addrs());
+        let changed = {
+            let mut v = h.auto_off.write().unwrap_or_else(|p| p.into_inner());
+            let before = v.len();
+            v.retain(|a| !joined.contains(&a.kind));
+            if let Some(present) = &present_addrs {
+                for a in v.iter_mut() {
+                    a.away |= !present.iter().any(|(_, p)| *p == a.addr);
+                }
+                v.retain(|a| !(a.away && present.iter().any(|(_, p)| *p == a.addr)));
             }
-            auto_waiting.retain(|k| last_connected.contains(k));
-            prev_connected = last_connected.clone();
+            v.len() != before
+        };
+        if changed {
+            republish_status(&h, |_| {});
         }
         if let Some(link) = h.hider.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
-            // Hidden while connected: power it off (the ⏻) so it comes back
-            // hidden. Once per kind per launch; connection state stays the
-            // HID stream's (iron rule 11).
+            // Hidden while connected: drop the Bluetooth link of each pad that
+            // was hidden while present (not every pad of the kind, as the ⏻
+            // does: another one may be in use), so it comes back hidden. Once
+            // per pad per launch, on its own thread (the call may block). The
+            // HID session ends by the link drop alone (iron rule 11). A pad
+            // with no address to drop (USB, or a Bluetooth LE pad such as
+            // the Xbox Nano) keeps the reconnect hint.
+            let addrs = link.replug_addrs();
             for kind in link.needs_replug() {
-                if !last_connected.contains(&kind) || auto_tried.contains(&kind) {
+                if !last_connected.contains(&kind) {
                     continue;
                 }
-                // `try_send`: this thread is the one that drains the channel.
-                if h.source_cmd.try_send(HubCmd::to(kind, SourceCmd::Disconnect)).is_ok() {
-                    tracing::info!(?kind, "HidHide: hidden while connected; powering it off once");
-                    auto_tried.push(kind);
-                    auto_waiting.push(kind);
+                let of_kind: Vec<u64> = addrs.iter().filter(|(k, _)| *k == kind).map(|(_, a)| *a).collect();
+                if of_kind.is_empty() {
+                    if !auto_no_addr.contains(&kind) {
+                        auto_no_addr.push(kind);
+                        tracing::info!(?kind, "HidHide: hidden while connected, no classic Bluetooth address; one reconnect needed");
+                    }
+                    continue;
+                }
+                let fresh: Vec<u64> = of_kind.into_iter().filter(|a| !auto_tried.contains(a)).collect();
+                if fresh.is_empty() {
+                    continue;
+                }
+                auto_tried.extend(&fresh);
+                tracing::info!(?kind, pads = fresh.len(), "HidHide: hidden while connected; powering it off once");
+                let (power_off, log) = (h.power_off.clone(), h.power_log.clone());
+                let spawned = thread::Builder::new().name("auto-power-off".into()).spawn(move || {
+                    for addr in fresh {
+                        let links = power_off(&[addr]).unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "HidHide: power-off failed");
+                            0
+                        });
+                        log.record(kind, addr, links);
+                    }
+                });
+                if let Err(e) = spawned {
+                    tracing::warn!("HidHide: could not start the power-off: {e}");
                 }
             }
             if known_sent.as_ref() != Some(&hide_known) {
@@ -937,7 +1032,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                 known_sent = Some(hide_known.clone());
             }
             if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
-                link.update(hide_wanted.clone(), last_connected.clone());
+                link.update(hide_wanted.clone());
                 hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
             }
         }

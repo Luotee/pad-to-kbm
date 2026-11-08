@@ -129,21 +129,27 @@ function cfgBox() {
 // 藍牙 / USB as hidhide::kind_for_instance tells the buses apart. A pad
 // present now (get_present_pad_ids, the hider's last round) is 連線中: it
 // would be remembered again at once, so the Rust side keeps it and its 刪除
-// is disabled here; 全部刪除 forgets only the absent ones.
+// is disabled here; 全部刪除 forgets only the absent ones. A Bluetooth pad
+// whose address the app found (`addr`, 12 hex digits) shows its last two
+// bytes as a serial (`23:D2`), so two pads of one model can be told apart;
+// the row's title starts with the whole address.
 const HINT_PRESENT = '連線中的手把要先關掉才能刪除';
 let presentIds = [];
 function busOf(id) {
   const l = String(id).toLowerCase();
   return l.includes('{00001124-') || l.includes('{00001812-') ? '藍牙' : 'USB';
 }
+function addrOf(k) { return /^[0-9A-F]{12}$/.test(k.addr || '') && busOf(k.id) === '藍牙' ? k.addr : ''; }
+function colons(a) { return a.match(/../g).join(':'); }
 function isPresent(id) { return presentIds.some(p => String(p).toLowerCase() === String(id).toLowerCase()); }
 function knownPane() {
   const list = (state.config && state.config.hidhide_known) || [];
   let h = '<div class="knbox"><span class="cfgl">記住的手把</span><span class="knd">連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。<br>刪除會立刻生效；連線中的手把要先關掉才能刪除。</span>';
   if (!list.length) return h + '<p class="kne">還沒有記住的手把</p></div>';
   h += '<div class="knl">' + list.map(k => {
-    const here = isPresent(k.id);
-    return '<div class="knr" title="' + esc(k.id) + '"><span class="knn">' + esc(PAD_NAMES[k.kind] || k.kind) + '</span><span class="knb">' + busOf(k.id) + '</span>' +
+    const here = isPresent(k.id), a = addrOf(k);
+    return '<div class="knr" title="' + (a ? '藍牙位址 ' + colons(a) + '&#10;' : '') + esc(k.id) + '"><span class="knn">' + esc(PAD_NAMES[k.kind] || k.kind) + '</span><span class="knb">' + busOf(k.id) + '</span>' +
+      (a ? '<span class="kns">' + colons(a.slice(8)) + '</span>' : '') +
       (here ? '<span class="knc">連線中</span>' : '') +
       '<button type="button" class="mini" data-act="forgetpad" data-id="' + esc(k.id) + '"' + (here ? ' disabled title="' + HINT_PRESENT + '"' : '') + '>刪除</button></div>';
   }).join('') + '</div>';

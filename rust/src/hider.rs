@@ -19,13 +19,18 @@
 //!    added for kinds no longer wanted and the ids no longer remembered that
 //!    are absent. An id we add while its pad is present marks that kind
 //!    "needs replug": a game may already hold it open; a remembered pad
-//!    hidden while absent arrives hidden when it is turned on;
+//!    hidden while absent arrives hidden when it is turned on. Those ids
+//!    ([`Hider::replug_ids`]) are the ones the engine powers off, by their
+//!    Bluetooth address ([`HideStatus::replug_addrs`]);
 //! 3. Active on if we have entries and it is off (remembered, so it is
 //!    turned off again only if we turned it on and the blacklist is empty).
 //!
 //! A present pad of a wanted kind that we hid and that is not remembered yet
-//! is reported once ([`Hider::take_learned`]); the worker hands it to
-//! `on_learn`, which saves it to the config ([`remember_hidden_pads`]).
+//! is reported once ([`Hider::take_learned`]); the worker adds its Bluetooth
+//! address ([`Backend::bt_addr`]) and hands it to `on_learn`, which saves it
+//! to the config ([`remember_hidden_pads`]). At the first round the worker
+//! also looks up the remembered pads' addresses once, for entries saved
+//! before addresses were kept.
 //!
 //! Every change is recorded in `padtokbm.hidhide.json` beside the config
 //! (deleted when nothing is left to undo), so a crash is undone at the next
@@ -68,6 +73,16 @@ pub struct HideStatus {
     /// driver) present at the last round; empty while nothing is wanted.
     /// The settings' 記住的手把 marks these 連線中.
     pub present: Vec<String>,
+    /// The Bluetooth addresses (`BTH_ADDR`) of the pads hidden while present
+    /// ([`Hider::replug_ids`]) that have one, filled in by the worker. The
+    /// engine powers these off, and only these.
+    pub replug_addrs: Vec<(ControllerKind, u64)>,
+    /// The Bluetooth addresses of the `present` pads that have one, filled
+    /// in by the worker: the engine sees a pad it powered off come back.
+    pub present_addrs: Vec<(ControllerKind, u64)>,
+    /// Kinds with a pad on USB among those needing the replug: only
+    /// unplugging it makes a game drop it.
+    pub replug_usb: Vec<ControllerKind>,
 }
 
 impl HideStatus {
@@ -88,10 +103,9 @@ pub struct Hider {
     state: HideState,
     state_path: PathBuf,
     wanted: Vec<ControllerKind>,
-    connected: Vec<ControllerKind>,
-    needs_replug: Vec<ControllerKind>,
-    /// Connected kinds whose next leave keeps the replug ([`Hider::still_held`]).
-    held: Vec<ControllerKind>,
+    /// Ids added while present and present since: a game may hold them open
+    /// (their kinds are `HideStatus::needs_replug`).
+    replug_ids: Vec<String>,
     /// The config's remembered ids (`hidhide_known`).
     known: Vec<String>,
     /// Learned this session, not in `known` yet (the config write is on its
@@ -121,9 +135,7 @@ impl Hider {
             state,
             state_path,
             wanted: Vec::new(),
-            connected: Vec::new(),
-            needs_replug: Vec::new(),
-            held: Vec::new(),
+            replug_ids: Vec::new(),
             known: Vec::new(),
             pending: Vec::new(),
             forgotten: Vec::new(),
@@ -154,38 +166,47 @@ impl Hider {
         HideStatus {
             supported: true,
             wanted: self.wanted.clone(),
-            needs_replug: self.needs_replug.clone(),
+            needs_replug: ControllerKind::ALL
+                .into_iter()
+                .filter(|k| self.replug_ids.iter().any(|id| kind_of(id) == Some(*k)))
+                .collect(),
             ok: self.ok,
             present: self.present.clone(),
+            replug_addrs: Vec::new(),
+            present_addrs: Vec::new(),
+            replug_usb: ControllerKind::ALL
+                .into_iter()
+                .filter(|k| {
+                    self.replug_ids.iter().any(|id| kind_of(id) == Some(*k) && !hidhide::is_bluetooth_instance(id))
+                })
+                .collect(),
         }
     }
 
-    /// The kinds wanted hidden (only kinds with a native driver count) and
-    /// the engine's connected kinds. A kind that left `connected`, or is no
-    /// longer wanted, no longer needs a replug.
-    pub fn set_inputs(&mut self, wanted: &[ControllerKind], connected: &[ControllerKind]) {
+    /// The ids hidden while present and present at every round since: a
+    /// game may hold these open. Another pad of the same kind hidden earlier
+    /// is not among them. An id leaves when a round no longer finds it
+    /// (powered off, unplugged) or its kind is no longer wanted.
+    pub fn replug_ids(&self) -> Vec<String> {
+        self.replug_ids.clone()
+    }
+
+    /// The config's remembered ids, as last set.
+    pub fn known(&self) -> &[String] {
+        &self.known
+    }
+
+    /// The kinds wanted hidden (only kinds with a native driver count). A
+    /// kind no longer wanted no longer needs a replug. (The engine's
+    /// connected kinds only start a round: whether a pad left is what the
+    /// next round finds present.)
+    pub fn set_inputs(&mut self, wanted: &[ControllerKind]) {
         let wanted: Vec<ControllerKind> = ControllerKind::ALL
             .into_iter()
             .filter(|k| k.has_native_driver() && wanted.contains(k))
             .collect();
-        let before = &self.connected;
-        let left = |k: &ControllerKind| before.contains(k) && !connected.contains(k);
-        let held = &self.held;
-        self.needs_replug.retain(|k| wanted.contains(k) && !(left(k) && !held.contains(k)));
-        // A note covers one leave ([`Hider::still_held`]).
-        self.held.retain(|k| !left(k));
+        self.replug_ids.retain(|id| kind_of(id).is_some_and(|k| wanted.contains(&k)));
         self.wanted = wanted;
-        self.connected = connected.to_vec();
-    }
-
-    /// Pad `kind` is about to leave the engine although its link stayed up
-    /// (the app's power-off dropped no Bluetooth link): a game may still
-    /// hold it, so that one leave does not clear its replug. Ignored unless
-    /// `kind` is connected now.
-    pub fn still_held(&mut self, kind: ControllerKind) {
-        if self.connected.contains(&kind) && !self.held.contains(&kind) {
-            self.held.push(kind);
-        }
     }
 
     /// The config's remembered ids (`hidhide_known`). An id that left the
@@ -310,22 +331,19 @@ impl Hider {
         }
         self.forgotten.clear();
         // Only a pad present when hidden may be held open by a game.
-        for kind in added.iter().filter(|id| contains_ci(present, id)).filter_map(|id| kind_of(id)) {
-            if !self.needs_replug.contains(&kind) {
-                self.needs_replug.push(kind);
-            }
-        }
+        let held: Vec<String> = added.iter().filter(|id| contains_ci(present, id)).cloned().collect();
+        self.replug_ids = merge(&self.replug_ids, &held);
         // Learn: present, ours, not remembered yet.
         for id in &present_wanted {
             if contains_ci(&self.state.ids, id) && !contains_ci(&remembered, id) {
                 if let Some(kind) = kind_of(id) {
                     self.pending.push(id.clone());
-                    self.learned.push(KnownPad { kind: kind.slug().to_string(), id: id.clone() });
+                    self.learned.push(KnownPad { kind: kind.slug().to_string(), id: id.clone(), addr: None });
                 }
             }
         }
-        // A kind none of whose ids is present any more has left.
-        self.needs_replug.retain(|k| present.iter().any(|id| kind_of(id) == Some(*k)));
+        // An id no longer present has gone (off, unplugged): a game lost it.
+        self.replug_ids.retain(|id| contains_ci(present, id));
 
         // 3. The driver hides nothing while Active is off.
         if !self.state.ids.is_empty() && !ctl.active()? {
@@ -337,7 +355,7 @@ impl Hider {
     }
 
     fn release_inner<C: Control>(&mut self, open: impl FnOnce() -> Result<C, Error>) -> Result<(), Error> {
-        self.needs_replug.clear();
+        self.replug_ids.clear();
         self.present.clear();
         if self.state.is_empty() {
             return Ok(());
@@ -384,12 +402,15 @@ pub trait Backend: Send + 'static {
     fn open(&mut self) -> Result<Self::Ctl, Error>;
     fn present(&mut self) -> Vec<String>;
     fn own_path(&mut self) -> Option<String>;
+    /// The Bluetooth address of the pad with HID instance id `id`, 12
+    /// upper-case hex digits (`hidhide::bt_addr_of_instance`); `None`: USB,
+    /// or not found.
+    fn bt_addr(&mut self, id: &str) -> Option<String>;
 }
 
 enum Msg {
-    Update { wanted: Vec<ControllerKind>, connected: Vec<ControllerKind> },
+    Update { wanted: Vec<ControllerKind> },
     Known(Vec<String>),
-    StillHeld(ControllerKind),
     Retry,
     Stop(Sender<()>),
 }
@@ -403,9 +424,11 @@ pub struct HiderLink {
 }
 
 impl HiderLink {
-    /// The kinds wanted hidden and the engine's connected kinds changed.
-    pub fn update(&self, wanted: Vec<ControllerKind>, connected: Vec<ControllerKind>) {
-        let _ = self.tx.send(Msg::Update { wanted, connected });
+    /// Run a round with the kinds wanted hidden. The engine sends it when
+    /// they or its connected kinds change: a pad that connected or left is
+    /// what the round finds present or not.
+    pub fn update(&self, wanted: Vec<ControllerKind>) {
+        let _ = self.tx.send(Msg::Update { wanted });
     }
 
     /// The config's remembered ids (`hidhide_known`) changed. Runs a round
@@ -414,18 +437,34 @@ impl HiderLink {
         let _ = self.tx.send(Msg::Known(ids));
     }
 
-    /// See [`Hider::still_held`]. Sent before the update in which `kind`
-    /// leaves.
-    pub fn still_held(&self, kind: ControllerKind) {
-        let _ = self.tx.send(Msg::StillHeld(kind));
-    }
-
     /// Kinds that need one reconnect, after a round that fully succeeded
     /// (empty otherwise). The engine powers such a pad off once
     /// (`engine::run_loop`).
     pub fn needs_replug(&self) -> Vec<ControllerKind> {
         let st = self.status.read().unwrap_or_else(|p| p.into_inner());
         if st.supported && st.ok { st.needs_replug.clone() } else { Vec::new() }
+    }
+
+    /// The Bluetooth addresses of the pads behind [`HiderLink::needs_replug`]
+    /// ([`HideStatus::replug_addrs`]), after a round that fully succeeded
+    /// (empty otherwise). The engine powers off these, never every pad of
+    /// the kind.
+    pub fn replug_addrs(&self) -> Vec<(ControllerKind, u64)> {
+        let st = self.status.read().unwrap_or_else(|p| p.into_inner());
+        if st.supported && st.ok { st.replug_addrs.clone() } else { Vec::new() }
+    }
+
+    /// A pad of `kind` needing the replug is on USB ([`HideStatus::replug_usb`]),
+    /// after a round that fully succeeded.
+    pub fn replug_usb(&self, kind: ControllerKind) -> bool {
+        let st = self.status.read().unwrap_or_else(|p| p.into_inner());
+        st.supported && st.ok && st.replug_usb.contains(&kind)
+    }
+
+    /// The Bluetooth addresses of the pads present at the last round
+    /// ([`HideStatus::present_addrs`]).
+    pub fn present_addrs(&self) -> Vec<(ControllerKind, u64)> {
+        self.status.read().unwrap_or_else(|p| p.into_inner()).present_addrs.clone()
     }
 
     /// Run a round now (after HidHide was installed).
@@ -536,26 +575,56 @@ fn run_worker<B: Backend>(
     // No round before the first inputs: a crash's leftovers are undone only
     // for the kinds the current config does not want.
     let mut started = false;
+    // The remembered pads' addresses are looked up once, after the first round.
+    let mut looked_up_known = false;
+    // Bluetooth addresses looked up this launch (`None`: has none).
+    let mut addrs: Vec<(String, Option<String>)> = Vec::new();
+    let mut addr_of = |backend: &mut B, id: &str| -> Option<String> {
+        if let Some((_, a)) = addrs.iter().find(|(i, _)| i.eq_ignore_ascii_case(id)) {
+            return a.clone();
+        }
+        let a = backend.bt_addr(id);
+        addrs.push((id.to_string(), a.clone()));
+        a
+    };
+    // The present ids the last round saw: while something is wanted, the
+    // worker re-reads them every `retry_every` and runs a round when they
+    // changed (a second pad of a connected kind turned on, a pad powered
+    // off), opening the driver only then.
+    let mut last_present: Vec<String> = Vec::new();
     loop {
-        let first = if started && !hider.ok() {
+        let (mut run, mut poll) = (false, false);
+        let first = if started && (!hider.ok() || hider.wants_any()) {
             match rx.recv_timeout(retry_every) {
                 Ok(m) => Some(m),
-                Err(RecvTimeoutError::Timeout) => Some(Msg::Retry),
-                Err(RecvTimeoutError::Disconnected) => None,
+                Err(RecvTimeoutError::Timeout) => {
+                    if hider.ok() {
+                        poll = true;
+                    } else {
+                        run = true;
+                    }
+                    None
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    // Every link is gone: Xbox output has ended.
+                    release_before_exit(&mut hider, &mut backend);
+                    return;
+                }
             }
         } else {
-            rx.recv().ok()
+            match rx.recv() {
+                Ok(m) => Some(m),
+                Err(_) => {
+                    release_before_exit(&mut hider, &mut backend);
+                    return;
+                }
+            }
         };
-        let Some(first) = first else {
-            // Every link is gone: Xbox output has ended.
-            release_before_exit(&mut hider, &mut backend);
-            return;
-        };
-        let (mut run, mut stop) = (false, None);
-        for msg in std::iter::once(first).chain(rx.try_iter()) {
+        let mut stop = None;
+        for msg in first.into_iter().chain(rx.try_iter()) {
             match msg {
-                Msg::Update { wanted, connected } => {
-                    hider.set_inputs(&wanted, &connected);
+                Msg::Update { wanted } => {
+                    hider.set_inputs(&wanted);
                     started = true;
                     run = true;
                 }
@@ -563,7 +632,6 @@ fn run_worker<B: Backend>(
                     hider.set_known(&ids);
                     run = true;
                 }
-                Msg::StillHeld(kind) => hider.still_held(kind),
                 Msg::Retry => run = true,
                 Msg::Stop(ack) => stop = Some(ack),
             }
@@ -574,17 +642,67 @@ fn run_worker<B: Backend>(
             let _ = ack.send(());
             return;
         }
+        let mut polled = None;
+        if poll && !run && hider.wants_any() {
+            let now = backend.present();
+            if !same_ids(&now, &last_present) {
+                run = true;
+                polled = Some(now);
+            }
+        }
         if run && started {
-            let (present, own) =
-                if hider.wants_any() { (backend.present(), backend.own_path()) } else { (Vec::new(), None) };
+            let (present, own) = if hider.wants_any() {
+                (polled.unwrap_or_else(|| backend.present()), backend.own_path())
+            } else {
+                (Vec::new(), None)
+            };
+            last_present = present.clone();
             let _ = hider.round(|| backend.open(), &present, own.as_deref());
-            let learned = hider.take_learned();
+            let mut learned = hider.take_learned();
+            for k in &mut learned {
+                k.addr = addr_of(&mut backend, &k.id);
+            }
+            if !looked_up_known {
+                looked_up_known = true;
+                // Entries saved before addresses were kept get theirs.
+                for id in hider.known().to_vec() {
+                    let Some(kind) = kind_of(&id) else { continue };
+                    if learned.iter().any(|k| k.id.eq_ignore_ascii_case(&id)) {
+                        continue;
+                    }
+                    if let Some(a) = addr_of(&mut backend, &id) {
+                        learned.push(KnownPad { kind: kind.slug().to_string(), id, addr: Some(a) });
+                    }
+                }
+            }
             if !learned.is_empty() {
                 on_learn(learned);
             }
         }
-        publish(hider.status());
+        let mut st = hider.status();
+        let mut addrs_of = |ids: &[String]| -> Vec<(ControllerKind, u64)> {
+            ids.iter()
+                .filter_map(|id| Some((kind_of(id)?, hidhide::bt_addr_value(&addr_of(&mut backend, id)?)?)))
+                .collect()
+        };
+        // A Bluetooth LE pad (the Xbox Nano) keeps its address for 記住的手把
+        // but is never powered off by it: the disconnect is classic Bluetooth.
+        let classic: Vec<String> = hider.replug_ids().into_iter().filter(|id| !hidhide::is_ble_instance(id)).collect();
+        st.replug_addrs = addrs_of(&classic);
+        st.present_addrs = addrs_of(&st.present);
+        publish(st);
     }
+}
+
+/// The same ids, in any order and case.
+fn same_ids(a: &[String], b: &[String]) -> bool {
+    let norm = |v: &[String]| {
+        let mut v: Vec<String> = v.iter().map(|x| x.to_ascii_lowercase()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    norm(a) == norm(b)
 }
 
 /// Graceful exit: undo everything, retrying a busy driver for a moment. What
@@ -628,6 +746,9 @@ impl Backend for RealBackend {
     fn present(&mut self) -> Vec<String> {
         hidhide::present_hid_instance_ids()
     }
+    fn bt_addr(&mut self, id: &str) -> Option<String> {
+        hidhide::bt_addr_of_instance(id)
+    }
     /// Asked again until it is known.
     fn own_path(&mut self) -> Option<String> {
         if self.own.is_none() {
@@ -651,7 +772,8 @@ impl Backend for RealBackend {
 /// `config_path` and the live config, under the config file lock that every
 /// IPC mutator takes too (`config_io::file_lock`), so neither overwrites the
 /// other's change. At most [`crate::config::HIDHIDE_KNOWN_MAX`], the oldest
-/// dropped. Returns whether it wrote (`false`: all known already).
+/// dropped; a listed pad without an address gets the one `found` carries.
+/// Returns whether it wrote (`false`: nothing new).
 pub fn remember_hidden_pads(engine: &Handle, config_path: &Path, found: &[KnownPad]) -> anyhow::Result<bool> {
     let _file = crate::config_io::file_lock();
     let mut doc = crate::config_io::ConfigDoc::load(config_path)?;
@@ -711,12 +833,13 @@ pub fn start_for(engine: &Handle, config_path: &Path, dry_run: bool) -> Option<H
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use ControllerKind::{DualSense as DS, Ns2Pro as NS2, NsPro as NSP};
+    use ControllerKind::{DualSense as DS, Ns2Pro as NS2, NsPro as NSP, XboxNano as XN};
 
     const DS_USB: &str = r"HID\VID_054C&PID_0CE6&MI_03\7&1a2b&0&0000";
     const DS_BT: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\9&2d1c&0&0000";
     const NSP_BT: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\9&1&0&0000";
     const NS2_BLE: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001\9&1&0&0000";
+    const NANO_BLE: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0609_fb3a7c7df9a8&Col01\8&113d3dd1&0&0000";
     const MOUSE: &str = r"HID\VID_046D&PID_C52B&MI_01&COL02\7&abc&0&0001";
     const OWN: &str = r"\Device\HarddiskVolume3\Games\PadToKBM.exe";
     const FOREIGN_APP: &str = r"\Device\HarddiskVolume3\Tools\DS4Windows.exe";
@@ -845,7 +968,7 @@ mod tests {
     #[test]
     fn hides_present_ids_of_wanted_kinds_and_keeps_foreign_entries() {
         let mut r = rig(foreign());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[MOUSE, DS_USB, NSP_BT]).unwrap();
         let f = r.ctl.f();
         assert_eq!(f.black, s(&[FOREIGN_DEV, DS_USB]), "foreign first, in order; only the wanted kind's id");
@@ -861,7 +984,7 @@ mod tests {
     #[test]
     fn rounds_are_idempotent() {
         let mut r = rig(foreign());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         let (black, white) = {
             let f = r.ctl.f();
@@ -879,7 +1002,7 @@ mod tests {
     #[test]
     fn whitelist_is_written_before_the_blacklist() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         let calls = r.ctl.f().calls.clone();
         let wl = calls.iter().position(|c| *c == "set_wl").expect("whitelist written");
@@ -890,7 +1013,7 @@ mod tests {
     #[test]
     fn a_failed_whitelist_blocks_the_blacklist() {
         let mut r = rig(Fake { fail_set_whitelist: true, ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         assert!(round(&mut r, &[DS_USB]).is_err());
         let f = r.ctl.f();
         assert!(f.black.is_empty(), "we must never hide the pad from ourselves");
@@ -904,7 +1027,7 @@ mod tests {
     #[test]
     fn an_unknown_own_path_blocks_the_blacklist() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         let ctl = r.ctl.clone();
         assert!(r.hider.round(ctl.open(), &s(&[DS_USB]), None).is_err());
         assert!(r.ctl.f().black.is_empty());
@@ -914,7 +1037,7 @@ mod tests {
     #[test]
     fn inverse_mode_skips_the_whitelist() {
         let mut r = rig(Fake { inverse: true, white: s(&[FOREIGN_APP]), ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         let ctl = r.ctl.clone();
         // Our path is not needed in inverse mode.
         r.hider.round(ctl.open(), &s(&[DS_USB]), None).unwrap();
@@ -929,7 +1052,7 @@ mod tests {
     #[test]
     fn own_path_already_whitelisted_is_not_ours_to_remove() {
         let mut r = rig(Fake { white: s(&[&OWN.to_lowercase()]), ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().white, s(&[&OWN.to_lowercase()]), "case-insensitive: no duplicate");
         assert_eq!(r.hider.state().whitelisted, None);
@@ -940,12 +1063,12 @@ mod tests {
     #[test]
     fn an_id_already_blacklisted_by_the_user_is_not_recorded_or_removed() {
         let mut r = rig(Fake { black: s(&[&DS_USB.to_lowercase()]), active: true, ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[&DS_USB.to_lowercase()]));
         assert!(r.hider.state().ids.is_empty());
         assert_eq!(r.hider.status().hidden(DS), Some(true), "already hidden: no replug");
-        r.hider.set_inputs(&[], &[DS]);
+        r.hider.set_inputs(&[]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[&DS_USB.to_lowercase()]), "not ours");
         assert!(r.ctl.f().active, "not turned on by us");
@@ -954,7 +1077,7 @@ mod tests {
     #[test]
     fn active_already_on_is_not_ours() {
         let mut r = rig(Fake { active: true, ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert!(!r.hider.state().activated_by_us);
         release(&mut r).unwrap();
@@ -966,52 +1089,21 @@ mod tests {
     #[test]
     fn hiding_a_present_pad_needs_a_replug_until_it_leaves() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(false), "a game may hold it open");
-        // Still connected: still needs it.
-        r.hider.set_inputs(&[DS], &[DS]);
+        // Still present: still needs it, whether or not the engine has it
+        // (the ⏻ on a USB pad drops only the app's handle).
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(false));
-        // It left the engine (⏻): cleared.
-        r.hider.set_inputs(&[DS], &[]);
+        // Gone (powered off, unplugged): a game lost it, cleared.
+        round(&mut r, &[MOUSE]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(true));
         // And back: the id is already blacklisted, so it arrives hidden.
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(true));
-    }
-
-    #[test]
-    fn a_leave_whose_link_stayed_up_keeps_the_replug_once() {
-        // The app's power-off reached no Bluetooth link (USB, or no match):
-        // the pad left the engine but Windows kept the device, so a game may
-        // still hold it.
-        let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
-        round(&mut r, &[DS_BT]).unwrap();
-        assert_eq!(r.hider.status().hidden(DS), Some(false));
-        r.hider.still_held(DS);
-        r.hider.set_inputs(&[DS], &[]);
-        assert_eq!(r.hider.status().hidden(DS), Some(false), "still held: still needs a replug");
-        r.hider.set_inputs(&[DS], &[DS]);
-        round(&mut r, &[DS_BT]).unwrap();
-        assert_eq!(r.hider.status().hidden(DS), Some(false));
-        // Consumed by that leave: the next leave (a real power-off) clears it.
-        r.hider.set_inputs(&[DS], &[]);
-        assert_eq!(r.hider.status().hidden(DS), Some(true));
-    }
-
-    #[test]
-    fn still_held_for_a_kind_not_connected_is_ignored() {
-        let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[]);
-        r.hider.still_held(DS);
-        r.hider.set_inputs(&[DS], &[DS]);
-        round(&mut r, &[DS_BT]).unwrap();
-        assert_eq!(r.hider.status().hidden(DS), Some(false));
-        r.hider.set_inputs(&[DS], &[]);
-        assert_eq!(r.hider.status().hidden(DS), Some(true), "a stale note never outlives its leave");
     }
 
     #[test]
@@ -1019,7 +1111,7 @@ mod tests {
         // Hidden while present but not (yet) connected in the engine; then
         // it goes away without ever connecting.
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_BT]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(false));
         round(&mut r, &[MOUSE]).unwrap();
@@ -1029,7 +1121,7 @@ mod tests {
     #[test]
     fn needs_replug_is_per_kind() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS, NSP], &[DS]);
+        r.hider.set_inputs(&[DS, NSP]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(false));
         assert_eq!(r.hider.status().hidden(NSP), Some(true), "nothing of it was present");
@@ -1038,9 +1130,9 @@ mod tests {
     #[test]
     fn disconnect_keeps_the_entries() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[MOUSE]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[DS_USB]), "a reconnect is hidden before Windows hands it to the game");
         assert_eq!(r.hider.state().ids, s(&[DS_USB]));
@@ -1049,14 +1141,46 @@ mod tests {
     // ── remembered pads (`hidhide_known`) ──
 
     fn known(kind: &str, id: &str) -> KnownPad {
-        KnownPad { kind: kind.into(), id: id.into() }
+        KnownPad { kind: kind.into(), id: id.into(), addr: None }
+    }
+
+    /// A second Bluetooth DualSense (the maintainer owns two).
+    const DS_BT2: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\9&77&0&0000";
+    const ADDR_A: &str = "7C66EF8223D2";
+    const ADDR_B: &str = "A0B1C2D3E4F5";
+
+    #[test]
+    fn only_the_ids_hidden_while_present_need_the_replug() {
+        // A is hidden already (an earlier round); B is turned on now.
+        let mut r = rig(Fake { black: s(&[DS_BT]), active: true, ..Default::default() });
+        r.hider.set_known(&s(&[DS_BT]));
+        r.hider.set_inputs(&[DS]);
+        round(&mut r, &[DS_BT, DS_BT2]).unwrap();
+        assert_eq!(r.hider.status().needs_replug, vec![DS]);
+        assert_eq!(r.hider.replug_ids(), s(&[DS_BT2]), "A was hidden before: not B's replug");
+        // B goes (powered off), A stays: B no longer needs it, and the kind
+        // no longer needs a replug although A is still there.
+        round(&mut r, &[DS_BT]).unwrap();
+        assert!(r.hider.replug_ids().is_empty());
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+        // B back on: already hidden, no replug.
+        round(&mut r, &[DS_BT, DS_BT2]).unwrap();
+        assert_eq!(r.hider.status().hidden(DS), Some(true));
+        // Nothing wanted: none.
+        let mut r = rig(Fake::default());
+        r.hider.set_inputs(&[DS]);
+        round(&mut r, &[DS_BT2]).unwrap();
+        assert_eq!(r.hider.replug_ids(), s(&[DS_BT2]));
+        r.hider.set_inputs(&[]);
+        round(&mut r, &[DS_BT2]).unwrap();
+        assert!(r.hider.replug_ids().is_empty());
     }
 
     #[test]
     fn a_remembered_absent_pad_is_hidden_at_start_without_a_replug() {
         let mut r = rig(foreign());
         r.hider.set_known(&s(&[DS_BT]));
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[MOUSE]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT]), "hidden before it is turned on");
         assert_eq!(r.hider.state().ids, s(&[DS_BT]), "recorded: undone like any other entry");
@@ -1064,7 +1188,7 @@ mod tests {
         assert!(r.hider.take_learned().is_empty(), "already remembered");
         // Turned on later: it arrives hidden.
         r.ctl.f().calls.clear();
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[MOUSE, DS_BT]).unwrap();
         assert_eq!(r.hider.status().hidden(DS), Some(true));
         assert!(!r.ctl.f().calls.contains(&"set_bl"), "nothing to change");
@@ -1075,7 +1199,7 @@ mod tests {
     #[test]
     fn a_present_pad_we_hide_is_learned_once() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB, MOUSE]).unwrap();
         assert_eq!(r.hider.take_learned(), vec![known("dualsense", DS_USB)]);
         round(&mut r, &[DS_USB, MOUSE]).unwrap();
@@ -1096,12 +1220,12 @@ mod tests {
         let mut r = rig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() });
         HideState { ids: s(&[DS_USB]), ..Default::default() }.save(&r.path).unwrap();
         r.hider = Hider::new(r.path.clone());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.hider.take_learned(), vec![known("dualsense", DS_USB)]);
         // The user's own entry: not ours, not remembered.
         let mut r = rig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() });
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert!(r.hider.take_learned().is_empty());
     }
@@ -1110,10 +1234,10 @@ mod tests {
     fn remembered_ids_of_a_kind_no_longer_wanted_are_removed() {
         let mut r = rig(foreign());
         r.hider.set_known(&s(&[DS_BT, NSP_BT]));
-        r.hider.set_inputs(&[DS, NSP], &[]);
+        r.hider.set_inputs(&[DS, NSP]);
         round(&mut r, &[]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT, NSP_BT]));
-        r.hider.set_inputs(&[NSP], &[]); // DualSense on 手把
+        r.hider.set_inputs(&[NSP]); // DualSense on 手把
         round(&mut r, &[]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, NSP_BT]));
         assert_eq!(r.hider.state().ids, s(&[NSP_BT]));
@@ -1123,7 +1247,7 @@ mod tests {
     fn forgetting_an_absent_pad_removes_its_entry() {
         let mut r = rig(foreign());
         r.hider.set_known(&s(&[DS_BT, DS_USB]));
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, DS_BT, DS_USB]));
         r.hider.set_known(&s(&[DS_USB]));
@@ -1140,7 +1264,7 @@ mod tests {
     fn forgetting_a_present_pad_keeps_it_hidden_and_learns_it_again() {
         let mut r = rig(Fake::default());
         r.hider.set_known(&s(&[DS_USB]));
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         r.hider.set_known(&[]);
         round(&mut r, &[DS_USB]).unwrap();
@@ -1157,7 +1281,7 @@ mod tests {
         HideState { ids: s(&[DS_USB]), ..Default::default() }.save(&r.path).unwrap();
         r.hider = Hider::new(r.path.clone());
         r.hider.set_known(&s(&[DS_USB, DS_BT]));
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[DS_USB, DS_BT]));
         assert_eq!(r.hider.status().hidden(DS), Some(true));
@@ -1166,10 +1290,10 @@ mod tests {
     #[test]
     fn the_status_lists_the_present_pads() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[MOUSE, DS_USB, NSP_BT]).unwrap();
         assert_eq!(r.hider.status().present, s(&[DS_USB, NSP_BT]), "pads the app hides, any kind; no mouse");
-        r.hider.set_inputs(&[], &[DS]);
+        r.hider.set_inputs(&[]);
         round(&mut r, &[DS_USB]).unwrap();
         assert!(r.hider.status().present.is_empty(), "nothing wanted: not looked up");
     }
@@ -1178,11 +1302,11 @@ mod tests {
     fn remembered_ids_compare_case_insensitively() {
         let mut r = rig(Fake::default());
         r.hider.set_known(&s(&[&DS_USB.to_lowercase()]));
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[]).unwrap();
         assert_eq!(r.ctl.f().black.len(), 1);
         r.ctl.f().calls.clear();
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().black.len(), 1, "no duplicate");
         assert!(!r.ctl.f().calls.contains(&"set_bl"));
@@ -1199,9 +1323,9 @@ mod tests {
     #[test]
     fn leaving_xbox_removes_that_kinds_entries_only() {
         let mut r = rig(foreign());
-        r.hider.set_inputs(&[DS, NSP], &[DS, NSP]);
+        r.hider.set_inputs(&[DS, NSP]);
         round(&mut r, &[DS_USB, NSP_BT]).unwrap();
-        r.hider.set_inputs(&[NSP], &[DS, NSP]);
+        r.hider.set_inputs(&[NSP]);
         round(&mut r, &[DS_USB, NSP_BT]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, NSP_BT]));
         assert_eq!(r.hider.state().ids, s(&[NSP_BT]));
@@ -1211,9 +1335,9 @@ mod tests {
     #[test]
     fn nothing_wanted_restores_the_original_lists_and_active() {
         let mut r = rig(foreign());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB, DS_BT]).unwrap();
-        r.hider.set_inputs(&[], &[DS]);
+        r.hider.set_inputs(&[]);
         round(&mut r, &[DS_USB, DS_BT]).unwrap();
         let f = r.ctl.f();
         assert_eq!(f.black, s(&[FOREIGN_DEV]));
@@ -1228,7 +1352,7 @@ mod tests {
     fn release_all_restores_the_exact_original_lists_and_active() {
         let mut r = rig(foreign());
         r.ctl.f().black.clear(); // empty blacklist: Active must go back off
-        r.hider.set_inputs(&[DS, NSP], &[DS]);
+        r.hider.set_inputs(&[DS, NSP]);
         round(&mut r, &[DS_USB, NSP_BT, MOUSE]).unwrap();
         assert!(r.ctl.f().active);
         release(&mut r).unwrap();
@@ -1245,7 +1369,7 @@ mod tests {
     fn release_all_with_nothing_recorded_does_not_open_the_driver() {
         let mut r = rig(Fake { open_err: Some(OpenErr::Absent), ..Default::default() });
         release(&mut r).unwrap();
-        r.hider.set_inputs(&[], &[]);
+        r.hider.set_inputs(&[]);
         round(&mut r, &[DS_USB]).unwrap();
         assert_eq!(r.ctl.f().opens, 0);
         assert!(r.hider.ok());
@@ -1254,7 +1378,7 @@ mod tests {
     #[test]
     fn a_failed_release_keeps_the_state_for_the_next_start() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[DS]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[DS_USB]).unwrap();
         r.ctl.f().open_err = Some(OpenErr::Busy);
         assert!(matches!(release(&mut r), Err(Error::Busy)));
@@ -1274,7 +1398,7 @@ mod tests {
             .unwrap();
         r.hider = Hider::new(r.path.clone());
         // The current config wants the Switch Pro only; neither pad is here.
-        r.hider.set_inputs(&[NSP], &[]);
+        r.hider.set_inputs(&[NSP]);
         round(&mut r, &[MOUSE]).unwrap();
         let f = r.ctl.f();
         assert_eq!(f.black, s(&[FOREIGN_DEV, NSP_BT]));
@@ -1294,7 +1418,7 @@ mod tests {
         let mut r = rig(Fake { black: s(&[DS_USB]), white: s(&[OWN]), active: true, ..Default::default() });
         HideState { ids: s(&[DS_USB]), activated_by_us: true, whitelisted: Some(OWN.into()) }.save(&r.path).unwrap();
         r.hider = Hider::new(r.path.clone());
-        r.hider.set_inputs(&[], &[]);
+        r.hider.set_inputs(&[]);
         round(&mut r, &[]).unwrap();
         let f = r.ctl.f();
         assert!(f.black.is_empty() && f.white.is_empty() && !f.active, "{f:?}");
@@ -1308,7 +1432,7 @@ mod tests {
         let mut r = rig(Fake { white: s(&[FOREIGN_APP, old]), ..Default::default() });
         HideState { whitelisted: Some(old.into()), ..Default::default() }.save(&r.path).unwrap();
         r.hider = Hider::new(r.path.clone());
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         round(&mut r, &[]).unwrap();
         assert_eq!(r.ctl.f().white, s(&[FOREIGN_APP, OWN]));
         assert_eq!(r.hider.state().whitelisted.as_deref(), Some(OWN));
@@ -1320,7 +1444,7 @@ mod tests {
     fn busy_or_absent_reports_not_hidden_and_the_next_round_retries() {
         for err in [OpenErr::Busy, OpenErr::Absent] {
             let mut r = rig(Fake { open_err: Some(err), ..Default::default() });
-            r.hider.set_inputs(&[DS], &[]);
+            r.hider.set_inputs(&[DS]);
             assert!(round(&mut r, &[DS_USB]).is_err());
             assert!(!r.hider.ok());
             assert_eq!(r.hider.status().hidden(DS), Some(false), "{err:?}");
@@ -1334,7 +1458,7 @@ mod tests {
     #[test]
     fn nothing_is_applied_before_the_first_round() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[DS], &[]);
+        r.hider.set_inputs(&[DS]);
         assert_eq!(r.hider.status().hidden(DS), Some(false));
     }
 
@@ -1343,12 +1467,12 @@ mod tests {
     #[test]
     fn the_switch_2_pro_is_never_hidden() {
         let mut r = rig(Fake::default());
-        r.hider.set_inputs(&[NS2], &[NS2]);
+        r.hider.set_inputs(&[NS2]);
         round(&mut r, &[NS2_BLE]).unwrap();
         assert!(r.ctl.f().black.is_empty());
         assert_eq!(r.ctl.f().opens, 0, "nothing wanted that Windows drives natively");
         assert_eq!(r.hider.status().hidden(NS2), None);
-        r.hider.set_inputs(&[DS, NS2], &[NS2]);
+        r.hider.set_inputs(&[DS, NS2]);
         round(&mut r, &[NS2_BLE, DS_USB]).unwrap();
         assert_eq!(r.ctl.f().black, s(&[DS_USB]));
         assert_eq!(r.hider.status().hidden(NS2), None);
@@ -1356,7 +1480,7 @@ mod tests {
 
     #[test]
     fn status_hidden_is_none_without_a_worker() {
-        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true, present: vec![] };
+        let st = HideStatus { supported: false, wanted: vec![DS], needs_replug: vec![], ok: true, present: vec![], replug_addrs: vec![], present_addrs: vec![], replug_usb: vec![] };
         assert_eq!(st.hidden(DS), None);
     }
 
@@ -1365,6 +1489,9 @@ mod tests {
     struct FakeBackend {
         ctl: FakeCtl,
         present: Arc<Mutex<Vec<String>>>,
+        /// (instance id, Bluetooth address) the look-up finds.
+        addrs: Arc<Mutex<Vec<(String, String)>>>,
+        lookups: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl Backend for FakeBackend {
@@ -1378,6 +1505,10 @@ mod tests {
         fn own_path(&mut self) -> Option<String> {
             Some(OWN.into())
         }
+        fn bt_addr(&mut self, id: &str) -> Option<String> {
+            self.lookups.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.addrs.lock().unwrap().iter().find(|(i, _)| i.eq_ignore_ascii_case(id)).map(|(_, a)| a.clone())
+        }
     }
 
     struct WRig {
@@ -1386,6 +1517,8 @@ mod tests {
         present: Arc<Mutex<Vec<String>>>,
         changes: Arc<std::sync::atomic::AtomicUsize>,
         learned: Arc<Mutex<Vec<KnownPad>>>,
+        addrs: Arc<Mutex<Vec<(String, String)>>>,
+        lookups: Arc<std::sync::atomic::AtomicUsize>,
         worker: HiderWorker,
     }
 
@@ -1401,9 +1534,11 @@ mod tests {
         let c = changes.clone();
         let learned = Arc::new(Mutex::new(Vec::new()));
         let l = learned.clone();
+        let addrs = Arc::new(Mutex::new(Vec::new()));
+        let lookups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker = HiderWorker::spawn(
             path,
-            FakeBackend { ctl: ctl.clone(), present: present.clone() },
+            FakeBackend { ctl: ctl.clone(), present: present.clone(), addrs: addrs.clone(), lookups: lookups.clone() },
             Duration::from_millis(20),
             Box::new(move || {
                 c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1411,7 +1546,7 @@ mod tests {
             Box::new(move |found| l.lock().unwrap().extend(found)),
         )
         .unwrap();
-        WRig { dir, ctl, present, changes, learned, worker }
+        WRig { dir, ctl, present, changes, learned, addrs, lookups, worker }
     }
 
     fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
@@ -1427,11 +1562,13 @@ mod tests {
         let w = wrig(Fake::default(), &[DS_USB], None);
         let link = w.worker.link();
         assert_eq!(link.hidden(DS), None, "nothing wanted yet");
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("blacklisted", || w.ctl.f().black == s(&[DS_USB]));
         eventually("needs replug", || link.hidden(DS) == Some(false));
         assert!(w.changes.load(std::sync::atomic::Ordering::SeqCst) > 0, "on_change ran");
-        link.update(vec![DS], vec![]);
+        // Unplugged: the round no longer finds it.
+        w.present.lock().unwrap().clear();
+        link.update(vec![DS]);
         eventually("left: hidden", || link.hidden(DS) == Some(true));
     }
 
@@ -1442,14 +1579,119 @@ mod tests {
         link.set_known(s(&[DS_BT]));
         thread::sleep(Duration::from_millis(60));
         assert_eq!(w.ctl.f().opens, 0, "the remembered list alone starts nothing");
-        link.update(vec![DS], vec![DS]);
+        link.update(vec![DS]);
         eventually("both hidden", || w.ctl.f().black == s(&[FOREIGN_DEV, DS_USB, DS_BT]));
-        eventually("learned", || *w.learned.lock().unwrap() == vec![KnownPad { kind: "dualsense".into(), id: DS_USB.into() }]);
+        eventually("learned", || *w.learned.lock().unwrap() == vec![known("dualsense", DS_USB)]);
         // The config now has both; then the user forgets the absent one.
         link.set_known(s(&[DS_BT, DS_USB]));
         link.set_known(s(&[DS_USB]));
         eventually("forgotten: removed", || w.ctl.f().black == s(&[FOREIGN_DEV, DS_USB]));
         assert_eq!(w.learned.lock().unwrap().len(), 1, "reported once");
+    }
+
+    fn set_addrs(w: &WRig, list: &[(&str, &str)]) {
+        *w.addrs.lock().unwrap() = list.iter().map(|(i, a)| (i.to_string(), a.to_string())).collect();
+    }
+
+    #[test]
+    fn worker_learns_a_pad_with_its_bluetooth_address() {
+        let w = wrig(Fake::default(), &[DS_BT2, DS_USB], None);
+        set_addrs(&w, &[(DS_BT2, ADDR_B)]);
+        w.worker.link().update(vec![DS]);
+        eventually("learned", || w.learned.lock().unwrap().len() == 2);
+        let got = w.learned.lock().unwrap().clone();
+        assert!(got.contains(&KnownPad { kind: "dualsense".into(), id: DS_BT2.into(), addr: Some(ADDR_B.into()) }), "{got:?}");
+        assert!(got.contains(&known("dualsense", DS_USB)), "USB: no address; {got:?}");
+    }
+
+    #[test]
+    fn worker_looks_up_the_remembered_pads_addresses_once_at_start() {
+        // Remembered before addresses were kept: the first round reports the
+        // ones it can find (absent pads too: the devnode stays).
+        let w = wrig(Fake::default(), &[], None);
+        set_addrs(&w, &[(DS_BT, ADDR_A)]);
+        let link = w.worker.link();
+        link.set_known(s(&[DS_BT, DS_USB]));
+        link.update(vec![DS]);
+        eventually("reported", || !w.learned.lock().unwrap().is_empty());
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(*w.learned.lock().unwrap(), vec![KnownPad { kind: "dualsense".into(), id: DS_BT.into(), addr: Some(ADDR_A.into()) }]);
+        let n = w.lookups.load(std::sync::atomic::Ordering::SeqCst);
+        link.update(vec![DS]);
+        link.set_known(s(&[DS_BT]));
+        eventually("rounds ran", || w.ctl.f().opens >= 2);
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(w.learned.lock().unwrap().len(), 1, "once per launch");
+        assert_eq!(w.lookups.load(std::sync::atomic::Ordering::SeqCst), n, "no more look-ups");
+    }
+
+    #[test]
+    fn worker_reports_the_addresses_of_the_pads_hidden_while_present() {
+        // A hidden already, B turned on now; both Bluetooth.
+        let w = wrig(Fake { black: s(&[DS_BT]), active: true, ..Default::default() }, &[DS_BT, DS_BT2], None);
+        set_addrs(&w, &[(DS_BT, ADDR_A), (DS_BT2, ADDR_B)]);
+        let link = w.worker.link();
+        link.update(vec![DS]);
+        eventually("needs replug", || link.hidden(DS) == Some(false));
+        assert_eq!(link.replug_addrs(), vec![(DS, 0xA0B1_C2D3_E4F5)], "B only");
+        // A USB pad hidden while present: no address.
+        let w = wrig(Fake::default(), &[DS_USB], None);
+        let link = w.worker.link();
+        link.update(vec![DS]);
+        eventually("needs replug", || link.hidden(DS) == Some(false));
+        assert!(link.replug_addrs().is_empty());
+    }
+
+    #[test]
+    fn a_bluetooth_le_pad_is_remembered_with_its_address_but_not_powered_off() {
+        // The Xbox Nano hidden while present: 記住的手把 gets its address; no
+        // address goes to the automatic power-off, so the reconnect hint stays.
+        let w = wrig(Fake::default(), &[NANO_BLE], None);
+        set_addrs(&w, &[(NANO_BLE, "FB3A7C7DF9A8")]);
+        let link = w.worker.link();
+        link.update(vec![XN]);
+        eventually("learned", || !w.learned.lock().unwrap().is_empty());
+        assert_eq!(
+            *w.learned.lock().unwrap(),
+            vec![KnownPad { kind: "xbox_nano".into(), id: NANO_BLE.into(), addr: Some("FB3A7C7DF9A8".into()) }]
+        );
+        eventually("needs replug", || link.hidden(XN) == Some(false));
+        assert_eq!(link.needs_replug(), vec![XN]);
+        assert!(link.replug_addrs().is_empty(), "no power-off by address for a BLE pad");
+        assert!(!link.replug_usb(XN), "not USB: the reconnect banner, not the unplug one");
+        assert_eq!(link.status().present_addrs, vec![(XN, 0xFB3A_7C7D_F9A8)]);
+    }
+
+    #[test]
+    fn worker_runs_a_round_when_the_present_pads_change() {
+        // A is hidden and connected; B, never seen, is turned on: no engine
+        // update comes (the connected kinds do not change).
+        let w = wrig(Fake { black: s(&[DS_BT]), active: true, ..Default::default() }, &[DS_BT], None);
+        let link = w.worker.link();
+        link.update(vec![DS]);
+        eventually("first round", || w.ctl.f().opens == 1);
+        eventually("A arrived hidden", || link.hidden(DS) == Some(true));
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(w.ctl.f().opens, 1, "same pads: no round, the driver is not opened");
+        w.present.lock().unwrap().push(DS_BT2.into());
+        eventually("B hidden without an update", || w.ctl.f().black == s(&[DS_BT, DS_BT2]));
+        eventually("B needs the replug", || link.hidden(DS) == Some(false));
+        // B goes (powered off): seen without an update too.
+        *w.present.lock().unwrap() = s(&[DS_BT]);
+        eventually("B gone: no replug", || link.hidden(DS) == Some(true));
+        let opens = w.ctl.f().opens;
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(w.ctl.f().opens, opens, "no round while nothing changes");
+    }
+
+    #[test]
+    fn worker_reports_the_present_pads_addresses() {
+        let w = wrig(Fake::default(), &[DS_BT, DS_USB, MOUSE], None);
+        set_addrs(&w, &[(DS_BT, ADDR_A)]);
+        let link = w.worker.link();
+        link.update(vec![DS]);
+        eventually("a round ran", || link.status().present.len() == 2);
+        assert_eq!(link.status().present_addrs, vec![(DS, 0x7C66_EF82_23D2)], "USB: none");
     }
 
     #[test]
@@ -1459,7 +1701,7 @@ mod tests {
         let w = wrig(Fake { black: s(&[DS_USB]), active: true, ..Default::default() }, &[], Some(st));
         thread::sleep(Duration::from_millis(100));
         assert_eq!(w.ctl.f().opens, 0);
-        w.worker.link().update(vec![DS], vec![]);
+        w.worker.link().update(vec![DS]);
         eventually("a round ran", || w.ctl.f().opens > 0);
         assert_eq!(w.ctl.f().black, s(&[DS_USB]), "still wanted: kept");
     }
@@ -1468,7 +1710,7 @@ mod tests {
     fn worker_retries_until_the_driver_answers() {
         let w = wrig(Fake { open_err: Some(OpenErr::Busy), ..Default::default() }, &[DS_USB], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("several attempts", || w.ctl.f().opens >= 3);
         assert_eq!(link.hidden(DS), Some(false));
         w.ctl.f().open_err = None;
@@ -1482,7 +1724,7 @@ mod tests {
     fn worker_retry_runs_a_round_for_a_new_device() {
         let w = wrig(Fake::default(), &[], None);
         let link = w.worker.link();
-        link.update(vec![DS], vec![]);
+        link.update(vec![DS]);
         eventually("first round", || w.ctl.f().opens == 1);
         w.present.lock().unwrap().push(DS_BT.into());
         link.retry();
@@ -1492,7 +1734,7 @@ mod tests {
     #[test]
     fn worker_stop_undoes_everything_and_ends() {
         let w = wrig(foreign(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || w.ctl.f().black.len() == 2);
         let t = Instant::now();
         assert!(w.worker.stop(), "confirmed");
@@ -1507,7 +1749,7 @@ mod tests {
     #[test]
     fn worker_stop_while_busy_gives_up_in_time_and_keeps_the_state() {
         let w = wrig(Fake::default(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || !w.ctl.f().black.is_empty());
         w.ctl.f().open_err = Some(OpenErr::Busy);
         let t = Instant::now();
@@ -1520,7 +1762,7 @@ mod tests {
     #[test]
     fn dropping_the_worker_stops_it() {
         let w = wrig(Fake::default(), &[DS_USB], None);
-        w.worker.link().update(vec![DS], vec![DS]);
+        w.worker.link().update(vec![DS]);
         eventually("hidden", || !w.ctl.f().black.is_empty());
         let WRig { ctl, worker, .. } = w;
         drop(worker);

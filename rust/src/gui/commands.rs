@@ -789,16 +789,20 @@ pub async fn install_vigem(engine: State<'_, Handle>) -> Result<String, String> 
 /// HidHide missing or unsupported); `false` while the pad needs one
 /// reconnect (hiding is not applied yet); `true` when it is hidden.
 /// Hiding applies in 鍵鼠 and Xbox mode.
-/// `auto_off`: the app powered this pad off this launch because it needed
-/// that reconnect (the ⏻'s Bluetooth disconnect dropped its link), and it
-/// has not reconnected since; `false` once it is back, and when the
-/// power-off dropped no link (USB): then `hidden` stays `false`.
+/// `auto_off`: the app powered a pad of this kind off this launch because it
+/// needed that reconnect (its own Bluetooth link, dropped by address), and
+/// that pad is not back yet; `false` once it is, and when nothing could be
+/// powered off (USB, no link dropped): then `hidden` stays `false`.
+/// `replug_usb`: a pad of this kind that needs the reconnect is on USB: only
+/// unplugging it makes a game drop it (the ⏻ would not, and would drop a
+/// Bluetooth pad of the same kind), so the board says to unplug it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct XboxStatus {
     pub vigem: String,
     pub hidhide: String,
     pub hidden: Option<bool>,
     pub auto_off: bool,
+    pub replug_usb: bool,
 }
 
 /// Tauri command: [`XboxStatus`] for pad `kind` (slug). Probes both drivers
@@ -823,11 +827,12 @@ pub fn xbox_status_impl(engine: &Handle, kind: &str, vigem: &str, hidhide: &str)
     let link = engine.hider();
     let hidhide = if link.is_some() { hidhide } else { "unsupported" };
     let auto_off = link.is_some() && engine.auto_off(k);
+    let replug_usb = link.as_ref().is_some_and(|l| l.replug_usb(k));
     let hidden = match link {
         Some(link) if hidhide == "installed" => link.hidden(k),
         _ => None,
     };
-    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden, auto_off })
+    Ok(XboxStatus { vigem: vigem.to_string(), hidhide: hidhide.to_string(), hidden, auto_off, replug_usb })
 }
 
 /// Tauri command: download the pinned official HidHide installer, verify it

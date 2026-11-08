@@ -40,25 +40,6 @@ pub enum SourceCmd {
     Rumble,
 }
 
-/// What each Turn Off's link-level power-off did
-/// (`crate::platform::power_off_connected`). The HID worker records the kind
-/// and the number of Bluetooth links it dropped (0: USB, no match, or the
-/// call failed) before it reports the pad gone, so whoever sees the pad
-/// leave finds the result already here. The engine drains it.
-#[derive(Debug, Clone, Default)]
-pub struct PowerOffLog(std::sync::Arc<std::sync::Mutex<Vec<(ControllerKind, usize)>>>);
-
-impl PowerOffLog {
-    pub fn record(&self, kind: ControllerKind, links: usize) {
-        self.0.lock().unwrap_or_else(|p| p.into_inner()).push((kind, links));
-    }
-
-    /// Every result since the last call, oldest first.
-    pub fn take(&self) -> Vec<(ControllerKind, usize)> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()))
-    }
-}
-
 /// A command for the hub: `to: None` goes to the session owner; `Some(k)`
 /// goes to the source whose open session is pad `k` (owner or waiting),
 /// and is dropped if no such pad is connected.

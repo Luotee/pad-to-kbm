@@ -36,30 +36,43 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Reconnect hint.** A controller that was already connected when it was
   hidden stays visible to games until it reconnects. A white banner says
   so: 「再連一次 DualSense，遊戲才看不到原本的手把：按分頁上的 ⏻ 斷開，再按
-  PS 鍵連回來」. It goes away after the reconnect.
+  PS 鍵連回來」. On USB it says 「再連一次 DualSense，遊戲才看不到原本的手把：
+  拔掉 USB 線再插回去」 instead: only unplugging makes a game let go of it, and
+  the ⏻ would also turn off a Bluetooth controller of the same model. It goes
+  away once that controller has gone and come back.
 - **鍵鼠 reconnect hint can be put off.** The 「再連一次」 banner in 鍵鼠 now has
   a 「這次不再提醒」 button (per controller, until the next time the app is
   opened; nothing is written to the config). The Xbox banner is unchanged.
 - **PadToKBM turns the controller off when it needs that reconnect.** A
   DualSense / Switch Pro that is on when it gets hidden (on when the app
-  opens, connected for the first time, or switched from 手把 to 鍵鼠 / Xbox
-  while on) is turned off by the app itself, at most once per controller
-  type (DualSense, Switch Pro) each time the app is opened: the same
-  Bluetooth disconnect as the tab's ⏻, no administrator rights, no device
-  restart.
-  While it is off a white banner says 「已替你把 DualSense 關機，好讓遊戲看不到
-  它。按 PS 鍵打開就能用了」 (HOME on the Switch Pro), with no 「這次不再提醒」;
-  it goes when the controller is back on, already hidden. Where nothing could
-  be turned off (USB), the 「再連一次」 banner shows as before.
-  `get_xbox_status` reports this as `auto_off`.
+  opens, connected for the first time, turned on while another one of the
+  same model is in use, or switched from 手把 to 鍵鼠 / Xbox while on) is
+  turned off by the app itself, at most once per controller each time the
+  app is opened. Only that controller is turned off: its Bluetooth link is
+  dropped by its address, so a second DualSense already in use keeps
+  playing (the tab's ⏻ still turns off every connected controller of that
+  model). No administrator rights, no device restart. PadToKBM looks for
+  newly turned-on controllers every 2 seconds, so one turned on while
+  another of its model is connected is hidden (and, if needed, turned off)
+  right away.
+  While it is off and no other controller of that model is connected, a
+  white banner says 「已替你把 DualSense 關機，好讓遊戲看不到它。按 PS 鍵打開就能
+  用了」 (HOME on the Switch Pro), with no 「這次不再提醒」; it goes when that
+  controller is back on, already hidden. A USB controller cannot be turned
+  off: the USB 「再連一次」 banner shows instead, until it is unplugged.
+  `get_xbox_status` reports this as `auto_off`, and a controller on USB that
+  needs the reconnect as `replug_usb`.
 - **Controllers are remembered for hiding.** A DualSense / Switch Pro that
   PadToKBM has hidden once is remembered, and from the next start it is
   hidden as soon as the app opens, even while it is still off: turned on
   later, it reaches the game already hidden, with no reconnect. The entries
   still come out when the app exits. A new 設定 tab, 「記住的手把」, lists
-  them (name, 藍牙 / USB) with 刪除 and 全部刪除; at most 16 are kept, the
-  oldest goes first. A controller that is on right now is marked 連線中 and
-  cannot be deleted until it is turned off; 全部刪除 skips it.
+  them (name, 藍牙 / USB, and for a Bluetooth controller the last four
+  digits of its Bluetooth address, e.g. `23:D2`, so two of one model can be
+  told apart; the row's tooltip has the whole address) with 刪除 and 全部刪除.
+  Entries remembered without an address get it at the next start. At most
+  16 are kept, the oldest goes first. A controller that is on right now is
+  marked 連線中 and cannot be deleted until it is turned off; 全部刪除 skips it.
 - New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`,
   `get_present_pad_ids`, `forget_hidden_pad`, `forget_all_hidden_pads`;
   `get_ui_prefs` / `set_ui_prefs` carry `hidhide_prompt_dismissed`.
@@ -87,16 +100,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controller is removed the first time you change that controller's mode.
 - A DualSense / Switch Pro on 手把 stays on 手把; pick Xbox to get the
   virtual pad.
-- A DualSense / Switch Pro on 鍵鼠 is hidden from games from its next
-  reconnect on, if HidHide is installed. The Switch 2 Pro is never hidden (no
-  native driver). To let a game read the pad directly, pick 手把.
+- A DualSense / Switch Pro on 鍵鼠 is hidden from games too, if HidHide is
+  installed. The first time the app opens after the upgrade with the
+  controller on, the app turns it off once so it comes back hidden (on USB
+  it asks you to unplug and replug it instead); after that, a controller
+  turned on after the app is open arrives hidden. The Switch 2 Pro is never
+  hidden (no native driver). To let a game read the pad directly, pick 手把.
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
 - Xbox output (ViGEmBus + HidHide) and hiding the pad in 鍵鼠 (HidHide) are Windows only; macOS is Phase 2 TBD.
 - New optional `hidhide_known` in `padtokbm.json`:
-  `[{ "kind": "dualsense", "id": "<HID instance id>" }, …]`, written by the
-  app when it hides a controller; absent while empty. Older configs read as
-  before.
+  `[{ "kind": "dualsense", "id": "<HID instance id>", "addr": "7C66EF8223D2" }, …]`,
+  written by the app when it hides a controller; absent while empty. Older
+  configs read as before. `addr` is there for Bluetooth controllers only and
+  is optional: 12 hex digits, upper-cased on load. An `addr` in another
+  format, more than 16 entries or the same id twice make the config fail
+  validation.
 - With `--cli`, only closing the console window is sure to take the HidHide
   entries out on the way out: Windows does not send the logoff / shutdown
   events to a process that loads user32, so after a logoff or shutdown they

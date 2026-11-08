@@ -98,7 +98,7 @@ function tauriMock({ config, version }) {
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).
-    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true, auto_off: false },
+    xbox: { vigem: 'installed', hidhide: 'installed', hidden: true, auto_off: false, replug_usb: false },
     after: { vigem: 'installed', hidhide: 'installed' },
     // v3.6.0 ui prefs kept across a page.reload() (sessionStorage), as the config file would be.
     dismissed: false,
@@ -686,6 +686,17 @@ try {
     check('reconnect banner fits the board', fits);
     check('Xbox reconnect banner has no 這次不再提醒', (await page.locator('#board .obanner.rc [data-act="rcdismiss"]').count()) === 0);
     await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect.png') });
+    // A USB pad (`replug_usb`): only unplugging makes a game drop it, and the ⏻ would drop a
+    // Bluetooth pad of the same type: the banner says unplug, no ⏻.
+    await setXbox({ replug_usb: true });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await settle(page);
+    const u = await banner();
+    check('replug_usb: the reconnect banner says unplug the USB cable, no ⏻', u === '再連一次 DualSense，遊戲才看不到原本的手把：拔掉 USB 線再插回去' &&
+      (await page.locator('#board .obanner.rc svg').count()) === 0, u);
+    check('replug_usb: banner sits at the stage centre and fits', await bannerCentred(), JSON.stringify(await bannerBox()));
+    await page.screenshot({ path: path.join(outDir, 'web-xbox-reconnect-usb.png') });
+    await setXbox({ replug_usb: false });
   }
   {
     await setXbox({ hidden: true });
@@ -729,10 +740,11 @@ try {
     check('auto-off: text vertically centred', Math.abs((m.st - m.inner[0]) - (m.inner[1] - m.sb)) <= 1, J);
     check('auto-off: banner on whole pixels, inside the board', [m.bl, m.br, m.bt, m.bb].every(v => Math.abs(v - Math.round(v)) < 0.01) && m.bl >= m.kl && m.br <= m.kr, J);
     await page.screenshot({ path: path.join(outDir, 'web-auto-off.png') });
-    // Back on (the reply still says auto_off): the banner goes with the connect.
+    // A DualSense connected (the reply still says auto_off): no banner. This is the pad back on, or a
+    // second DualSense in use while the one the app powered off is still away (auto_off is per kind).
     await back('dualsense');
     await settle(page);
-    check('auto-off: the pad connecting clears it', (await page.locator('#board .obanner.ao').count()) === 0 && (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
+    check('auto-off: a DualSense connected (that pad back, or another one in use) keeps it quiet', (await page.locator('#board .obanner.ao').count()) === 0 && (await banner()) === '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用', await banner());
     // The power-off dropped no link (USB): the old reconnect banner, as before.
     await setXbox({ hidden: false, auto_off: false });
     await back('dualsense');
@@ -1799,6 +1811,8 @@ try {
     const NSP_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\\9&1&0&0000';
     const DS_BT = 'HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\\9&2d1c&0&0000';
     const HINT = '連線中的手把要先關掉才能刪除';
+    // Bluetooth addresses (Task 10): the row shows the last two bytes, its title the whole address.
+    const A_NSP = 'A0B1C2D3E4F5', A_DS = '7C66EF8223D2';
     // The list and the pads present now (the hider's last round); the tab re-reads them on config-changed.
     const setKnown = async (list, present = []) => {
       await page.evaluate(([l, p]) => {
@@ -1816,7 +1830,7 @@ try {
       const pr = R(pane), bad = [];
       const rows = [...pane.querySelectorAll('.knr')].map(r => {
         const rr = R(r), b = r.querySelector('[data-act="forgetpad"]'), br = R(b), bt = txt(b), tag = r.querySelector('.knc');
-        for (const s of r.querySelectorAll('.knn, .knb')) {
+        for (const s of r.querySelectorAll('.knn, .knb, .kns')) {
           const sr = txt(s);
           if (sr.left < rr.left || sr.right > (tag ? R(tag).left : br.left) || Math.abs((sr.top + sr.bottom) / 2 - (rr.top + rr.bottom) / 2) > 1) bad.push('span ' + s.textContent);
         }
@@ -1828,7 +1842,11 @@ try {
         if (bt.left < br.left + 2 || bt.right > br.right - 2 || Math.abs((bt.top + bt.bottom) / 2 - (br.top + br.bottom) / 2) > 1) bad.push('button ' + b.dataset.id);
         if (br.right > rr.right || !Number.isInteger(rr.left) || !Number.isInteger(rr.top) || !ints(br)) bad.push('px ' + b.dataset.id);
         if (rr.left < pr.left || rr.right > pr.right || rr.bottom > pr.bottom) bad.push('out ' + b.dataset.id);
-        return { x: rr.left, y: rr.top, text: r.textContent, title: r.getAttribute('title'), id: b.dataset.id, btn: b.textContent.trim(),
+        const sn = r.querySelector('.kns');
+        return { x: rr.left, y: rr.top, w: rr.width, text: r.textContent, title: r.getAttribute('title'), id: b.dataset.id, btn: b.textContent.trim(), serial: sn ? sn.textContent : null,
+          used: Math.ceil(R(b).right - R(r.querySelector('.knn')).left),
+          // Spare px in the row: the gap between the last text span and the tag / button, less the flex gap.
+          free: Math.floor((tag ? R(tag).left : br.left) - R(sn || r.querySelector('.knb')).right - parseFloat(getComputedStyle(r).columnGap)),
           tag: tag ? tag.textContent.trim() : null, dis: b.disabled, btitle: b.getAttribute('title') };
       });
       const all = pane.querySelector('[data-act="forgetall"]');
@@ -1837,7 +1855,7 @@ try {
       return { rows, bad, all: all ? all.textContent.trim() : null, allDis: all ? all.disabled : null, sh: pane.scrollHeight, ch: pane.clientHeight, sw: pane.scrollWidth, cw: pane.clientWidth,
         title: pane.querySelector('.knbox .cfgl')?.textContent.trim(), desc: d ? d.innerText.split('\n').map(x => x.trim()) : null, empty: pane.querySelector('.kne')?.textContent.trim() ?? null };
     });
-    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT }], [DS_USB]);
+    await setKnown([{ kind: 'dualsense', id: DS_USB }, { kind: 'ns_pro', id: NSP_BT, addr: A_NSP }], [DS_USB]);
     await page.click('#board [data-act="setopen"]');
     await settle(page);
     await page.click('#board [data-stab="known"]');
@@ -1848,7 +1866,10 @@ try {
       JSON.stringify(m.desc) === JSON.stringify(['連過的手把會被記住，開程式時就先藏起來，之後再打開手把不用重連。', '刪除會立刻生效；連線中的手把要先關掉才能刪除。']), J());
     check('記住的手把: one row per pad, name + 藍牙／USB + 刪除, row title = instance id', m.rows.length === 2 &&
       /^DualSense\s*USB/.test(m.rows[0].text) && m.rows[0].id === DS_USB && m.rows[0].title === DS_USB && m.rows[0].btn === '刪除' &&
-      /^Switch Pro\s*藍牙/.test(m.rows[1].text) && m.rows[1].id === NSP_BT && m.rows[1].title === NSP_BT, J());
+      /^Switch Pro\s*藍牙/.test(m.rows[1].text) && m.rows[1].id === NSP_BT, J());
+    check('記住的手把: a Bluetooth row shows its address\'s last two bytes; its title starts with the whole address', m.rows[1].serial === 'E4:F5' &&
+      /^Switch Pro\s*藍牙\s*E4:F5\s*刪除$/.test(m.rows[1].text) && m.rows[1].title === '藍牙位址 A0:B1:C2:D3:E4:F5\n' + NSP_BT, J());
+    check('記住的手把: a USB row has no serial', m.rows[0].serial === null && !/:/.test(m.rows[0].text), J());
     check('記住的手把: a present pad shows 連線中 and its 刪除 is disabled with the hint', m.rows[0].tag === '連線中' && m.rows[0].dis === true && m.rows[0].btitle === HINT &&
       m.rows[1].tag === null && m.rows[1].dis === false && m.rows[1].btitle === null, J());
     check('記住的手把: two rows fill the left column first', m.rows[0].x === m.rows[1].x && m.rows[1].y > m.rows[0].y, J());
@@ -1878,8 +1899,12 @@ try {
     check('全部刪除 with none present: empty text shows', m.rows.length === 0 && m.empty === '還沒有記住的手把' && m.all === null, J());
     const many = [], here = [];
     for (let i = 0; i < 16; i++) {
-      const k = i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0') }
-        : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)) };
+      // Bluetooth rows carry an address (the last one is an old entry without); its last two bytes are the row's i.
+      // Worst cases for width (Cubic 11 is proportional: A / D are the widest hex glyphs): row 2,
+      // Switch Pro 連線中, ends DD:DD; row 9, DualSense 連線中, ends AD:DA.
+      const ad = 'A0B1C2D3' + (i === 2 ? 'DDDD' : i === 9 ? 'ADDA' : (0x2300 + i).toString(16).toUpperCase().padStart(4, '0'));
+      const k = i % 3 === 2 ? { kind: 'ns_pro', id: NSP_BT.replace('9&1&0', '9&' + i + '&0'), addr: ad }
+        : { kind: 'dualsense', id: (i % 2 ? DS_BT : DS_USB).replace(/0000$/, String(1000 + i)), ...(i % 2 && i !== 15 ? { addr: i === 1 ? A_DS : ad } : {}) };
       many.push(k);
       if ([1, 2, 9, 11].includes(i)) here.push(k.id);   // DualSense 藍牙 and Switch Pro 藍牙 連線中 in both columns
     }
@@ -1888,9 +1913,18 @@ try {
     const left = m.rows.slice(0, 8), right = m.rows.slice(8);
     check('記住的手把 (16): two columns of eight, left first', m.rows.length === 16 && left.every(r => r.x === left[0].x) && right.every(r => r.x === right[0].x) &&
       right[0].x > left[0].x && left.every((r, i) => i === 0 || r.y > left[i - 1].y) && right.every((r, i) => r.y === left[i].y), J());
-    check('記住的手把 (16): DualSense 藍牙 連線中 / Switch Pro 藍牙 連線中 rows carry the tag', m.rows.filter(r => r.tag === '連線中').length === 4 &&
-      m.rows.some(r => /^DualSense\s*藍牙\s*連線中/.test(r.text)) && m.rows.some(r => /^Switch Pro\s*藍牙\s*連線中/.test(r.text)), J());
+    check('記住的手把 (16): DualSense 藍牙 23:D2 / AD:DA 連線中, Switch Pro 藍牙 DD:DD 連線中 rows carry the serial and the tag', m.rows.filter(r => r.tag === '連線中').length === 4 &&
+      /^DualSense\s*藍牙\s*23:D2\s*連線中\s*刪除$/.test(m.rows[1].text) && /^Switch Pro\s*藍牙\s*DD:DD\s*連線中\s*刪除$/.test(m.rows[2].text) &&
+      /^DualSense\s*藍牙\s*AD:DA\s*連線中\s*刪除$/.test(m.rows[9].text) &&
+      /^Switch Pro\s*藍牙\s*23:0B\s*連線中/.test(m.rows[11].text), J());
+    check('記住的手把 (16): a Bluetooth row without an address (an old entry) and the USB rows show no serial',
+      m.rows[15].serial === null && /^DualSense\s*藍牙\s*刪除$/.test(m.rows[15].text) && m.rows[15].title === many[15].id &&
+      m.rows.filter((r, i) => many[i].id.includes('MI_03')).every(r => r.serial === null), J());
     check('記住的手把 (16): pane does not scroll, whole pixels, text inside its box and centred', m.sh === m.ch && m.sw === m.cw && m.bad.length === 0, J());
+    const tight = m.rows.reduce((a, r) => (r.free < a.free ? r : a));
+    check('記住的手把 (16): every row keeps at least 2 px spare (the widest serials included)', m.rows.every(r => r.free >= 2),
+      'row ' + tight.w + 'px; tightest "' + tight.text + '": ' + tight.free + 'px spare');
+    console.log('  記住的手把 (16): row ' + tight.w + 'px; the tightest row "' + tight.text + '" has ' + tight.free + 'px spare');
     await page.screenshot({ path: path.join(outDir, 'web-known-16.png') });
     await setKnown([]);
     await page.click('#board [data-act="setclose"]');

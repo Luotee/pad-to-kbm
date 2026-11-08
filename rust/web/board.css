@@ -191,10 +191,10 @@ button:focus-visible,.mock .rng:focus-visible{outline:3px solid var(--gold);outl
 .mock .knbox .cfgl,.mock .knd,.mock .kne{line-height:16px}
 .mock .knd{font-size:11px;color:var(--ink)}
 .mock .kne{margin:0;font-size:11px;color:var(--mute)}
-.mock .knl{display:grid;grid-auto-flow:column;grid-template-rows:repeat(8,24px);grid-template-columns:1fr 1fr;gap:3px 18px}
-.mock .knr{display:flex;align-items:center;gap:8px;min-width:0;font-size:11px;line-height:16px;white-space:nowrap}
+.mock .knl{display:grid;grid-auto-flow:column;grid-template-rows:repeat(8,24px);grid-template-columns:1fr 1fr;gap:3px 12px}
+.mock .knr{display:flex;align-items:center;gap:5px;min-width:0;font-size:11px;line-height:16px;white-space:nowrap}
 .mock .knn{color:var(--ink)}
-.mock .knb{color:var(--mute)}
+.mock .knb,.mock .kns{color:var(--mute)}
 .mock .knr .mini,.mock .knf .mini{display:flex;align-items:center}
 .mock .knr .mini{margin-left:auto;width:46px;padding:0;justify-content:center}
 .mock .knr .knc{margin-left:auto;width:42px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:3px;background:#3f7f20;color:var(--white)}
