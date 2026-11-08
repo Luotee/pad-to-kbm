@@ -53,6 +53,7 @@ fn baseline_config() -> Config {
         rumble_on_connect: true,
         stick_cal: Default::default(),
         last_pad: None,
+        hidhide_prompt_dismissed: false,
         lightbar: Default::default(),
     }
 }

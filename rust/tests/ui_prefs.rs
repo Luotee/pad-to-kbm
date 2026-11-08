@@ -151,13 +151,44 @@ fn set_ui_prefs_writes_last_pad_into_the_config_only() {
     let engine = Engine::spawn_with_fake_gamepad(Config::load_from_str(EXAMPLE).unwrap()).unwrap();
     let h = engine.handle();
     assert_eq!(get_ui_prefs_impl(&h).last_pad, None);
-    let changed = set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: Some("ns2_pro".into()) }).unwrap();
+    let changed = set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: Some("ns2_pro".into()), hidhide_prompt_dismissed: None }).unwrap();
     assert!(changed);
     assert_eq!(get_ui_prefs_impl(&h).last_pad.as_deref(), Some("ns2_pro"));
     assert_eq!(Config::load_from_path(&cfg_path).unwrap().last_pad.as_deref(), Some("ns2_pro"));
     assert_eq!(names(dir.path()), vec![CONFIG_FILE.to_string()], "no second file");
     // The same pad again writes nothing.
     let before = fs::read_to_string(&cfg_path).unwrap();
-    assert!(!set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: Some("ns2_pro".into()) }).unwrap());
+    assert!(!set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: Some("ns2_pro".into()), hidhide_prompt_dismissed: None }).unwrap());
+    assert_eq!(fs::read_to_string(&cfg_path).unwrap(), before);
+}
+
+#[test]
+fn hidhide_prompt_dismissed_defaults_false_and_round_trips() {
+    let (_dir, cfg_path) = dir_with_config(EXAMPLE);
+    let cfg = Config::load_from_str(EXAMPLE).unwrap();
+    assert!(!cfg.hidhide_prompt_dismissed, "missing key = false");
+    assert!(!serde_json::to_string(&cfg).unwrap().contains("hidhide_prompt_dismissed"));
+    let engine = Engine::spawn_with_fake_gamepad(cfg).unwrap();
+    let h = engine.handle();
+    // A last_pad-only write (what the board sends) leaves the flag alone.
+    assert!(set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: Some("ns_pro".into()), hidhide_prompt_dismissed: None }).unwrap());
+    assert_eq!(get_ui_prefs_impl(&h).hidhide_prompt_dismissed, Some(false));
+    let changed = set_ui_prefs_impl(&h, &cfg_path, UiPrefs { last_pad: None, hidhide_prompt_dismissed: Some(true) }).unwrap();
+    assert!(changed);
+    assert_eq!(get_ui_prefs_impl(&h).hidhide_prompt_dismissed, Some(true));
+    let reread = Config::load_from_path(&cfg_path).unwrap();
+    assert!(reread.hidhide_prompt_dismissed);
+    assert_eq!(reread.last_pad.as_deref(), Some("ns_pro"), "last_pad untouched");
+}
+
+#[test]
+fn same_value_does_not_write() {
+    let (_dir, cfg_path) = dir_with_config(EXAMPLE);
+    let engine = Engine::spawn_with_fake_gamepad(Config::load_from_str(EXAMPLE).unwrap()).unwrap();
+    let h = engine.handle();
+    let p = || UiPrefs { last_pad: None, hidhide_prompt_dismissed: Some(true) };
+    assert!(set_ui_prefs_impl(&h, &cfg_path, p()).unwrap());
+    let before = fs::read_to_string(&cfg_path).unwrap();
+    assert!(!set_ui_prefs_impl(&h, &cfg_path, p()).unwrap());
     assert_eq!(fs::read_to_string(&cfg_path).unwrap(), before);
 }

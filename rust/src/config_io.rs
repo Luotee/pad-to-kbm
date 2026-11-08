@@ -150,6 +150,11 @@ impl ConfigDoc {
         self.raw["last_pad"] = Value::from(pad);
     }
 
+    pub fn set_hidhide_prompt_dismissed(&mut self, v: bool) {
+        self.typed.hidhide_prompt_dismissed = v;
+        self.raw["hidhide_prompt_dismissed"] = Value::from(v);
+    }
+
     pub fn set_touchpad_click_freeze_enabled(&mut self, v: bool) {
         self.typed.touchpad_click_freeze_enabled = v;
         self.raw["touchpad_click_freeze_enabled"] = Value::from(v);

@@ -18,6 +18,10 @@ use std::path::Path;
 pub struct UiPrefs {
     #[serde(default)]
     pub last_pad: Option<String>,
+    /// v3.6.0: `Some(true)` = the HidHide prompt was put off; a missing key
+    /// on `set_ui_prefs` leaves it unchanged.
+    #[serde(default)]
+    pub hidhide_prompt_dismissed: Option<bool>,
 }
 
 /// The old ui-prefs files, newest first; the first readable one is used.

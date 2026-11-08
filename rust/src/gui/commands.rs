@@ -1043,7 +1043,13 @@ pub fn get_ui_prefs(engine: State<'_, Handle>) -> Result<crate::gui::ui_prefs::U
 
 /// Pure implementation of `get_ui_prefs`.
 pub fn get_ui_prefs_impl(engine: &Handle) -> crate::gui::ui_prefs::UiPrefs {
-    crate::gui::ui_prefs::UiPrefs { last_pad: engine.config_read().last_pad.clone() }
+    {
+        let cfg = engine.config_read();
+        crate::gui::ui_prefs::UiPrefs {
+            last_pad: cfg.last_pad.clone(),
+            hidhide_prompt_dismissed: Some(cfg.hidhide_prompt_dismissed),
+        }
+    }
 }
 
 /// Tauri command: remember the pad the board shows (`last_pad` in the
@@ -1070,12 +1076,23 @@ pub fn set_ui_prefs_impl(
     config_path: &Path,
     prefs: crate::gui::ui_prefs::UiPrefs,
 ) -> anyhow::Result<bool> {
-    let Some(pad) = prefs.last_pad else { return Ok(false) };
-    if engine.config_read().last_pad.as_deref() == Some(pad.as_str()) {
+    let (pad, dismissed) = {
+        let cfg = engine.config_read();
+        (
+            prefs.last_pad.filter(|p| cfg.last_pad.as_deref() != Some(p.as_str())),
+            prefs.hidhide_prompt_dismissed.filter(|v| cfg.hidhide_prompt_dismissed != *v),
+        )
+    };
+    if pad.is_none() && dismissed.is_none() {
         return Ok(false);
     }
     mutate_config(engine, config_path, |doc| {
-        doc.set_last_pad(&pad);
+        if let Some(pad) = &pad {
+            doc.set_last_pad(pad);
+        }
+        if let Some(v) = dismissed {
+            doc.set_hidhide_prompt_dismissed(v);
+        }
         Ok(())
     })?;
     Ok(true)

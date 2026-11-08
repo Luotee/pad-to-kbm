@@ -57,6 +57,10 @@ pub struct Config {
     /// file, padtokbm.ui.json (`gui::ui_prefs::absorb`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pad: Option<String>,
+    /// v3.6.0: the user pressed 「稍後」 on the HidHide install prompt, so it
+    /// no longer opens by itself. A UI hint; written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidhide_prompt_dismissed: bool,
     /// DualSense lightbar (v3.5.0); a missing key = the defaults.
     #[serde(default)]
     pub lightbar: crate::gamepad::lightbar::LightbarConfig,
@@ -752,6 +756,7 @@ mod tests {
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
         }
     }
@@ -888,6 +893,7 @@ mod tests {
             rumble_on_connect: true,
             stick_cal: Default::default(),
             last_pad: None,
+hidhide_prompt_dismissed: false,
             lightbar: Default::default(),
         }
     }
