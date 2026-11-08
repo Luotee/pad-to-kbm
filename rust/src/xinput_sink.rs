@@ -205,6 +205,15 @@ mod vigem {
         PadError::Other(format!("{what}: {e}"))
     }
 
+    impl Drop for VigemPad {
+        fn drop(&mut self) {
+            // `target` unplugs itself on drop; the slot bookkeeping must follow.
+            if self.target.is_some() {
+                set_own_slot(OwnPad::None);
+            }
+        }
+    }
+
     impl VirtualPad for VigemPad {
         fn plug(&mut self) -> Result<(), PadError> {
             if self.target.is_some() {
@@ -215,11 +224,25 @@ mod vigem {
                 e => other("ViGEmBus connect", e),
             })?;
             let mut t = Xbox360Wired::new(client, TargetId::XBOX360_WIRED);
-            t.plugin().map_err(|e| other("plug", e))?;
+            // A pad may appear in XInput any moment after plugin(): until its
+            // slot is known the Nano reader must treat every slot as maybe ours.
+            set_own_slot(OwnPad::Unknown);
+            t.plugin().map_err(|e| { set_own_slot(OwnPad::None); other("plug", e) })?;
             // From here on, dropping `t` unplugs it.
-            t.wait_ready().map_err(|e| other("wait_ready", e))?;
-            let tries = submit_when_ready(&mut t, &probe())?
-                + submit_when_ready(&mut t, &XGamepad::default())?;
+            let tries = t
+                .wait_ready()
+                .map_err(|e| other("wait_ready", e))
+                .and_then(|_| {
+                    Ok(submit_when_ready(&mut t, &probe())?
+                        + submit_when_ready(&mut t, &XGamepad::default())?)
+                });
+            let tries = match tries {
+                Ok(n) => n,
+                Err(e) => {
+                    set_own_slot(OwnPad::None);
+                    return Err(e);
+                }
+            };
             // Its XInput slot, so the Xbox Nano's XInput reader never takes it.
             let own = match t.get_user_index() {
                 Ok(i) => OwnPad::Slot(i),
@@ -283,6 +306,16 @@ mod tests {
         fn unplug(&mut self) {
             self.0.lock().unwrap().unplugs += 1;
         }
+    }
+
+    #[test]
+    fn own_slot_round_trips_through_every_state() {
+        set_own_slot(OwnPad::Unknown);
+        assert_eq!(own_slot(), OwnPad::Unknown);
+        set_own_slot(OwnPad::Slot(2));
+        assert_eq!(own_slot(), OwnPad::Slot(2));
+        set_own_slot(OwnPad::None);
+        assert_eq!(own_slot(), OwnPad::None);
     }
 
     #[test]

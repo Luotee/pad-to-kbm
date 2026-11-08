@@ -344,7 +344,8 @@ regresses real, observed bugs the codebase already fixed once:
    Microsoft's Xbox driver, `…&REV_0619&<addr>&COL01&IG_00`) is hidden and
    remembered.
    Connection state still comes from the HID
-   stream (iron rule 11).
+   stream (iron rule 11) or, for a Nano under Microsoft's driver, from
+   XInput.
    Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window

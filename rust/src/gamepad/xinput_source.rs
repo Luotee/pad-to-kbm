@@ -20,7 +20,8 @@
 //!   `PadState` (`to_pad_state`, the same convention as `decode_xbox_bt`).
 //! * Connection state is XInput's: the first successful read connects, a
 //!   failed read (`ERROR_DEVICE_NOT_CONNECTED`) ends the session (iron rule
-//!   11). Nothing is ever written to the pad (no rumble, no power-off).
+//!   11). Nothing is ever written to the pad (no rumble; a manual disconnect only ends the session, the Nano cannot be
+//!   turned off from the PC).
 //!
 //! Share (button 29) is not in any XInput state: it never reaches the
 //! mapper. macOS: Phase 2 TBD, like the rest of the Nano.
@@ -198,7 +199,7 @@ pub use win::RealXInput;
 mod win {
     use super::{SlotInfo, XInputApi, XRead};
     use std::sync::OnceLock;
-    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
 
     const ERROR_DEVICE_NOT_CONNECTED: u32 = 1167;
 
@@ -264,7 +265,7 @@ mod win {
             // of the name pointer (MAKEINTRESOURCEA); every pointer returned
             // is cast to the documented signature of that export.
             unsafe {
-                let module = LoadLibraryW(name.as_ptr());
+                let module = LoadLibraryExW(name.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32);
                 if module.is_null() {
                     tracing::warn!("XInput: xinput1_4.dll not loaded; the Xbox Nano on Microsoft's driver cannot be read");
                     return None;
