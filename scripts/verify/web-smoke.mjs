@@ -241,6 +241,84 @@ function tauriMock({ config, version }) {
   };
 }
 
+// v3.7.0 pad-art measurements, run in the page on the board's own <svg class="pad"> (paths carry
+// data-role, labels sit in <g data-glyph>). Ports of the assets' tools/labels.html analyse() and
+// tools/lineup4.html metrics(), in pad units:
+// - labels: each L／R label's ink to the nearest edge of its visible key face, on an 8x raster with a
+//   chamfer distance transform. Shoulder face = fill minus its own outline; trigger face = fill minus its
+//   outline, the body and the shoulder (fill + outline). The right side is mirrored onto the left.
+// - gap: the shoulder band (bump / bumpLite / trig, fill + outline) to the nearest key (face, dkey,
+//   dcross, small, well, cap; fill + outline) on a 4x raster. `skip` lists centres of small keys left out
+//   of `keys` (DualSense Create / Options, which the user accepted at their measured distance); the
+//   touchpad is not a key here (the DualSense shoulder is drawn to meet it). `skipped` = those keys alone.
+function padArtMetrics(opt) {
+  const root = document.querySelector('#board svg.pad');
+  const paths = [...root.querySelectorAll('path[data-role]')];
+  const matOf = el => { const m = root.getScreenCTM().inverse().multiply(el.getScreenCTM()); return new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]); };
+  const MIR = new DOMMatrix([-1, 0, 0, 1, 300, 0]);
+  const centre = el => { const r = el.getBBox(); return matOf(el).transformPoint(new DOMPoint(r.x + r.width / 2, r.y + r.height / 2)); };
+  function raster(K, X0, Y0, W, H) {
+    const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c.getContext('2d', { willReadFrequently: true }); };
+    const draw = (c, el, mode, pre) => {
+      let m = matOf(el); if (pre) m = pre.multiply(m);
+      c.setTransform(K * m.a, K * m.b, K * m.c, K * m.d, K * (m.e - X0), K * (m.f - Y0));
+      const p = new Path2D(el.getAttribute('d')), sw = +(el.getAttribute('stroke-width') || el.parentNode.getAttribute('stroke-width') || 0);
+      c.fillStyle = '#000'; c.strokeStyle = '#000'; c.lineJoin = 'round'; c.lineCap = 'round';
+      if (mode !== 'stroke') c.fill(p);
+      if (mode !== 'fill' && sw) { c.lineWidth = sw; c.stroke(p); }
+    };
+    const bits = c => { const d = c.getImageData(0, 0, W, H).data, a = new Uint8Array(W * H); for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] > 100 ? 1 : 0; return a; };
+    // Chamfer distance (px) to the nearest pixel whose value is `to` (0: inside distance of a set region).
+    const dist = (m, to) => {
+      const INF = 1e9, d = new Float32Array(W * H), b = Math.SQRT2;
+      for (let i = 0; i < d.length; i++) d[i] = m[i] === to ? 0 : INF;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (!d[i]) continue; let v = d[i];
+        if (x > 0) v = Math.min(v, d[i - 1] + 1); if (y > 0) { v = Math.min(v, d[i - W] + 1); if (x > 0) v = Math.min(v, d[i - W - 1] + b); if (x < W - 1) v = Math.min(v, d[i - W + 1] + b); } d[i] = v; }
+      for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) { const i = y * W + x; if (!d[i]) continue; let v = d[i];
+        if (x < W - 1) v = Math.min(v, d[i + 1] + 1); if (y < H - 1) { v = Math.min(v, d[i + W] + 1); if (x < W - 1) v = Math.min(v, d[i + W + 1] + b); if (x > 0) v = Math.min(v, d[i + W - 1] + b); } d[i] = v; }
+      return d;
+    };
+    return { mk, draw, bits, dist };
+  }
+  const labels = [];
+  {
+    const K = 8, R = raster(K, -30, -30, 190 * K, 160 * K);
+    for (const right of [false, true]) {
+      const pre = right ? MIR : null, mine = (...roles) => paths.filter(e => roles.includes(e.dataset.role) && (centre(e).x < 150) !== right);
+      const trig = R.mk(), trigS = R.mk(), cover = R.mk(), front = R.mk(), frontS = R.mk();
+      for (const e of mine('trig')) { R.draw(trig, e, 'fill', pre); R.draw(trigS, e, 'stroke', pre); }
+      for (const e of [...paths.filter(e => e.dataset.role === 'body'), ...mine('bump', 'bumpLite')]) R.draw(cover, e, 'both', pre);
+      for (const e of mine('bump', 'bumpLite')) { R.draw(front, e, 'fill', pre); R.draw(frontS, e, 'stroke', pre); }
+      const T = R.bits(trig), TS = R.bits(trigS), C = R.bits(cover), F = R.bits(front), FS = R.bits(frontS);
+      const visT = new Uint8Array(T.length), visF = new Uint8Array(T.length);
+      for (let i = 0; i < T.length; i++) { visT[i] = T[i] && !TS[i] && !C[i] ? 1 : 0; visF[i] = F[i] && !FS[i] ? 1 : 0; }
+      const dT = R.dist(visT, 0), dF = R.dist(visF, 0);
+      for (const g of root.querySelectorAll('g[data-glyph]')) {
+        const role = g.dataset.glyph;
+        if (!/^(trigT|bumpT|bumpLiteT)$/.test(role) || (+g.dataset.x >= 150) !== right) continue;
+        const ink = R.mk(); for (const p of g.querySelectorAll('path')) R.draw(ink, p, 'stroke', pre);
+        const I = R.bits(ink), D = role === 'trigT' ? dT : dF;
+        let clr = 1e9, n = 0; for (let i = 0; i < I.length; i++) if (I[i]) { n++; clr = Math.min(clr, D[i]); }
+        labels.push({ at: (right ? 'R ' : 'L ') + role, clr: n ? +(clr / K).toFixed(2) : -1 });
+      }
+    }
+  }
+  let gap = null;
+  {
+    const K = 4, R = raster(K, -40, -40, 380 * K, 300 * K), KEY = ['face', 'dkey', 'dcross', 'small', 'well', 'cap'], BAND = ['bump', 'bumpLite', 'trig'];
+    const skipped = e => e.dataset.role === 'small' && (opt.skip || []).some(q => { const c = centre(e); return Math.abs(c.x - q[0]) <= 1 && Math.abs(c.y - q[1]) <= 1; });
+    const keys = R.mk(), skip = R.mk(), band = R.mk();
+    for (const e of paths) {
+      if (BAND.includes(e.dataset.role)) R.draw(band, e, 'both');
+      if (KEY.includes(e.dataset.role)) R.draw(skipped(e) ? skip : keys, e, 'both');
+    }
+    const B = R.bits(band), near = d => { let v = -K; for (let i = 0; i < B.length; i++) if (B[i]) v = v < 0 ? d[i] : Math.min(v, d[i]); return +(v / K).toFixed(2); };   // -1: no shoulder drawn
+    const S = R.bits(skip);
+    gap = { keys: near(R.dist(R.bits(keys), 1)), skipped: S.some(x => x) ? near(R.dist(S, 1)) : null };
+  }
+  return { labels, gap };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const calls = page => page.evaluate(() => window.__mockCalls);
@@ -1043,7 +1121,7 @@ try {
         const prev = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbcpop .lbprev')).backgroundColor);
         const slot = await page.evaluate(() => getComputedStyle(document.querySelector('#board .lbpop .lbadd[data-which="kbm"] i')).backgroundColor);
         check(`${strip} drag mid-drag: preview swatch and 自訂 slot show the live colour`, prev === wantRgb && slot === wantRgb, `${prev} / ${slot} want ${wantRgb}`);
-        const padFill = await page.evaluate(() => { const r = document.querySelector('#board .lbarsvg .lbar rect[opacity]') || document.querySelector('#board .lbarsvg .lbar rect'); return r ? getComputedStyle(r).fill : ''; });
+        const padFill = await page.evaluate(() => { const r = document.querySelector('#board .lbarsvg .lbar [opacity]') || document.querySelector('#board .lbarsvg .lbar polygon, #board .lbarsvg .lbar rect'); return r ? getComputedStyle(r).fill : ''; });
         check(`${strip} drag mid-drag: pad-art strip follows`, padFill === wantRgb, `${padFill} want ${wantRgb}`);
         await page.mouse.up();
         await settle(page);
@@ -1955,6 +2033,35 @@ try {
     await page.click('#board [data-act="setclose"]');
     await settle(page);
     await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+  }
+
+  // ── v3.7.0: photo-traced pad art ──────────────────────────────────────────
+  // DualSense = photo art + shoulder F, Switch Pro / Switch 2 Pro = photo art + shoulder A (user Q13 / Q14):
+  // every L／R label sits inside its visible key face, and no shoulder sticks to a key.
+  {
+    const SHOULDER_GAP = { dualsense: { min: 5, skip: [[82, 50.5], [218, 50.5]] }, ns_pro: { min: 4 }, ns2_pro: { min: 4 } };
+    const pads = await page.locator('#board .hdr [data-pad]').evaluateAll(els => els.map(e => e.dataset.pad));
+    for (const pad of pads) {
+      await page.click(`#board .hdr [data-pad="${pad}"]`);
+      await settle(page);
+      await page.screenshot({ path: path.join(outDir, `web-pad-${pad}.png`) });
+      const m = await page.evaluate(padArtMetrics, { skip: SHOULDER_GAP[pad]?.skip });
+      const lab = m.labels.map(l => `${l.at} ${l.clr}`).join(', ');
+      check(`${pad}: every L／R label ≥ 1.45 inside its visible key face (8x raster)`, m.labels.length === 4 && m.labels.every(l => l.clr >= 1.45), lab || 'no labels');
+      if (SHOULDER_GAP[pad]) {
+        const g = SHOULDER_GAP[pad];
+        check(`${pad}: L／R shoulders ≥ ${g.min} from every key${g.skip ? ' but Create / Options' : ''}`, m.gap.keys >= g.min,
+          `keys ${m.gap.keys}${g.skip ? `, Create / Options ${m.gap.skipped}` : ''}`);
+      }
+      if (pad === 'dualsense') {
+        // The light strips run along the touchpad's slanted sides: left edge 88.6 -> 96.4 over y 38 -> 84, 3 wide, mirrored.
+        const polys = await page.evaluate(() => [...document.querySelectorAll('#board .lbarsvg .lbar polygon:not([opacity])')].map(p => p.getAttribute('points').split(/[ ,]/).map(Number)));
+        const want = [[88.6, 38, 91.6, 38, 99.4, 84, 96.4, 84], [211.4, 38, 208.4, 38, 200.6, 84, 203.6, 84]];
+        check('DualSense light strips follow the touchpad sides', polys.length === 2 && polys.every((p, i) => p.length === 8 && p.every((v, k) => Math.abs(v - want[i][k]) < 1e-6)), JSON.stringify(polys));
+      }
+    }
+    await page.click('#board .hdr [data-pad="dualsense"]');
     await settle(page);
   }
 

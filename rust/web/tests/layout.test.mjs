@@ -76,3 +76,39 @@ test('stick_cross_keeps_its_middle_slot', () => {
 test('pad_art_has_no_switch_group', () => {
   for (const pad of PADS) assert.ok(!layoutFor(pad, MODES[0]).groups.some(g => g.kind === 'tpsw'), pad);
 });
+
+// v3.7.0: the three photo-traced pads end every line at the key's photo position (padart.js padAnchors,
+// pad units; the pad sits at (340, 150) on the board, ends on half units). R-side lines mirror the left anchor.
+test('photo_routes_end_at_the_pad_anchors', async () => {
+  const { padAnchors } = await import('../board/padart.js');
+  assert.equal(typeof padAnchors, 'function', 'padart.js exports padAnchors');
+  const B = q => [Math.round((q[0] + 340) * 2) / 2, Math.round((q[1] + 150) * 2) / 2];
+  const MIRROR = { zr: 'zl', r1: 'l1', gr: 'gl' };
+  for (const pad of PADS) for (const modes of MODES) {
+    const A = padAnchors(pad);
+    for (const rt of layoutFor(pad, modes).routes) {
+      const a = A[rt.id] || (MIRROR[rt.id] && [300 - A[MIRROR[rt.id]][0], A[MIRROR[rt.id]][1]]);
+      assert.ok(a, `${pad} ${rt.id} has an anchor`);
+      const end = rt.pts[rt.pts.length - 1], want = B(a), prev = rt.pts[rt.pts.length - 2];
+      // A straight drop from a slot keeps the slot's column when the key is at most 6 off it (C, PS).
+      const dx = prev[0] === end[0] && rt.pts.length === 2 ? 6 : 0;
+      assert.ok(end[1] === want[1] && Math.abs(end[0] - want[0]) <= dx, `${pad} ${rt.id} ends ${end} want ${want}`);
+    }
+  }
+  // DualSense Create / Options lines stop at the key's top edge (r 2.5 + 4 short of its centre, top at y 44).
+  for (const id of ['share', 'opt']) assert.equal(layoutFor('dualsense', MODES[0]).routes.find(r => r.id === id).r, 2.5, id);
+  // Switch 2 Pro: GL / GR beside the grips, one level line to the back key's visible corner.
+  const ns2 = layoutFor('ns2_pro', MODES[0]);
+  assert.deepEqual(ns2.routes.find(r => r.id === 'gl').pts, [[319, 362], [401, 362]]);
+  assert.deepEqual(ns2.routes.find(r => r.id === 'gr').pts, [[661, 362], [579, 362]]);
+  assert.deepEqual(['cap', 'home'].map(id => ns2.groups.find(g => g.id === id).x), [468, 512]);
+});
+
+// The approved mockup switched art with window.__* flags; the shipped board keeps only the chosen art.
+test('board_art_has_no_window_switches', async () => {
+  const fs = await import('node:fs');
+  for (const f of ['padart.js', 'layout.js', 'lightbar.js']) {
+    const src = fs.readFileSync(new URL('../board/' + f, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /window\.__/, f);
+  }
+});

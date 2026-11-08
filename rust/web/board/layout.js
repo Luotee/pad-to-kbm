@@ -2,6 +2,8 @@
 // (keymap-board.html): groups of slots around the pad and orthogonal guide
 // lines. 980×640 board units. The mockup's layout editor is not shipped.
 
+import { padAnchors } from './padart.js';
+
 // A 4-slot group with no middle slot packs tight, like the MapleStory quick slot: up and down
 // meet in the centre column, every seam 2px (the plate under each slot shows through).
 function diamond(cx, cy, keys, tags) {
@@ -51,6 +53,32 @@ function freshPath(f, d, side) {
   var fary = (d[1] - f[1]) * outy > o * 2;
   var my = fary ? snap((f[1] + d[1]) / 2) : f[1] + outy * o;
   return [f, [f[0], my], [d[0], my], d];
+}
+
+// v3.7.0: the photo-traced pads put their keys elsewhere, so each line keeps its start and first leg and
+// its end moves to the key's anchor (padart.js padAnchors, pad units; the pad sits at (340, 150), ends on
+// half units). The last leg turns to reach it; a straight drop keeps its column when the key is at most 6
+// off it, else it gains a level leg half way.
+function retarget(r, a) {
+  var p = r.pts, n = p.length;
+  if (n === 4) {
+    if (p[0][0] === p[1][0]) { p[2] = [a[0], p[1][1]]; p[3] = a; } else { p[2] = [p[1][0], a[1]]; p[3] = a; }
+  } else if (n === 3) { p[1] = [a[0], p[0][1]]; p[2] = a; }
+  else if (n === 2) {
+    if (p[0][1] === p[1][1]) r.pts = [p[0], [a[0], p[0][1]]];
+    else if (Math.abs(a[0] - p[0][0]) <= 6) r.pts = [p[0], [p[0][0], a[1]]];
+    else { var mid = snap((p[0][1] + a[1]) / 2); r.pts = [p[0], [p[0][0], mid], [a[0], mid], a]; }
+  }
+}
+function photoRoutes(pad, R) {
+  var A = padAnchors(pad);
+  if (!A) return;
+  var B = function (q) { return [Math.round((q[0] + 340) * 2) / 2, Math.round((q[1] + 150) * 2) / 2]; }, M = function (q) { return [300 - q[0], q[1]]; };
+  var map = Object.assign({}, A, { zr: M(A.zl), r1: M(A.l1), gr: A.gl && M(A.gl) });
+  R.forEach(function (r) {
+    if (map[r.id]) retarget(r, B(map[r.id]));
+    if (pad === 'dualsense' && (r.id === 'share' || r.id === 'opt')) r.r = 2.5;   // stop at Create / Options' top edge
+  });
 }
 
 function defaultLayout(pad) {
@@ -105,11 +133,17 @@ function defaultLayout(pad) {
       G.push({ id: 'c', kind: 'slot', x: 491, y: 372, keys: ['32'], tags: ['C'] },
         { id: 'gl', kind: 'slot', x: 344, y: 372, keys: ['30'], tags: ['GL'] },
         { id: 'gr', kind: 'slot', x: 636, y: 372, keys: ['31'], tags: ['GR'] });
-      R.push({ id: 'c', g: 'c', side: 't', pts: [[491, 353], [491, 256]], r: 6 },
-        { id: 'gl', g: 'gl', side: 'r', pts: [[363, 372], [418, 372], [418, 340]], r: 7 },
-        { id: 'gr', g: 'gr', side: 'l', pts: [[617, 372], [562, 372], [562, 340]], r: 7 });
+      // The traced body has longer grips: GL / GR sit beside them, one level line to each back key's
+      // visible corner; Cap / Home move in over their keys and drop straight down.
+      G[G.length - 2].x = 300; G[G.length - 1].x = 680; G[G.length - 2].y = 362; G[G.length - 1].y = 362;
+      G.forEach(function (g) { if (g.id === 'cap') g.x = 468; if (g.id === 'home') g.x = 512; });
+      R.forEach(function (r) { if (r.id === 'cap' || r.id === 'home') { var x = r.id === 'cap' ? 468 : 512; r.pts = r.pts.map(function (q) { return [x, q[1]]; }); } });
+      R.push({ id: 'c', g: 'c', side: 't', pts: [[491, 353], [490, 295]], r: 6 },
+        { id: 'gl', g: 'gl', side: 'r', pts: [[319, 362], [401, 362]], m: 'c' },
+        { id: 'gr', g: 'gr', side: 'l', pts: [[661, 362], [579, 362]], m: 'c' });
     }
   }
+  photoRoutes(pad, R);
   return { groups: G, routes: R };
 }
 
