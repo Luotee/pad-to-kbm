@@ -92,6 +92,7 @@ button:focus-visible,.mock .rng:focus-visible{outline:3px solid var(--gold);outl
 .mock .pwr{display:flex;align-items:center;justify-content:center;width:24px;padding:0;border:2px solid #11141a;border-left:1px solid rgba(46,56,80,.35);border-radius:0 4px 4px 0;background:#e8ebf2;color:var(--ink);cursor:pointer}
 .mock .pdw.act .pwr{background:var(--pinkhi);color:var(--white);border-color:#6e2a46}
 .mock .pwr:hover{background:var(--red);color:var(--white)}
+.mock .pwr:disabled,.mock .pwr:disabled:hover,.mock .pdw.act .pwr:disabled,.mock .pdw.act .pwr:disabled:hover{opacity:.45;cursor:default}
 .mock .b-cancel{background:#b0520f}
 .mock .note{font-size:11px;color:#2f6b1e}
 .m3{position:relative;width:260px;height:200px;flex:none}
@@ -436,6 +437,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 .mock .pdw{position:relative}.mock .pdw.c .pd{border-right:1px solid #656565;border-radius:4px 4px 0 0;padding-right:28px}.mock .pdw.act.c .pd{border-color:#0b0000}
 .mock .pwr,.mock .pdw.act .pwr{position:absolute;right:6px;bottom:7px;width:16px;height:16px;padding:0;border:1px solid #0e0000;border-radius:2px;background:linear-gradient(#de7b21,#fa9a52);color:#fff;box-shadow:inset 1px 1px 0 #ffd2a8}
 .mock .pwr svg{display:block}.mock .pwr:hover,.mock .pdw.act .pwr:hover{background:linear-gradient(#c8650f,#e8822f);color:#fff}
+.mock .pwr:disabled,.mock .pwr:disabled:hover,.mock .pdw.act .pwr:disabled,.mock .pdw.act .pwr:disabled:hover{background:#9a9a9a;border-color:#4a4a4a;box-shadow:none;opacity:.5;cursor:default}
 /* bottom area: three cards */
 /* v3.6.0 header, all at 1x: lamp 7 px from the tab edge, 6 to the name, 7 right of the name on a tab without the power key
    (1 border + 6 padding); header gap 8, side padding 12 (tabs start at window x=19, gear ends at 975); switch label to

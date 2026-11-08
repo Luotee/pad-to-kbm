@@ -109,7 +109,7 @@ is renamed to `padtokbm.json`, and a backup `dualsense-mapper.json.bak` is kept.
 
 ### Can I turn the controller off when I'm not using it?
 
-Yes, click the power button next to the controller's name. The pairing is kept; press PS / HOME to reconnect. Not the Xbox Nano: its tab has no power button (the app cannot turn a Bluetooth LE controller off); hold its Xbox button for about 6 seconds to turn it off, press it again to turn it on.
+Yes, click the power button next to the controller's name. The pairing is kept; press PS / HOME to reconnect. Not the Xbox Nano: its tab's power button is greyed out (the app cannot turn a Bluetooth LE controller off); hold its Xbox button for about 6 seconds to turn it off, press it again to turn it on.
 
 ### The Xbox Nano's Xbox button opens the Xbox Game Bar?
 

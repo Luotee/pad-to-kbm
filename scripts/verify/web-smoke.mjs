@@ -1046,8 +1046,8 @@ try {
       check(`header[${pad}]: first tab at x=19`, m.tabs[0].left === 19, J);
       check(`header[${pad}]: icon 7 from the tab edge, name 6 after it`, m.tabs.every(t => t.iconL === 7 && t.gap === 6), J);
       check(`header[${pad}]: unselected tabs 7 px right of the name`, m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
-      // The Xbox Nano never has one (Bluetooth LE: the app cannot turn it off), selected or not.
-      check(`header[${pad}]: power key only on the selected tab, never on the Nano`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad && q !== 'xbox_nano' ? 1 : 0))), J);
+      // The Nano has one too, greyed out and disabled (Bluetooth LE: the app cannot turn it off).
+      check(`header[${pad}]: power key only on the selected tab (greyed out on the Nano)`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
       check(`header[${pad}]: tabs, segments, gear, lamps on whole pixels; 關 39 / 鍵鼠 59 wide`, m.ints.length === 0 && m.offW === 39 && m.kbmW === 59 && !!sel, J);
       if (pad === 'xbox_nano') {
         // The Nano on 手把: the joined Xbox／手把 option lit, the header still fits and the gear stays put.
@@ -1078,9 +1078,15 @@ try {
     const segsN = () => page.locator('#board .omode button').evaluateAll(els => els.map(e => ({
       cls: e.className, mode: e.dataset.mode, text: e.textContent.trim(), svg: e.querySelectorAll('svg').length, on: e.getAttribute('aria-pressed') })));
     const joined = () => page.evaluate(() => { const j = document.querySelector('#board .omode .xjoin'); return j && { on: j.classList.contains('on'), w: j.getBoundingClientRect().width, n: j.querySelectorAll('button').length }; });
-    // No ⏻ on the Nano: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
-    check('Nano tab: connected and selected, no power key', (await page.locator('#board .hdr .pwr').count()) === 0 &&
-      (await page.locator('#board .pdw.act [data-pad="xbox_nano"]').count()) === 1);
+    // ⏻ on the Nano is shown but greyed out: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
+    check('Nano tab: connected and selected, one power key, disabled, exact title',
+      (await page.locator('#board .hdr .pwr').count()) === 1 &&
+      (await page.locator('#board .pdw.act [data-pad="xbox_nano"]').count()) === 1 &&
+      await page.locator('#board .hdr .pwr').isDisabled() &&
+      (await page.locator('#board .hdr .pwr').getAttribute('title')) === 'Xbox Nano 無法從電腦關機：請長按 Xbox 鍵約 6 秒');
+    const dcBefore = await countCalls(page, 'disconnect_gamepad');
+    await page.locator('#board .hdr .pwr').click({ force: true });
+    check('Nano ⏻ click sends no disconnect_gamepad', (await countCalls(page, 'disconnect_gamepad')) === dcBefore);
     const sg = await segsN();
     check('Nano: four segments 關／鍵鼠／Xbox／手把, each with its icon',
       JSON.stringify(sg.map(x => x.text)) === '["關","鍵鼠","Xbox","手把"]' && sg.every(x => x.svg === 1), JSON.stringify(sg));

@@ -108,12 +108,14 @@ export function render(st) {
   const pad = st.pad, cfg = st.config, modes = triggerModes(cfg, pad), L = layoutFor(pad, modes), b = boardBinds(cfg, pad);
   let h = '<header class="hdr"><div class="ttl">按鍵設定</div><div class="pads">';
   for (const p of PADS) {
-    // No power key on the Xbox Nano: the app cannot turn a Bluetooth LE pad off (it would only reconnect).
-    const c = st.connected.has(p), act = pad === p, pwr = c && act && p !== 'xbox_nano';
+    // The Xbox Nano's power key is greyed out and disabled: the app cannot turn a Bluetooth LE pad off.
+    const c = st.connected.has(p), act = pad === p, pwr = c && act, nano = p === 'xbox_nano';
     h += '<span class="pdw' + (act ? ' act' : '') + (c ? ' c' : '') + '"><button type="button" class="pd' + (act ? ' act' : '') + '" data-pad="' + p +
       '" aria-pressed="' + act + '" aria-label="' + PAD_NAMES[p] + (c ? '（已連線）' : '（未連線）') + '"><span class="live' + (c ? '' : ' idle') + '"></span><span>' +
       PAD_NAMES[p] + '</span></button>' +
-      (pwr ? '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>' : '') + '</span>';
+      (pwr ? (nano
+        ? '<button type="button" class="pwr" disabled aria-label="斷開 ' + PAD_NAMES[p] + '（無法使用）" title="Xbox Nano 無法從電腦關機：請長按 Xbox 鍵約 6 秒">' + ICON.power + '</button>'
+        : '<button type="button" class="pwr" data-act="cut" data-cutpad="' + p + '" aria-label="斷開 ' + PAD_NAMES[p] + '" title="斷開手把">' + ICON.power + '</button>') : '') + '</span>';
   }
   // The DualSense touchpad-cursor switch sits left of 連線震動 (reskin Q18), so the other controls keep
   // their place when it comes and goes; it locks with the board outside 鍵鼠 (events.js LOCKED).

@@ -39,9 +39,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controller, so both let the game read the Nano itself (no virtual pad, no
   ViGEmBus prompt) and light up together. An `output_mode` of `xbox` for the
   Nano reads as `pad`.
-- The Xbox Nano tab has no ⏻: the app cannot turn a Bluetooth LE controller
-  off (it would only reconnect). Turn it off on the controller (hold the Xbox
-  button for about 6 seconds).
+- The Xbox Nano tab shows the ⏻ greyed out and not clickable (title 「Xbox Nano
+  無法從電腦關機：請長按 Xbox 鍵約 6 秒」): the app cannot turn a Bluetooth LE
+  controller off (it would only reconnect). Turn it off on the controller
+  (hold the Xbox button for about 6 seconds).
 
 ### Migration
 
@@ -52,7 +53,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   automatic power-off only drops a classic Bluetooth link.
   When it was on while it got hidden, the 鍵鼠 「再連一次」 banner says 「再連一次
   Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開」
-  (no ⏻).
+  (⏻ greyed out).
 - The Xbox key may open the Xbox Game Bar: that is Windows (Settings →
   Gaming → Game Bar), not PadToKBM.
 - A config written by a v3.7.0 test build may remember all four of the
