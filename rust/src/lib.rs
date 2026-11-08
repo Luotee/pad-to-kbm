@@ -16,6 +16,7 @@ pub mod mapper;
 pub mod pad_bindings;
 pub mod platform;
 pub mod safety;
+pub mod shutdown;
 pub mod app;
 pub mod vigem_setup;
 pub mod virtual_pad;

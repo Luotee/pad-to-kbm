@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::safety;
+use crate::shutdown::Cleanup;
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -34,17 +35,18 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
         .config_path
         .as_deref()
         .and_then(|p| crate::hider::start_for(&engine.handle(), p, opts.dry_run));
+    // engine.shutdown() signals the engine thread and joins it; the engine
+    // thread's graceful-shutdown path drains macros and then drops
+    // KeyboardSink, which calls release_all_held() — Iron Rule #3. Then the
+    // HidHide worker undoes its hiding. Ctrl-C runs it below; closing the
+    // console window (and, where Windows sends them, logoff / shutdown) runs
+    // it from the console handler before the process ends.
+    let cleanup = Arc::new(Cleanup::new(engine, hider));
+    #[cfg(windows)]
+    crate::shutdown::install_console_handler(cleanup.clone());
     while !opts.shutdown.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(50));
     }
-    // shutdown() signals the engine thread and joins it; the engine thread's
-    // graceful-shutdown path drains macros and then drops KeyboardSink, which
-    // calls release_all_held() — Iron Rule #3 guaranteed.
-    engine.shutdown();
-    // Ctrl-C ends here; closing the console window kills the process, and
-    // the next start undoes the hiding from the state file.
-    if let Some(h) = hider {
-        h.stop();
-    }
+    cleanup.run("Ctrl-C");
     Ok(())
 }

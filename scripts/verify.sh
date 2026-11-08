@@ -7,8 +7,9 @@
 #                  every test exe runs natively on Windows via WSL interop
 #   gui-smoke      GUI exe build, launched alone from a fresh %LOCALAPPDATA%\Temp
 #                  dir: window up, first-run config written, config hot-edit
-#                  (valid + invalid) does not kill the process, a graceful
-#                  window close exits through the engine shutdown
+#                  (valid + invalid) does not kill the process, a session end
+#                  (WM_ENDSESSION) runs the cleanup once, a graceful window
+#                  close exits through the engine shutdown
 #   web            headless Chromium click-through of rust/web/ with a mocked
 #                  window.__TAURI__ (scripts/verify/web-smoke.mjs)
 #
@@ -393,6 +394,42 @@ if (\$r.ReturnValue -eq 0) { \$r.ProcessId } else { Write-Error \"Win32_Process.
     GUI_PID="$pid"
 }
 
+# Send the main window of <pid> what Windows sends at a logoff
+# (WM_QUERYENDSESSION, then WM_ENDSESSION wParam=TRUE, lParam
+# ENDSESSION_LOGOFF) and wait for the cleanup line in <dir>\stdout.log.
+# Prints what happened; non-zero if the window did not agree to end the
+# session or the line never came.
+gui_session_end() {
+    local pid="$1" win_dir="$2" ps1 out deadline
+    ps1="$GUI_TMP_LINUX/session-end.ps1"
+    cat >"$ps1" <<'PS1'
+param([int]$Id)
+Add-Type -Namespace DsmVerify -Name User32 -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);'
+$h = (Get-Process -Id $Id).MainWindowHandle
+$logoff = [IntPtr][long]2147483648
+$q = [DsmVerify.User32]::SendMessageW($h, 0x0011, [IntPtr]::Zero, $logoff)
+$e = [DsmVerify.User32]::SendMessageW($h, 0x0016, [IntPtr]1, $logoff)
+"hwnd=$h queryendsession=$q endsession=$e"
+PS1
+    out="$( (cd /mnt/c && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+        -File "$win_dir\\session-end.ps1" -Id "$pid" 2>&1) | tr -d '\r')"
+    echo "$out"
+    if ! echo "$out" | grep -q "queryendsession=1 "; then
+        echo "the window did not answer WM_QUERYENDSESSION with TRUE"
+        return 1
+    fi
+    deadline=$((SECONDS + GUI_CLOSE_TIMEOUT_S))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if grep -q "cleanup (session end): engine shut down" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
+            echo "stdout.log: $(grep "cleanup (" "$GUI_TMP_LINUX/stdout.log" | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')"
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "no 'cleanup (session end): engine shut down' in stdout.log within ${GUI_CLOSE_TIMEOUT_S}s"
+    return 1
+}
+
 layer_gui_smoke() {
     local log hint rc exe running localappdata stamp win_dir win_exe cfg
     local title="" deadline msg
@@ -510,6 +547,18 @@ layer_gui_smoke() {
         return
     fi
 
+    # Windows logging off / shutting down while the app is open: the main
+    # window's WM_ENDSESSION must run the cleanup (engine shutdown, then the
+    # HidHide undo; a --dry-run has no hider) before it returns.
+    echo "=== session end (WM_QUERYENDSESSION + WM_ENDSESSION, ENDSESSION_LOGOFF)" >>"$log"
+    if ! msg="$(gui_session_end "$GUI_PID" "$win_dir" 2>&1)"; then
+        echo "$msg" >>"$log"
+        gui_cleanup
+        record gui-smoke FAIL "session end: $msg"
+        return
+    fi
+    echo "$msg" >>"$log"
+
     # ✕ / tray Quit end the Tauri event loop; the engine must still shut down
     # (iron rule 3: held keys released, lightbar exit frame) before the exit.
     echo "=== graceful close (CloseMainWindow)" >>"$log"
@@ -531,6 +580,20 @@ layer_gui_smoke() {
         record gui-smoke FAIL "graceful close exited without the engine shutdown (no 'engine shut down' in stdout.log)"
         return
     fi
+    # The session-end cleanup already ran; the close after it must not run
+    # it again (nor panic).
+    local cleanups
+    cleanups="$(grep -c "cleanup (" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null)"
+    if [ "$cleanups" != 1 ]; then
+        gui_cleanup
+        record gui-smoke FAIL "expected exactly one 'cleanup (' line in stdout.log, found ${cleanups:-0}"
+        return
+    fi
+    if grep -q "panicked" "$GUI_TMP_LINUX/stdout.log" 2>/dev/null; then
+        gui_cleanup
+        record gui-smoke FAIL "the exe panicked (see stdout.log in the log)"
+        return
+    fi
 
     gui_cleanup
 
@@ -543,7 +606,7 @@ layer_gui_smoke() {
         record gui-smoke FAIL "legacy config: $LEGACY_MSG"
         return
     fi
-    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; graceful close ran the engine shutdown; $LEGACY_MSG"
+    record gui-smoke PASS "window '$title'; first-run config OK; survived valid + invalid hot-edit; graceful close ran the engine shutdown; session end ran the cleanup once; $LEGACY_MSG"
 }
 
 # ─── Layer: web ──────────────────────────────────────────────────────────────

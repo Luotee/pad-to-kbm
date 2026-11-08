@@ -3,14 +3,17 @@
 //! `run` is the top-level entry point for the GUI binary path.
 //! It starts the engine, builds the Tauri window, then blocks on the
 //! event loop. When the event loop ends (✕, tray Quit or the `quit` IPC),
-//! `engine.shutdown()` fires, releasing all held keys (Iron rule #3), then
-//! the HidHide worker undoes its hiding, and the process exits with the
-//! event loop's exit code.
+//! the cleanup (`shutdown.rs`) runs: `engine.shutdown()` releases all held
+//! keys (Iron rule #3), then the HidHide worker undoes its hiding, and the
+//! process exits with the event loop's exit code. Windows logging off or
+//! shutting down runs the same cleanup from the main window
+//! (`gui/session_end.rs`), since the loop never returns then.
 
 use crate::config::Config;
 use crate::config_io::ConfigDoc;
 use crate::engine::Engine;
 use crate::safety;
+use crate::shutdown::Cleanup;
 use anyhow::{Context, Result};
 use crossbeam_channel::unbounded;
 use std::path::PathBuf;
@@ -28,9 +31,9 @@ pub struct RunOptions {
 /// built; once the event loop has run, it ends the process itself. The loop
 /// runs through `App::run_return`, not `App::run`: on Windows `App::run`
 /// (tao `EventLoop::run`) calls `std::process::exit` inside and never
-/// returns. After the loop, `engine.shutdown()` runs so that
-/// `KeyboardSink::drop` and `release_all_held` run (Iron rule #3), then the
-/// process exits with the loop's exit code.
+/// returns. After the loop, the cleanup runs `engine.shutdown()` so that
+/// `KeyboardSink::drop` and `release_all_held` run (Iron rule #3), then
+/// stops the HidHide worker, and the process exits with the loop's exit code.
 pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let engine = Engine::spawn(cfg, opts.dry_run)?;
     // The `log_events` file sits beside the config.
@@ -46,6 +49,10 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     // Xbox; state file beside the config. Not on a dry run, not off Windows.
     let hider = crate::hider::start_for(&engine.handle(), &opts.config_path, opts.dry_run);
     let handle = engine.handle();
+    // Every exit path below, and a session end, goes through this, once.
+    let cleanup = std::sync::Arc::new(Cleanup::new(engine, hider));
+    #[cfg(windows)]
+    let cleanup_for_setup = cleanup.clone();
 
     // Clone handle before the `move` setup closure so `.manage(handle_for_state)`
     // can still be called on the builder after the closure has captured its copy.
@@ -86,6 +93,17 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
                         tracing::warn!("could not turn the WebView2 browser keys off: {e}");
                     }
                 });
+                // Logoff / shutdown with the window open: undo the hiding
+                // before Windows ends the process.
+                #[cfg(windows)]
+                match w.hwnd() {
+                    Ok(hwnd) => {
+                        if !crate::gui::session_end::install(hwnd.0, cleanup_for_setup.clone()) {
+                            tracing::warn!("could not hook the session end; a logoff leaves the pad hidden until the next start");
+                        }
+                    }
+                    Err(e) => tracing::warn!("no main window handle for the session-end hook: {e}"),
+                }
             }
 
             let tray = crate::gui::tray::build(&app.handle(), handle_for_setup.clone())?;
@@ -203,10 +221,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
     let app = match app {
         Ok(app) => app,
         Err(e) => {
-            engine.shutdown();
-            if let Some(h) = hider {
-                h.stop();
-            }
+            cleanup.run("app build failed");
             return Err(e).context("building the Tauri app");
         }
     };
@@ -216,13 +231,10 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<()> {
 
     // Iron rule #3: shut the engine down before the process exits, so held
     // keys and mouse buttons are released (and the lightbar exit frame written).
-    engine.shutdown();
     // Then the real pad comes back: the virtual one is already gone, so a
     // game never sees both. Waits at most ~2 s; a crash is undone at the
-    // next start from the state file.
-    if let Some(h) = hider {
-        h.stop();
-    }
+    // next start from the state file. A no-op after a session end ran it.
+    cleanup.run("exit");
     std::process::exit(code);
 }
 

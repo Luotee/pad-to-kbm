@@ -27,6 +27,10 @@ pub mod runtime;
 #[cfg(feature = "gui")]
 pub mod tray;
 
+// Windows logoff / shutdown → the cleanup (v3.6.0).
+#[cfg(all(feature = "gui", windows))]
+pub mod session_end;
+
 // Tauri-free (serde only), so tests can reach it without the gui feature.
 pub mod ui_prefs;
 
