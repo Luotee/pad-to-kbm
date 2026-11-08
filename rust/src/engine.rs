@@ -1348,6 +1348,18 @@ mod tests {
     use crate::config::OutputMode;
 
     #[test]
+    fn nano_pad_mode_is_not_hidden() {
+        let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        cfg.output_mode.clear();
+        cfg.mapping_enabled.clear();
+        assert!(hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "鍵鼠 hides the Nano");
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano));
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Xbox);
+        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "a stray xbox is 手把 for the Nano");
+    }
+
+    #[test]
     fn hide_wanted_kinds_are_native_pads_in_kbm_or_xbox() {
         let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
         cfg.output_mode.clear();

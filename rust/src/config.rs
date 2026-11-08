@@ -328,7 +328,10 @@ impl Config {
     /// `output_mode[slug]`, else the pre-v3.6.0 `mapping_enabled[slug]`
     /// (true → Kbm; false → Pad, which was the virtual Xbox pad for the
     /// Switch 2 Pro), else Kbm. A pad with no native Windows driver has no
-    /// `Pad` mode: it resolves to `Xbox`.
+    /// `Pad` mode: it resolves to `Xbox`. The Xbox Nano is the reverse: Xbox
+    /// and 手把 are one output for it (no virtual pad is ever plugged), so a
+    /// stored `Xbox` resolves to `Pad`. Normalised here, on every read, so a
+    /// hand-edited file and a legacy value behave the same as the IPC path.
     pub fn output_mode_for(&self, kind: ControllerKind) -> OutputMode {
         let mode = match (self.output_mode.get(kind.slug()), self.mapping_enabled.get(kind.slug())) {
             (Some(&m), _) => m,
@@ -337,6 +340,8 @@ impl Config {
         };
         if mode == OutputMode::Pad && !kind.has_native_driver() {
             OutputMode::Xbox
+        } else if mode == OutputMode::Xbox && kind == ControllerKind::XboxNano {
+            OutputMode::Pad
         } else {
             mode
         }

@@ -422,7 +422,8 @@ fn retry_virtual_pad_respects_keys_mode() {
 
 #[test]
 fn every_pad_in_xbox_mode_plugs_and_feeds() {
-    for kind in ControllerKind::ALL {
+    // The Xbox Nano is the exception: its Xbox is 手把 (`nano_never_plugs_a_virtual_pad`).
+    for kind in ControllerKind::ALL.into_iter().filter(|k| *k != ControllerKind::XboxNano) {
         let r = Rig::new(xbox(kind), None);
         r.event(GamepadEvent::Connected(kind));
         assert_eq!(r.plugs(), 1, "{kind:?} in Xbox mode plugs: {:?}", r.ops());
@@ -560,4 +561,23 @@ fn shutdown_waits_briefly_for_a_plug_then_unplugs() {
     assert_eq!(ops.first(), Some(&Op::Plug { held: 0 }));
     assert_eq!(ops.last(), Some(&Op::Unplug), "a plug that lands during shutdown is unplugged: {ops:?}");
     assert_balanced(&ops);
+}
+
+/// The Nano's Xbox and 手把 are one output: whatever the config says, no
+/// virtual pad is ever plugged for it.
+#[test]
+fn nano_never_plugs_a_virtual_pad() {
+    let r = Rig::new(xbox(ControllerKind::XboxNano), None);
+    r.event(GamepadEvent::Connected(ControllerKind::XboxNano));
+    r.event(GamepadEvent::ButtonDown(0));
+    r.event(GamepadEvent::ButtonUp(0));
+    for m in [OutputMode::Xbox, OutputMode::Pad, OutputMode::Kbm, OutputMode::Xbox] {
+        r.set_mode("xbox_nano", m);
+        r.event(GamepadEvent::ButtonDown(0));
+        r.event(GamepadEvent::ButtonUp(0));
+    }
+    r.event(GamepadEvent::Disconnected);
+    assert_eq!(r.plugs(), 0, "no virtual pad for the Nano; ops: {:?}", r.ops());
+    assert!(r.warnings().is_empty());
+    r.engine.shutdown();
 }

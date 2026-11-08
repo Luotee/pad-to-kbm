@@ -638,6 +638,12 @@ pub fn set_output_mode_impl(
         .ok_or_else(|| anyhow::anyhow!("unknown controller kind '{kind}'"))?;
     let m = crate::config::OutputMode::from_slug(mode)
         .ok_or_else(|| anyhow::anyhow!("unknown output mode '{mode}'"))?;
+    // The Nano has one joined Xbox / 手把 output, stored as `pad`.
+    let m = if k == crate::gamepad::ControllerKind::XboxNano && m == crate::config::OutputMode::Xbox {
+        crate::config::OutputMode::Pad
+    } else {
+        m
+    };
     let _file = file_lock();
     let mut doc = ConfigDoc::load(config_path)?;
     doc.set_output_mode(k, m);

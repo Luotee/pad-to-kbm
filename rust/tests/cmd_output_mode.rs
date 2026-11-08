@@ -81,3 +81,23 @@ fn old_config_without_field_gains_it() {
     assert!(disk.get("mapping_enabled").is_none());
     engine.shutdown();
 }
+
+#[test]
+fn nano_xbox_is_stored_as_pad() {
+    let cfg = test_helpers::load_example();
+    let cfg_path = test_helpers::tmp_config_with(&cfg);
+    let engine = Engine::spawn_with_fake_gamepad(cfg.clone()).unwrap();
+    let h = engine.handle();
+
+    set_output_mode_impl(&h, cfg_path.path(), "xbox_nano", "xbox").unwrap();
+
+    let disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cfg_path.path()).unwrap()).unwrap();
+    assert_eq!(disk["output_mode"]["xbox_nano"], serde_json::json!("pad"));
+    assert_eq!(h.config_read().output_mode_for(ControllerKind::XboxNano), OutputMode::Pad);
+    // A hand-edited file saying "xbox" also resolves to Pad.
+    let mut c = test_helpers::load_example();
+    c.output_mode.insert("xbox_nano".into(), OutputMode::Xbox);
+    assert_eq!(c.output_mode_for(ControllerKind::XboxNano), OutputMode::Pad);
+    engine.shutdown();
+}
