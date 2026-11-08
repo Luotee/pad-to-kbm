@@ -162,9 +162,9 @@ The board's IPC surface the mock answers: reads `get_controller_status`,
 `reset_stick_cal`, `set_ui_prefs` (it and `get_ui_prefs` also carry `hidhide_prompt_dismissed`,
 written to the config only once true); runtime-only `set_pad_off` (header 關,
 returns the off pads, no `config-changed`); Xbox output `get_xbox_status` (driver status, plus whether HidHide can run
-at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered the pad off for its reconnect),
+at all: absent on a dry run / non-Windows, where no prompt shows, and `auto_off`: the app powered a pad of that kind off for its reconnect and it is not back yet; the board shows that banner only while no pad of the kind is connected),
 `get_vigem_status`, `install_vigem`, `install_hidhide`; remembered HidHide pads
-(`hidhide_known` in the config) `get_present_pad_ids` (pads present at the
+(`hidhide_known` in the config; a Bluetooth entry carries `addr`, shown as its last four digits) `get_present_pad_ids` (pads present at the
 hider's last round, shown 連線中), `forget_hidden_pad` (`id`; refused for a
 present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `set_capture_active`, `disconnect_gamepad`, `open_config_in_editor`,
@@ -325,10 +325,13 @@ regresses real, observed bugs the codebase already fixed once:
    `padtokbm.hidhide.json`). A pad hidden once is
    remembered (`hidhide_known`, at most 16) and hidden at start even while
    it is off; that changes nothing about when the entries are undone. A pad
-   hidden while connected needs one reconnect: the app then drops its
-   Bluetooth link itself, once per launch, with the ⏻'s disconnect
-   (`platform.rs`, no administrator rights); connection state still comes
-   from the HID stream (iron rule 11).
+   hidden while connected needs one reconnect: the app then drops that
+   pad's Bluetooth link itself, by its address (read from the device tree,
+   `hidhide::bt_addr_of_instance`; never another pad of the same kind),
+   once per pad per launch (`platform::power_off_addrs`, the ⏻'s
+   `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
+   address (USB) is not touched. Connection state still comes from the HID
+   stream (iron rule 11).
    Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window

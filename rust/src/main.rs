@@ -303,7 +303,6 @@ fn list_buttons(cfg: Option<Config>) -> Result<()> {
         lightbar,
         dummy_disconnect_rx,
         warn_tx,
-        dualsense_mapper::gamepad::PowerOffLog::default(),
     )?;
     println!("Press a button or move a stick. Ctrl-C to quit.");
 

@@ -147,6 +147,39 @@ pub fn kind_for_instance(id: &str) -> Option<ControllerKind> {
     kind_for(vid, pid).filter(|&k| is_candidate(vid, pid, bus) == Some(k))
 }
 
+// ─── Bluetooth address ───────────────────────────────────────────────────────
+
+/// The Bluetooth address in a Bluetooth HID device's parent instance id, as
+/// 12 upper-case hex digits (`7C66EF8223D2`). The parent of a classic
+/// Bluetooth HID pad is its BTHENUM device,
+/// `BTHENUM\{00001124-…}_VID&0002054c_PID&0ce6\6&a71703f&0&7C66EF8223D2_C00000000`:
+/// the address is the last `&` field up to its `_`. Anything else (a USB
+/// parent, `USB\VID_…\…`) has none.
+pub fn bt_addr_from_parent(parent: &str) -> Option<String> {
+    if !parent.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("BTHENUM\\")) {
+        return None;
+    }
+    let last = parent.rsplit('&').next()?;
+    let addr = last.split('_').next()?;
+    let addr = addr.to_ascii_uppercase();
+    is_bt_addr(&addr).then_some(addr)
+}
+
+/// `addr` is a Bluetooth address as stored (`KnownPad::addr`): 12
+/// upper-case hex digits, no separators.
+pub fn is_bt_addr(addr: &str) -> bool {
+    addr.len() == 12 && addr.bytes().all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+}
+
+/// The `BTH_ADDR` for a 12-hex-digit address (either case), the value
+/// `IOCTL_BTH_DISCONNECT_DEVICE` takes (`crate::platform::power_off_addrs`).
+pub fn bt_addr_value(addr: &str) -> Option<u64> {
+    if addr.len() != 12 || !addr.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(addr, 16).ok()
+}
+
 // ─── List merging ────────────────────────────────────────────────────────────
 
 fn contains_ci(list: &[String], item: &str) -> bool {
@@ -275,7 +308,7 @@ pub trait Control {
     fn inverse(&self) -> Result<bool, Error>;
 }
 
-pub use imp::{own_image_nt_path, present_hid_instance_ids, Driver};
+pub use imp::{bt_addr_of_instance, own_image_nt_path, present_hid_instance_ids, Driver};
 
 // ─── Not Windows ─────────────────────────────────────────────────────────────
 
@@ -324,6 +357,11 @@ mod imp {
 
     pub fn own_image_nt_path() -> Result<String, Error> {
         Err(Error::Unsupported)
+    }
+
+    /// No device tree off Windows.
+    pub fn bt_addr_of_instance(_id: &str) -> Option<String> {
+        None
     }
 }
 
@@ -526,6 +564,31 @@ mod imp {
             SetupDiDestroyDeviceInfoList(set);
         }
         out
+    }
+
+    /// The Bluetooth address of the pad whose HID device instance id is `id`
+    /// ([`super::bt_addr_from_parent`] of its parent's id), present or not:
+    /// the devnode of a pad that is off stays. Read-only cfgmgr32 calls, no
+    /// admin rights. `None`: not Bluetooth, or the devnode is gone.
+    pub fn bt_addr_of_instance(id: &str) -> Option<String> {
+        use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
+            CM_Get_Device_IDW, CM_Get_Parent, CM_Locate_DevNodeW, CM_LOCATE_DEVNODE_PHANTOM, CR_SUCCESS,
+            MAX_DEVICE_ID_LEN,
+        };
+        let wid = wide(id);
+        let (mut node, mut parent) = (0u32, 0u32);
+        let mut buf = vec![0u16; MAX_DEVICE_ID_LEN as usize + 1];
+        // SAFETY: a NUL-terminated id in; out-params are plain u32s; the id
+        // buffer holds MAX_DEVICE_ID_LEN characters plus the NUL.
+        unsafe {
+            if CM_Locate_DevNodeW(&mut node, wid.as_ptr(), CM_LOCATE_DEVNODE_PHANTOM) != CR_SUCCESS
+                || CM_Get_Parent(&mut parent, node, 0) != CR_SUCCESS
+                || CM_Get_Device_IDW(parent, buf.as_mut_ptr(), buf.len() as u32, 0) != CR_SUCCESS
+            {
+                return None;
+            }
+        }
+        super::bt_addr_from_parent(&from_wide(&buf))
     }
 
     fn from_wide(buf: &[u16]) -> String {
@@ -933,5 +996,58 @@ mod tests {
         assert!(matches!(Driver::open(), Err(Error::Unsupported)));
         assert!(present_hid_instance_ids().is_empty());
         assert!(matches!(own_image_nt_path(), Err(Error::Unsupported)));
+        assert_eq!(bt_addr_of_instance(DS_BT_REAL), None, "no address off Windows");
+    }
+
+    // ── Bluetooth address (the parent's instance id) ──
+
+    /// Read on the maintainer's Windows (2026-11-08,
+    /// `Get-PnpDeviceProperty DEVPKEY_Device_Parent`).
+    const DS_BT_REAL: &str = r"HID\{00001124-0000-1000-8000-00805F9B34FB}_VID&0002054C_PID&0CE6\7&16990F05&2&0000";
+    const DS_BT_PARENT: &str = r"BTHENUM\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\6&a71703f&0&7C66EF8223D2_C00000000";
+    const NS2_USB_PARENT: &str = r"USB\VID_057E&PID_2069&MI_00\6&2356d3fd&0&0000";
+
+    #[test]
+    fn the_bluetooth_address_is_read_from_a_bthenum_parent() {
+        assert_eq!(bt_addr_from_parent(DS_BT_PARENT).as_deref(), Some("7C66EF8223D2"));
+        assert_eq!(bt_addr_from_parent(&DS_BT_PARENT.to_lowercase()).as_deref(), Some("7C66EF8223D2"), "upper-cased");
+        assert_eq!(bt_addr_from_parent(NS2_USB_PARENT), None, "USB: no address");
+        assert_eq!(bt_addr_from_parent(DS_BT_REAL), None, "a HID id is not a BTHENUM parent");
+        assert_eq!(bt_addr_from_parent(r"BTHENUM\{x}\6&a71703f&0&7C66EF8223_C00000000"), None, "10 digits");
+        assert_eq!(bt_addr_from_parent(r"BTHENUM\{x}\6&a71703f&0&7C66EF8223ZZ_C00000000"), None, "not hex");
+        assert_eq!(bt_addr_from_parent(""), None);
+    }
+
+    #[test]
+    fn a_bluetooth_address_is_the_bth_addr_the_disconnect_takes() {
+        assert_eq!(bt_addr_value("7C66EF8223D2"), Some(0x7C66_EF82_23D2));
+        assert_eq!(bt_addr_value("7c66ef8223d2"), Some(0x7C66_EF82_23D2));
+        assert_eq!(bt_addr_value("7C66EF8223"), None);
+        assert_eq!(bt_addr_value("7C66EF8223DZ"), None);
+        assert!(is_bt_addr("7C66EF8223D2"));
+        assert!(!is_bt_addr("7c66ef8223d2"), "stored upper-case");
+        assert!(!is_bt_addr("7C:66:EF:82:23:D2"));
+    }
+
+    /// Read-only lookup of every present Bluetooth pad's address (the
+    /// maintainer's DualSense: `7C66EF8223D2` when its devnode exists).
+    #[cfg(windows)]
+    #[test]
+    fn looks_up_the_bluetooth_address_of_present_pads() {
+        let real = bt_addr_of_instance(DS_BT_REAL);
+        println!("bt_addr_of_instance({DS_BT_REAL}) = {real:?}");
+        if let Some(a) = &real {
+            assert_eq!(a, "7C66EF8223D2");
+        } else {
+            println!("that devnode is not on this machine: skipped");
+        }
+        for id in present_hid_instance_ids() {
+            if kind_for_instance(&id).is_some() {
+                let a = bt_addr_of_instance(&id);
+                println!("pad {id}: {a:?}");
+                let bt = id.to_ascii_lowercase().contains("{00001124-");
+                assert_eq!(a.is_some(), bt, "a Bluetooth HID pad has an address, a USB one none: {id}");
+            }
+        }
     }
 }

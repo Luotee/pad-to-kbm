@@ -20,6 +20,11 @@ const DS_BT: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PI
 const MOUSE: &str = r"HID\VID_046D&PID_C52B&MI_01&COL02\7&abc&0&0001";
 const OWN: &str = r"\Device\HarddiskVolume3\Games\PadToKBM.exe";
 const FOREIGN_DEV: &str = r"HID\VID_045E&PID_0B13\8&x&0&0000";
+/// A second Bluetooth DualSense (the maintainer owns two).
+const DS_BT2: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\9&77&0&0000";
+/// The Bluetooth addresses the fake look-up finds (`FakeBackend::bt_addr`).
+const ADDR_BT: u64 = 0x7C66_EF82_23D2;
+const ADDR_BT2: u64 = 0xA0B1_C2D3_E4F5;
 
 #[derive(Default)]
 struct Fake {
@@ -65,6 +70,7 @@ impl Control for FakeCtl {
 }
 
 /// The driver and the present HID instance ids (a test may change them).
+/// The Bluetooth ones have an address; USB none.
 struct FakeBackend(FakeCtl, Arc<Mutex<Vec<String>>>);
 
 impl Backend for FakeBackend {
@@ -77,6 +83,13 @@ impl Backend for FakeBackend {
     }
     fn own_path(&mut self) -> Option<String> {
         Some(OWN.to_string())
+    }
+    fn bt_addr(&mut self, id: &str) -> Option<String> {
+        match id {
+            DS_BT => Some("7C66EF8223D2".into()),
+            DS_BT2 => Some("A0B1C2D3E4F5".into()),
+            _ => None,
+        }
     }
 }
 
@@ -215,6 +228,8 @@ fn a_pad_hidden_while_connected_needs_a_replug_and_the_status_is_resent() {
         r.h.drain_events().iter().any(|e| matches!(e, EngineEvent::ControllerConnected { .. }))
     });
 
+    // Unplugged: the next round no longer finds it.
+    *r.present.lock().unwrap() = vec![MOUSE.to_string()];
     r.h.fake_event(GamepadEvent::Disconnected);
     eventually("left: hidden", || hidden(&r.h) == Some(true));
     assert!(r.ctl.black().contains(&DS_USB.to_string()), "kept for the reconnect");
@@ -230,7 +245,7 @@ fn a_pad_hidden_while_connected_needs_a_replug_and_the_status_is_resent() {
 #[test]
 fn a_remembered_pad_is_hidden_from_the_config_and_forgetting_it_unhides_it() {
     let mut cfg = test_helpers::load_example();
-    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_BT.into() }];
+    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_BT.into(), addr: None }];
     let r = rig(cfg);
     // DS_BT is not present (the fake lists the USB one only).
     eventually("remembered id hidden", || r.ctl.black().contains(&DS_BT.to_string()));
@@ -265,8 +280,8 @@ fn present_pads_cannot_be_forgotten_and_forget_all_keeps_them() {
     use dualsense_mapper::gui::commands::{forget_all_hidden_pads_impl, forget_hidden_pad_impl, present_pad_ids_impl};
     let mut cfg = test_helpers::load_example();
     cfg.hidhide_known = vec![
-        KnownPad { kind: "dualsense".into(), id: DS_USB.into() },
-        KnownPad { kind: "dualsense".into(), id: DS_BT.into() },
+        KnownPad { kind: "dualsense".into(), id: DS_USB.into(), addr: None },
+        KnownPad { kind: "dualsense".into(), id: DS_BT.into(), addr: None },
     ];
     let r = rig(cfg);
     let path = r.state_path.with_file_name("padtokbm.json");
@@ -290,13 +305,26 @@ fn auto_off(h: &Handle) -> bool {
     xbox_status_impl(h, "dualsense", "installed", "installed").unwrap().auto_off
 }
 
-/// No power-off reaches the source for a while.
+/// No power-off is made for a while: no link drop, no Turn Off to the source.
 fn no_power_off(h: &Handle, why: &str) {
     let until = Instant::now() + Duration::from_millis(300);
     while Instant::now() < until {
-        assert_eq!(h.fake_disconnects_received(), 0, "powered off: {why}");
+        assert_eq!(h.fake_power_offs(), Vec::<Vec<u64>>::new(), "powered off: {why}");
+        assert_eq!(h.fake_disconnects_received(), 0, "the session was dropped: {why}");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// The next link-level power-off the engine makes (the addresses it gets).
+fn next_power_off(h: &Handle) -> Vec<Vec<u64>> {
+    let mut got = Vec::new();
+    eventually("a power-off", || {
+        got.extend(h.fake_power_offs());
+        !got.is_empty()
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    got.extend(h.fake_power_offs());
+    got
 }
 
 /// `hidden` and `auto_off` stay as they are for a while.
@@ -308,20 +336,26 @@ fn stays(r: &Rig, hid: Option<bool>, off: bool) {
     }
 }
 
+fn set_present(r: &Rig, ids: &[&str]) {
+    *r.present.lock().unwrap() = ids.iter().map(|s| s.to_string()).collect();
+}
+
 #[test]
 fn a_pad_hidden_while_connected_is_powered_off_once() {
-    let r = rig(test_helpers::load_example());
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, DS_BT], |_, _| Box::new(|_| {}));
     r.h.fake_disconnects_received();
     r.h.fake_event(GamepadEvent::Connected(DS));
-    eventually("the app sends the ⏻", || r.h.fake_disconnects_received() == 1);
-    assert!(!auto_off(&r.h), "not known yet whether a link went down");
-    // The worker: the link went down (one pad), then the pad left.
-    r.h.fake_power_off(DS, 1);
-    r.h.fake_event(GamepadEvent::Disconnected);
+    assert_eq!(next_power_off(&r.h), vec![vec![ADDR_BT]], "its Bluetooth link, by address");
+    assert_eq!(r.h.fake_disconnects_received(), 0, "the session ends with the link (iron rule 11), not by a Turn Off");
     eventually("auto_off reported", || auto_off(&r.h));
+    // The link went down: the pad leaves.
+    set_present(&r, &[MOUSE]);
+    r.h.fake_event(GamepadEvent::Disconnected);
     eventually("left: hidden", || hidden(&r.h) == Some(true));
-    assert!(r.ctl.black().contains(&DS_USB.to_string()), "kept for the reconnect");
+    assert!(auto_off(&r.h));
+    assert!(r.ctl.black().contains(&DS_BT.to_string()), "kept for the reconnect");
     // Turned back on: it arrives hidden, auto_off goes.
+    set_present(&r, &[MOUSE, DS_BT]);
     r.h.fake_event(GamepadEvent::Connected(DS));
     eventually("auto_off cleared on the reconnect", || !auto_off(&r.h));
     stays(&r, Some(true), false);
@@ -340,17 +374,12 @@ fn a_pad_hidden_while_connected_is_powered_off_once() {
 
 #[test]
 fn a_power_off_that_dropped_no_link_keeps_the_reconnect_hint() {
-    let r = rig(test_helpers::load_example());
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, DS_BT], |_, _| Box::new(|_| {}));
+    r.h.set_fake_power_off_links(Some(0));
     r.h.fake_disconnects_received();
     r.h.fake_event(GamepadEvent::Connected(DS));
-    eventually("the app sends the ⏻", || r.h.fake_disconnects_received() == 1);
-    // USB, or no Bluetooth link matched: nothing went down; the worker
-    // dropped its handle and the pad comes straight back.
-    r.h.fake_power_off(DS, 0);
-    r.h.fake_event(GamepadEvent::Disconnected);
-    stays(&r, Some(false), false);
-    r.h.fake_event(GamepadEvent::Connected(DS));
-    eventually("connected", || r.h.current_status().is_some());
+    assert_eq!(next_power_off(&r.h), vec![vec![ADDR_BT]]);
+    // No link went down: the pad stays connected, a game may still hold it.
     stays(&r, Some(false), false);
     no_power_off(&r.h, "no retry");
     r.worker.stop();
@@ -358,9 +387,71 @@ fn a_power_off_that_dropped_no_link_keeps_the_reconnect_hint() {
 }
 
 #[test]
+fn a_usb_pad_has_no_address_and_is_not_powered_off() {
+    let r = rig(test_helpers::load_example());
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("needs a replug", || hidden(&r.h) == Some(false));
+    no_power_off(&r.h, "USB: no Bluetooth address");
+    stays(&r, Some(false), false);
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+/// Two DualSense: A remembered, hidden before it came and connected; then B
+/// is turned on for the first time. Returns the rig with B present and
+/// hidden (`b`: B's id).
+fn second_pad(b: &str) -> Rig {
+    let mut cfg = test_helpers::load_example();
+    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_BT.into(), addr: None }];
+    let r = rig_present(cfg, &[MOUSE], |_, _| Box::new(|_| {}));
+    eventually("A hidden at start", || r.ctl.black().contains(&DS_BT.to_string()));
+    set_present(&r, &[MOUSE, DS_BT]);
+    r.h.fake_event(GamepadEvent::Connected(DS));
+    eventually("a round saw A", || dualsense_mapper::gui::commands::present_pad_ids_impl(&r.h) == vec![DS_BT.to_string()]);
+    no_power_off(&r.h, "A arrived hidden");
+    // B: no update comes (DualSense is connected already); the worker
+    // finds it by re-reading the present pads.
+    set_present(&r, &[MOUSE, DS_BT, b]);
+    eventually("B hidden", || r.ctl.black().contains(&b.to_string()));
+    r
+}
+
+#[test]
+fn with_two_pads_only_the_newly_hidden_one_is_powered_off() {
+    let r = second_pad(DS_BT2);
+    assert_eq!(next_power_off(&r.h), vec![vec![ADDR_BT2]], "B's link only: A, in use, keeps its link");
+    assert_eq!(r.h.fake_disconnects_received(), 0, "A's session is not dropped");
+    // B's link went down; A stays connected and present.
+    set_present(&r, &[MOUSE, DS_BT]);
+    eventually("B gone: DualSense no longer needs a replug, though A is still there", || hidden(&r.h) == Some(true));
+    // The board shows the 關機 banner only while no DualSense is connected
+    // (`autoOffBanner`); A is, so it stays quiet.
+    eventually("B powered off: auto_off", || auto_off(&r.h));
+    stays(&r, Some(true), true);
+    // B back on: already hidden, auto_off goes; nothing is powered off again.
+    set_present(&r, &[MOUSE, DS_BT, DS_BT2]);
+    eventually("B back: auto_off cleared", || !auto_off(&r.h));
+    stays(&r, Some(true), false);
+    no_power_off(&r.h, "once");
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn with_two_pads_a_newly_hidden_one_without_an_address_is_not_powered_off() {
+    let r = second_pad(DS_USB);
+    eventually("B needs a replug", || hidden(&r.h) == Some(false));
+    no_power_off(&r.h, "B has no Bluetooth address, and A must not go");
+    stays(&r, Some(false), false);
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
 fn a_remembered_pad_hidden_before_it_came_is_not_powered_off() {
     let mut cfg = test_helpers::load_example();
-    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_USB.into() }];
+    cfg.hidhide_known = vec![KnownPad { kind: "dualsense".into(), id: DS_USB.into(), addr: None }];
     let r = rig_present(cfg, &[MOUSE], |_, _| Box::new(|_| {}));
     eventually("hidden at start, absent", || r.ctl.black().contains(&DS_USB.to_string()));
     eventually("no replug", || hidden(&r.h) == Some(true));

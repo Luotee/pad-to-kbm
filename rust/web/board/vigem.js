@@ -110,8 +110,9 @@ export function reconnectBanner() {
   return '再連一次 ' + NAME[state.pad] + '，遊戲才看不到原本的手把：按分頁上的 ' + ICON.power + ' 斷開，再按 ' + (state.pad === 'dualsense' ? 'PS' : 'HOME') + ' 鍵連回來';
 }
 
-// The app powered this pad off itself because it needed that reconnect (`auto_off`): say so
-// while it is away. No 這次不再提醒: it goes when the pad is back.
+// The app powered a pad of this kind off itself because it needed that reconnect (`auto_off`): say
+// so while no pad of the kind is connected (another one in use: quiet). No 這次不再提醒: it goes when
+// the pad is back.
 export function autoOffBanner() {
   if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || !VG.status.auto_off) return '';
   if (state.connected.has(state.pad)) return '';

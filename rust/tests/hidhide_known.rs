@@ -19,8 +19,15 @@ const DS_BT: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PI
 const NSP_BT: &str = r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009\9&1&0&0000";
 
 fn kp(kind: &str, id: &str) -> KnownPad {
-    KnownPad { kind: kind.into(), id: id.into() }
+    KnownPad { kind: kind.into(), id: id.into(), addr: None }
 }
+
+/// A Bluetooth pad with its address (Task 10).
+fn kpa(kind: &str, id: &str, addr: &str) -> KnownPad {
+    KnownPad { kind: kind.into(), id: id.into(), addr: Some(addr.into()) }
+}
+
+const ADDR: &str = "7C66EF8223D2";
 
 fn ids(list: &[KnownPad]) -> Vec<String> {
     list.iter().map(|k| k.id.clone()).collect()
@@ -47,6 +54,46 @@ fn field_round_trips() {
     assert_eq!(back.hidhide_known, cfg.hidhide_known);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["hidhide_known"][0], serde_json::json!({ "kind": "dualsense", "id": DS_BT }));
+}
+
+#[test]
+fn the_bluetooth_address_round_trips_and_an_entry_without_one_still_reads() {
+    let mut cfg = test_helpers::load_example();
+    cfg.hidhide_known = vec![kpa("dualsense", DS_BT, ADDR), kp("dualsense", DS_USB)];
+    let json = serde_json::to_string_pretty(&cfg).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["hidhide_known"][0], serde_json::json!({ "kind": "dualsense", "id": DS_BT, "addr": ADDR }));
+    assert_eq!(v["hidhide_known"][1], serde_json::json!({ "kind": "dualsense", "id": DS_USB }), "no address: not written");
+    assert_eq!(Config::load_from_str(&json).unwrap().hidhide_known, cfg.hidhide_known);
+    // A v3.6.0-dev entry ({kind, id}) reads with no address.
+    let k: KnownPad = serde_json::from_value(serde_json::json!({ "kind": "dualsense", "id": DS_BT })).unwrap();
+    assert_eq!(k, kp("dualsense", DS_BT));
+}
+
+#[test]
+fn validate_rejects_a_bad_address() {
+    let base = test_helpers::load_example();
+    for bad in ["7c66ef8223d2", "7C:66:EF:82:23:D2", "7C66EF8223", ""] {
+        let mut cfg = base.clone();
+        cfg.hidhide_known = vec![kpa("dualsense", DS_BT, bad)];
+        let err = cfg.validate().expect_err(bad);
+        assert!(format!("{err:#}").contains("addr"), "{bad}: {err:#}");
+    }
+    let mut ok = base.clone();
+    ok.hidhide_known = vec![kpa("dualsense", DS_BT, ADDR)];
+    ok.validate().expect("12 upper-case hex digits");
+}
+
+#[test]
+fn remember_fills_a_missing_address_and_keeps_a_known_one() {
+    let list = vec![kp("dualsense", DS_BT), kpa("ns_pro", NSP_BT, "AABBCCDDEEFF")];
+    // Learned again with its address (the start's look-up): filled in place.
+    let next = remember_known(&list, &[kpa("dualsense", &DS_BT.to_lowercase(), ADDR), kpa("ns_pro", NSP_BT, "112233445566")]);
+    assert_eq!(next, vec![kpa("dualsense", DS_BT, ADDR), kpa("ns_pro", NSP_BT, "AABBCCDDEEFF")]);
+    // Found without one: nothing changes.
+    assert_eq!(remember_known(&next, &[kp("dualsense", DS_BT)]), next);
+    // A new pad keeps the address it was learned with.
+    assert_eq!(remember_known(&[], &[kpa("dualsense", DS_BT, ADDR)]), vec![kpa("dualsense", DS_BT, ADDR)]);
 }
 
 #[test]
@@ -103,6 +150,22 @@ fn remember_writes_the_file_and_the_live_config_once() {
     assert_eq!(ids(&h.config_read().hidhide_known), vec![DS_BT.to_string()]);
     assert_eq!(ids(&ConfigDoc::load(file.path()).unwrap().typed().hidhide_known), vec![DS_BT.to_string()]);
     assert!(!remember_hidden_pads(&h, file.path(), &[kp("dualsense", &DS_BT.to_uppercase())]).unwrap(), "known: no write");
+    engine.shutdown();
+}
+
+#[test]
+fn an_old_entry_gets_its_address_written_once() {
+    let mut cfg = test_helpers::load_example();
+    cfg.hidhide_known = vec![kp("dualsense", DS_BT), kp("dualsense", DS_USB)];
+    let file = test_helpers::tmp_config_with(&cfg);
+    let engine = Engine::spawn_with_fake_gamepad(cfg).unwrap();
+    let h = engine.handle();
+    let found = [kpa("dualsense", DS_BT, ADDR)];
+    assert!(remember_hidden_pads(&h, file.path(), &found).unwrap(), "address added: written");
+    let want = vec![kpa("dualsense", DS_BT, ADDR), kp("dualsense", DS_USB)];
+    assert_eq!(h.config_read().hidhide_known, want);
+    assert_eq!(ConfigDoc::load(file.path()).unwrap().typed().hidhide_known, want);
+    assert!(!remember_hidden_pads(&h, file.path(), &found).unwrap(), "known already: written once");
     engine.shutdown();
 }
 

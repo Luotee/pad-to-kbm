@@ -42,22 +42,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opened; nothing is written to the config). The Xbox banner is unchanged.
 - **PadToKBM turns the controller off when it needs that reconnect.** A
   DualSense / Switch Pro that is on when it gets hidden (on when the app
-  opens, connected for the first time, or switched from 手把 to 鍵鼠 / Xbox
-  while on) is turned off by the app itself, at most once per controller
-  type (DualSense, Switch Pro) each time the app is opened: the same
-  Bluetooth disconnect as the tab's ⏻, no administrator rights, no device
-  restart.
-  While it is off a white banner says 「已替你把 DualSense 關機，好讓遊戲看不到
-  它。按 PS 鍵打開就能用了」 (HOME on the Switch Pro), with no 「這次不再提醒」;
-  it goes when the controller is back on, already hidden. Where nothing could
-  be turned off (USB), the 「再連一次」 banner shows as before.
+  opens, connected for the first time, turned on while another one of the
+  same model is in use, or switched from 手把 to 鍵鼠 / Xbox while on) is
+  turned off by the app itself, at most once per controller each time the
+  app is opened. Only that controller is turned off: its Bluetooth link is
+  dropped by its address, so a second DualSense already in use keeps
+  playing (the tab's ⏻ still turns off every connected controller of that
+  model). No administrator rights, no device restart. PadToKBM looks for
+  newly turned-on controllers every 2 seconds, so one turned on while
+  another of its model is connected is hidden (and, if needed, turned off)
+  right away.
+  While it is off and no other controller of that model is connected, a
+  white banner says 「已替你把 DualSense 關機，好讓遊戲看不到它。按 PS 鍵打開就能
+  用了」 (HOME on the Switch Pro), with no 「這次不再提醒」; it goes when that
+  controller is back on, already hidden. A USB controller cannot be turned
+  off: the 「再連一次」 banner shows as before, until it is unplugged.
   `get_xbox_status` reports this as `auto_off`.
 - **Controllers are remembered for hiding.** A DualSense / Switch Pro that
   PadToKBM has hidden once is remembered, and from the next start it is
   hidden as soon as the app opens, even while it is still off: turned on
   later, it reaches the game already hidden, with no reconnect. The entries
   still come out when the app exits. A new 設定 tab, 「記住的手把」, lists
-  them (name, 藍牙 / USB) with 刪除 and 全部刪除; at most 16 are kept, the
+  them (name, 藍牙 / USB, and for a Bluetooth controller the last four
+  digits of its Bluetooth address, e.g. `23:D2`, so two of one model can be
+  told apart; the row's tooltip has the whole address) with 刪除 and 全部刪除.
+  Entries remembered without an address get it at the next start. At most
+  16 are kept, the
   oldest goes first. A controller that is on right now is marked 連線中 and
   cannot be deleted until it is turned off; 全部刪除 skips it.
 - New IPC: `set_output_mode`, `get_xbox_status`, `install_hidhide`,
