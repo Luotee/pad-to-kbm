@@ -13,7 +13,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hidden from games with HidHide, so a game does not get the same input
   twice. PadToKBM hides only that controller's own HID devices, lets itself
   through on HidHide's whitelist, keeps any entries you made in HidHide, and
-  takes its own entries out again when the controller leaves Xbox, when the
+  takes its own entries out again when the controller leaves 鍵鼠 / Xbox, when the
   app exits, and at the next start after a crash.
 - **關｜鍵鼠｜Xbox｜手把 in the header**, per controller. On the Switch 2 Pro
   手把 is greyed out and does nothing: Windows has no driver for it, so a
@@ -52,7 +52,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Iron rule 7 (CLAUDE.md) covers both drivers: never bundled, only the
   verified official installers on the user's click, user-mode client calls
   only, and the HidHide changes are limited to the pad's own devices and
-  undone when Xbox output ends.
+  undone when the pad leaves 鍵鼠 / Xbox.
 
 ### Migration
 
@@ -62,8 +62,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controller is removed the first time you change that controller's mode.
 - A DualSense / Switch Pro on 手把 stays on 手把; pick Xbox to get the
   virtual pad.
-- A pad that was on 鍵鼠 is hidden from games from its next reconnect on.
-  To let a game read it directly, pick 手把.
+- A DualSense / Switch Pro on 鍵鼠 is hidden from games from its next
+  reconnect on, if HidHide is installed. The Switch 2 Pro is never hidden (no
+  native driver). To let a game read the pad directly, pick 手把.
 - Rumble from games is not passed from the virtual Xbox pad to the real
   controller yet.
 - Xbox output (ViGEmBus + HidHide) is Windows only; macOS is Phase 2 TBD.

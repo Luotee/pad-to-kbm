@@ -300,7 +300,7 @@ regresses real, observed bugs the codebase already fixed once:
    crate. Anything else lands us in actual cheat-software territory.
    Single exception (v2.6.0, widened in v3.6.0): two externally installed
    Nefarius drivers, ViGEmBus (a virtual Xbox 360 pad) and HidHide (hides
-   the real pad from games), used while the pad is on 鍵鼠 or Xbox
+   the real pad from games), used only while the pad is on 鍵鼠 or Xbox
    (`output_mode` `kbm` or `xbox`, never 手把; HidHide only for a pad with a native
    driver, `ControllerKind::has_native_driver`). The app never ships a
    driver. On the user's click it may download each pinned official
@@ -309,8 +309,7 @@ regresses real, observed bugs the codebase already fixed once:
    User-mode client calls only: the ViGEm client, and HidHide's
    control-device IOCTLs (`hidhide.rs`). HidHide changes are limited to the
    pad's own HID instance ids on the blacklist and our exe on the
-   whitelist, merged with the user's existing lists, and undone when the pad leaves 鍵鼠 / Xbox
-   output ends. Hooking and injection stay forbidden.
+   whitelist, merged with the user's existing lists, and undone when the pad leaves 鍵鼠 / Xbox. Hooking and injection stay forbidden.
 8. **The exe is double-clicked, not invoked from a terminal.** Primary
    end-user flow on Windows is Explorer → double-click → GUI window
    opens. That means:
