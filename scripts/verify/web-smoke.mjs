@@ -548,7 +548,7 @@ try {
       t.includes('要讓遊戲把 DualSense 當成 Xbox 手把，需要這兩個：') && t.includes('把原本的 DualSense 對遊戲藏起來') && t.includes('都是官方安裝程式，各約 1 分鐘'), t);
     check('popover has 稍後 / 改回鍵鼠 / 安裝這兩個', JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝這兩個']), JSON.stringify(await popBtns()));
     const pt = await pointer();
-    check('popover pointer aims at the Xbox segment (apex within 2 px of its centre, inside it)', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
+    check('popover pointer aims at the Xbox segment (apex within 0.5 px of its centre, inside it)', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
     check('popover lies inside the board', pt.popL >= 0 && pt.popR <= 980, JSON.stringify(pt));
     check('no banner under the popover while drivers are missing', (await page.locator('#board .obanner').count()) === 0);
     await page.screenshot({ path: path.join(outDir, 'web-xbox-both.png') });
@@ -673,7 +673,7 @@ try {
     check('NS2 popover: only the ViGEmBus row, button 安裝 ViGEmBus', (await pop().count()) === 1 && JSON.stringify(await popRows()) === '["ViGEmBus:未安裝"]' &&
       JSON.stringify(await popBtns()) === JSON.stringify(['稍後', '改回鍵鼠', '安裝 ViGEmBus']) && t.includes('要讓遊戲把 Switch 2 Pro 當成 Xbox 手把，需要：') && !t.includes('HidHide'), t);
     const pt = await pointer();
-    check('NS2 popover pointer on the Xbox segment too', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
+    check('NS2 popover pointer on the Xbox segment too', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
     await page.screenshot({ path: path.join(outDir, 'web-vigem.png') });
     const i0 = (await installs()).length;
     await page.click('#board [data-act="vginstall"]');
@@ -728,7 +728,7 @@ try {
         const apex = pr.right - parseFloat(cs.borderRightWidth) - parseFloat(bs.right) - w / 2;
         return { apex: Math.round(apex - b.left), seg: Math.round((xr.left + xr.right) / 2 - b.left), l: Math.round(xr.left - b.left), r: Math.round(xr.right - b.left) };
       });
-      check('kbm-prompt-once: popover pointer aims at the 鍵鼠 segment', Math.abs(pt.apex - pt.seg) <= 2 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
+      check('kbm-prompt-once: popover pointer aims at the 鍵鼠 segment', Math.abs(pt.apex - pt.seg) <= 0.5 && pt.apex > pt.l && pt.apex < pt.r, JSON.stringify(pt));
       await page.screenshot({ path: path.join(outDir, 'web-kbm-hidhide.png') });
     }
     await page.click('#board [data-act="vglater"]');
