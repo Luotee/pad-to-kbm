@@ -27,10 +27,12 @@ export function mappingOn(config, pad) {
 // The selected pad's output mode: 'off' (關, this session), 'kbm' (鍵鼠), 'xbox'
 // or 'pad' (手把), from `output_mode`; a pad missing there falls back to the
 // pre-3.6.0 `mapping_enabled` (false = 手把, Xbox on the Switch 2 Pro) as Rust
-// reads it.
+// reads it. The Nano is an Xbox pad itself: its Xbox and 手把 are one option, stored as `pad` (Rust
+// stores `pad` for an `xbox` pick too), so a hand-edited `xbox` reads as `pad`.
 export function outputMode(st, pad) {
   if (st.offPads && st.offPads.has(pad)) return 'off';
   const m = st.config?.output_mode?.[pad];
+  if (m === 'xbox' && pad === 'xbox_nano') return 'pad';
   if (m === 'kbm' || m === 'xbox' || m === 'pad') return m;
   return mappingOn(st.config, pad) ? 'kbm' : (pad === 'ns2_pro' ? 'xbox' : 'pad');
 }
@@ -45,11 +47,13 @@ export function boardLocked(st) {
 }
 
 export const OFF_BANNER = '這支手把已關閉';
-export function padBanner(mode) {
+export function padBanner(mode, pad) {
+  if (pad === 'xbox_nano') return '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用';
   return mode === 'xbox' ? '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用' : '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用';
 }
 
 function omodeHTML(st, pad) {
+  if (pad === 'xbox_nano') return nanoModeHTML(st, pad);
   const m = outputMode(st, pad), nat = hasNative(pad);
   const seg = (mode, cls, icon, label, title, off) => '<button type="button" class="' + cls + '" data-act="mode" data-mode="' + mode + '" aria-pressed="' + (m === mode) + '"' +
     (off ? ' aria-disabled="true"' : '') + ' title="' + title + '">' + icon + '<span>' + label + '</span></button>';
@@ -58,6 +62,16 @@ function omodeHTML(st, pad) {
     seg('kbm', 'o-kbm', ICON.kbd, '鍵鼠', '手把按鍵送出鍵盤、滑鼠') +
     seg('xbox', 'o-xbox', ICON.xpad, 'Xbox', '遊戲看到一支 Xbox 手把（需要 ViGEmBus' + (nat ? '、HidHide' : '') + '）') +
     seg('pad', 'o-pad', ICON.gpad, '手把', nat ? '程式不送東西，遊戲直接用手把' : 'Windows 認不得 Switch 2 Pro，遊戲讀不到它；要用手把玩請選 Xbox', !nat) + '</span>';
+}
+
+// The Nano keeps the four cells, but Xbox and 手把 are one option (both send `pad`): one .xjoin holds the
+// two, and its pink spans both cells when it is on.
+function nanoModeHTML(st, pad) {
+  const m = outputMode(st, pad), on = m === 'pad', t = 'Nano 本身就是 Xbox 手把：程式不送東西，遊戲直接讀它（不需要 ViGEmBus）';
+  const b = (mode, cls, icon, label, title, p) => '<button type="button" class="' + cls + '" data-act="mode" data-mode="' + mode + '" aria-pressed="' + p + '" title="' + title + '">' + icon + '<span>' + label + '</span></button>';
+  return '<span class="omode" role="group" aria-label="輸出">' + b('off', 'o-off', ICON.pause, '關', '這次先關掉這支手把（重開程式會恢復）', m === 'off') +
+    b('kbm', 'o-kbm', ICON.kbd, '鍵鼠', '手把按鍵送出鍵盤、滑鼠；遊戲看不到這支手把（HidHide）', m === 'kbm') +
+    '<span class="xjoin' + (on ? ' on' : '') + '">' + b('pad', 'o-xbox', ICON.xpad, 'Xbox', t, on) + b('pad', 'o-pad', ICON.gpad, '手把', t, on) + '</span></span>';
 }
 
 export function disp(k) {
@@ -76,7 +90,7 @@ function slotBtn(st, key, tag, x, y, b) {
 
 // L2 / R2 (ZL / ZR): a caption plate holding the name and one framed two-cell field, like the 燈條 dropdown.
 function qcapHTML(pad, side, mode) {
-  const on = mode === 'page', name = pad === 'dualsense' ? side + '2' : 'Z' + side;
+  const on = mode === 'page', name = pad === 'dualsense' ? side + '2' : pad === 'xbox_nano' ? side + 'T' : 'Z' + side;
   return '<span class="qplate"><span class="qname">' + name + '</span><span class="qsg"><button type="button" data-qs="' + side + '" data-mode="quick" aria-pressed="' + on + '">快捷頁</button>' +
     '<button type="button" data-qs="' + side + '" data-mode="single" aria-pressed="' + !on + '">單鍵</button></span></span>';
 }
@@ -110,7 +124,7 @@ export function render(st) {
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
   else if ((om === 'xbox' || om === 'kbm') && autoOffBanner()) h += '<div class="obanner white ao" role="status"><span>' + autoOffBanner() + '</span></div>';
   else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span>' + (reconnectDismissable() ? '<button type="button" class="mini" data-act="rcdismiss">這次不再提醒</button>' : '') + '</div>';
-  else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om) + '</span></div>';
+  else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om, pad) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {
     if (g.q) h += '<div class="qcap" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 66) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';

@@ -84,14 +84,14 @@ function photoRoutes(pad, R) {
 }
 
 function defaultLayout(pad) {
-  var ds = pad === 'dualsense', ns2 = pad === 'ns2_pro';
-  var face4 = ds ? ['PS:tri', 'PS:sq', 'PS:ring', 'PS:x'] : ['X', 'Y', 'A', 'B'];
+  var ds = pad === 'dualsense', ns2 = pad === 'ns2_pro', xn = pad === 'xbox_nano';
+  var face4 = ds ? ['PS:tri', 'PS:sq', 'PS:ring', 'PS:x'] : xn ? ['Y', 'X', 'B', 'A'] : ['X', 'Y', 'A', 'B'];
   var LS = ['15', '17', '18', '16', '7'], RS = ['19', '21', '22', '20', '8'];
   var G = [
-    { id: 'qL', kind: 'pair', x: 143, y: 145, keys: ['L11', 'L13', 'L14', 'L12', 'L3', 'L2', 'L1', 'L0'], tags: face4, cap: (ds ? 'L2' : 'ZL') + ' 快捷頁' },
-    { id: 'qR', kind: 'pair', x: 837, y: 145, keys: ['R11', 'R13', 'R14', 'R12', 'R3', 'R2', 'R1', 'R0'], tags: face4, cap: (ds ? 'R2' : 'ZR') + ' 快捷頁' },
-    { id: 'b1L', kind: 'slot', x: 311, y: 192, keys: ['9'], tags: [ds ? 'L1' : 'L'] },
-    { id: 'b1R', kind: 'slot', x: 669, y: 192, keys: ['10'], tags: [ds ? 'R1' : 'R'] },
+    { id: 'qL', kind: 'pair', x: 143, y: 145, keys: ['L11', 'L13', 'L14', 'L12', 'L3', 'L2', 'L1', 'L0'], tags: face4, cap: (ds ? 'L2' : xn ? 'LT' : 'ZL') + ' 快捷頁' },
+    { id: 'qR', kind: 'pair', x: 837, y: 145, keys: ['R11', 'R13', 'R14', 'R12', 'R3', 'R2', 'R1', 'R0'], tags: face4, cap: (ds ? 'R2' : xn ? 'RT' : 'ZR') + ' 快捷頁' },
+    { id: 'b1L', kind: 'slot', x: 311, y: 192, keys: ['9'], tags: [ds ? 'L1' : xn ? 'LB' : 'L'] },
+    { id: 'b1R', kind: 'slot', x: 669, y: 192, keys: ['10'], tags: [ds ? 'R1' : xn ? 'RB' : 'R'] },
     { id: 'face', kind: 'diamond', x: 884, y: 288, keys: ['3', '2', '1', '0'], tags: face4 },
     { id: 'rs', kind: 'cross', x: 736, y: 320, keys: RS }
   ];
@@ -103,7 +103,26 @@ function defaultLayout(pad) {
     { id: 'rs', g: 'rs', side: 'l', pts: [[677, 320], [648, 320], [648, 286], [536, 286]], m: 'c' },
     { id: 'face', g: 'face', side: 'l', pts: [[825, 288], [792, 288], [792, 232], [566, 232]], m: 'c' }
   ];
-  if (ds) {
+  if (xn) {
+    // Xbox Nano: left stick high (outer group), D-pad low (inner group), like the Switch pads. LB / RB sit level
+    // with their shoulder key's end, one level line each; View / Xbox / Menu in the top row, Share below the pad.
+    G[2].y = 214; G[3].y = 214;
+    R[0].pts = [[267, 145], [402, 145], [402, 175]]; R[1].pts = [[713, 145], [578, 145], [578, 175]];
+    R[2].pts = [[330, 214], [358, 214]]; R[3].pts = [[650, 214], [622, 214]];
+    R[4].pts = [[677, 320], [648, 320], [648, 277], [531, 277]]; R[5].pts = [[825, 288], [792, 288], [792, 236], [578, 236]];
+    G.push({ id: 'ls', kind: 'cross', x: 96, y: 288, keys: LS },
+      { id: 'dpad', kind: 'diamond', x: 244, y: 320, keys: ['11', '13', '14', '12'], tags: ARROWS },
+      { id: 'view', kind: 'slot', x: 399, y: 89, keys: ['4'], tags: ['View'] },
+      { id: 'xg', kind: 'slot', x: 490, y: 89, keys: ['5'], tags: ['Xbox'] },
+      { id: 'menu', kind: 'slot', x: 581, y: 89, keys: ['6'], tags: ['Menu'] },
+      { id: 'share', kind: 'slot', x: 490, y: 372, keys: ['29'], tags: ['Share'] });
+    R.push({ id: 'ls', g: 'ls', side: 'r', pts: [[155, 288], [188, 288], [188, 236], [404, 236]], m: 'c' },
+      { id: 'dpad', g: 'dpad', side: 'r', pts: [[303, 320], [332, 320], [332, 276], [450, 276]], m: 'c' },
+      { id: 'view', g: 'view', side: 'b', pts: [[399, 108], [399, 129], [465, 129], [465, 235]], r: 7 },
+      { id: 'xg', g: 'xg', side: 'b', pts: [[490, 108], [490, 216]], r: 10 },
+      { id: 'menu', g: 'menu', side: 'b', pts: [[581, 108], [581, 129], [515, 129], [515, 235]], r: 7 },
+      { id: 'share', g: 'share', side: 't', pts: [[490, 353], [490, 246]], r: 3.5 });
+  } else if (ds) {
     // DualSense: D-pad sits high on the pad, so its group is the outer, higher one; the left stick is the inner, lower one.
     G.push({ id: 'dpad', kind: 'diamond', x: 96, y: 288, keys: ['11', '13', '14', '12'], tags: ARROWS },
       { id: 'ls', kind: 'cross', x: 244, y: 320, keys: LS },
@@ -166,7 +185,7 @@ function applyQuickMode(pad, L, modes) {
     var gid = side === 'L' ? 'qL' : 'qR', g = L.byId[gid];
     g.q = side;
     if ((side === 'L' ? modes.l : modes.r) !== 'key') return;
-    g.kind = 'slot'; g.keys = [side === 'L' ? '23' : '24']; g.tags = [pad === 'dualsense' ? side + '2' : 'Z' + side];
+    g.kind = 'slot'; g.keys = [side === 'L' ? '23' : '24']; g.tags = [pad === 'dualsense' ? side + '2' : pad === 'xbox_nano' ? side + 'T' : 'Z' + side];
   });
 }
 

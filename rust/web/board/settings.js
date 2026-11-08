@@ -173,7 +173,7 @@ export function setStickExtras(stk, bar) { stickExtras.stk = stk; stickExtras.ba
 function pane(d, t) {
   if (t === 'gen') return cfgBox() + sw('slog', '記錄每個按鍵事件，存成檔案', d.log) +
     '<div class="logbox"><span class="cfgl">最近的事件</span><div id="logrows">' + logRows(6) + '</div></div>' +
-    '<p class="ver">PadToKBM 手把轉鍵鼠 v' + esc(state.version) + '<br>支援 DualSense、Switch Pro、Switch 2 Pro</p>';
+    '<p class="ver">PadToKBM 手把轉鍵鼠 v' + esc(state.version) + '<br>支援 DualSense、Switch Pro、Switch 2 Pro、Xbox Nano</p>';
   if (t === 'known') return knownPane();
   if (t === 'stick') return '<div class="two"><div id="stkbox">' + stickExtras.stk(d) + '</div><div class="col">' +
     slider('deadzone', '搖桿死區（粉紅圈）', 0, 0.9, 0.05, d.deadzone, d.deadzone.toFixed(2)) +

@@ -151,7 +151,9 @@ function boardFill(role) { var w = role in WIDTH ? WIDTH[role] : 2.5; return [LI
 
 // Every part carries its role and every glyph its role and anchor (data-*), which web-smoke measures.
 function padArt(pad) {
-  var M = model(pad), h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
+  var h = '<svg viewBox="-30 -30 360 270" aria-hidden="true">';
+  if (!SHOULDER[pad]) return h + '</svg>';   // a pad without art yet: an empty drawing
+  var M = model(pad);
   M.parts.forEach(function (p) {
     var f = boardFill(p.role);
     h += '<path data-role="' + p.role + '" d="' + p.d + '"' + (p.tf ? ' transform="' + p.tf + '"' : '') + ' fill="' + f[0] + '"' + (f[1] ? ' stroke="' + INK + '" stroke-width="' + f[1] + '" stroke-linejoin="round"' : '') + '/>';

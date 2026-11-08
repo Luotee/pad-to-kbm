@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  PADS, QUICK_IDS, slotRef, slotKey, boardBinds, entryForTile, keyToTile, tileToKey,
+  PADS, PAD_NAMES, QUICK_IDS, slotRef, slotKey, boardBinds, entryForTile, keyToTile, tileToKey,
   MOUSE_TILE, slotLabel,
 } from '../board/model.js';
 import { MAIN, NAV } from '../board/keys.js';
@@ -22,7 +22,8 @@ test('slot_keys_round_trip', () => {
     assert.equal(slotKey('quick_l', id), 'L' + id);
     assert.equal(slotKey('quick_r', id), 'R' + id);
   }
-  assert.deepEqual(PADS, ['dualsense', 'ns_pro', 'ns2_pro']);
+  assert.deepEqual(PADS, ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano']);
+  assert.equal(PAD_NAMES.xbox_nano, 'Xbox Nano');
 });
 
 test('board_binds_reads_all_three_tables', () => {

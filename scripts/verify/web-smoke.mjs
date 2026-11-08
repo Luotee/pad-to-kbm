@@ -202,7 +202,7 @@ function tauriMock({ config, version }) {
         // Runtime only (no config-changed); the engine re-sends the status.
         const off = new Set(state.status.off_pads || []);
         if (a.off) off.add(a.kind); else off.delete(a.kind);
-        state.status.off_pads = ['dualsense', 'ns_pro', 'ns2_pro'].filter(k => off.has(k));
+        state.status.off_pads = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].filter(k => off.has(k));
         setTimeout(() => emit('controller-status', { connected: true, ...clone(state.status), connected_pads: state.status.connected }), 0);
         return clone(state.status.off_pads);
       }
@@ -361,9 +361,9 @@ try {
   // ── Task 5: header, pads, binding actions, undo ───────────────────────────
   check('header title 按鍵設定', ((await page.locator('#board .hdr .ttl').textContent()) || '').trim() === '按鍵設定');
   const padNames = await page.locator('#board .hdr [data-pad]').allTextContents();
-  check('three pad buttons', JSON.stringify(padNames.map(s => s.trim())) === JSON.stringify(['DualSense', 'Switch Pro', 'Switch 2 Pro']), padNames.join('|'));
+  check('four pad buttons', JSON.stringify(padNames.map(s => s.trim())) === JSON.stringify(['DualSense', 'Switch Pro', 'Switch 2 Pro', 'Xbox Nano']), padNames.join('|'));
   const lights = await page.locator('#board .hdr [data-pad] .live').evaluateAll(els => els.map(e => e.classList.contains('idle') ? 'idle' : 'live'));
-  check('DualSense light live, others idle', JSON.stringify(lights) === '["live","idle","idle"]', lights.join(','));
+  check('DualSense light live, others idle', JSON.stringify(lights) === '["live","idle","idle","idle"]', lights.join(','));
   check('one ⏻ (connected pad only)', (await page.locator('#board .hdr .pwr').count()) === 1);
 
   await page.click('#board [data-pad="ns2_pro"]');
@@ -999,11 +999,11 @@ try {
     check('drivers installed again → no ! in 鍵鼠', (await bang().count()) === 0 && (await pop().count()) === 0);
   }
 
-  // ── v3.6.0 header: fits with three pads connected + the !, power key on the selected tab only ──
+  // ── v3.6.0 header: fits with every pad connected + the !, power key on the selected tab only (four pads, v3.7.0) ──
   {
     await setXbox({ vigem: 'missing', hidhide: 'missing', hidden: null });
-    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense', 'ns_pro', 'ns2_pro'], warnings: [], off_pads: [] }));
-    for (const pad of ['dualsense', 'ns_pro', 'ns2_pro']) {
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'], warnings: [], off_pads: [] }));
+    for (const pad of ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano']) {
       await page.click(`#board [data-pad="${pad}"]`);
       await settle(page);
       const want = pad === 'ns2_pro' ? 'xbox' : 'kbm';
@@ -1028,16 +1028,91 @@ try {
       });
       const J = JSON.stringify(m);
       const sel = m.tabs.find(t => t.act);
-      check(`header[${pad}]: fits 980 px with three pads and the !`, m.fit && m.bang === 1, J);
+      check(`header[${pad}]: fits 980 px with four pads and the !`, m.fit && m.bang === 1, J);
       check(`header[${pad}]: gear 30 wide, right edge at 975`, m.gearW === 30 && m.gearRight === 975, J);
       check(`header[${pad}]: first tab at x=19`, m.tabs[0].left === 19, J);
       check(`header[${pad}]: icon 7 from the tab edge, name 6 after it`, m.tabs.every(t => t.iconL === 7 && t.gap === 6), J);
       check(`header[${pad}]: unselected tabs 7 px right of the name`, m.tabs.filter(t => !t.act).every(t => t.right === 7), J);
-      check(`header[${pad}]: power key only on the selected tab`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
+      check(`header[${pad}]: power key only on the selected tab`, JSON.stringify(m.pwr) === JSON.stringify(['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'].map(q => (q === pad) + ':' + (q === pad ? 1 : 0))), J);
       check(`header[${pad}]: tabs, segments, gear, lamps on whole pixels; 關 39 / 鍵鼠 59 wide`, m.ints.length === 0 && m.offW === 39 && m.kbmW === 59 && !!sel, J);
     }
     await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: true });
     await page.evaluate(() => { window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }); window.__mockEmit('config-changed', { source: 'external' }); });
+    await page.click('#board [data-pad="dualsense"]');
+    await settle(page);
+  }
+
+  // ── v3.7.0: Xbox Nano tab. The Nano is an Xbox pad already: Xbox and 手把 are one option (stored as
+  // `pad`), the pink spans both cells; LT／RT, LB／RB and View／Xbox／Menu／Share name its keys. ──
+  {
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'xbox_nano', connected_pads: ['dualsense', 'xbox_nano'], warnings: [], off_pads: [] }));
+    await page.click('#board [data-pad="xbox_nano"]');
+    await settle(page);
+    const segsN = () => page.locator('#board .omode button').evaluateAll(els => els.map(e => ({
+      cls: e.className, mode: e.dataset.mode, text: e.textContent.trim(), svg: e.querySelectorAll('svg').length, on: e.getAttribute('aria-pressed') })));
+    const joined = () => page.evaluate(() => { const j = document.querySelector('#board .omode .xjoin'); return j && { on: j.classList.contains('on'), w: j.getBoundingClientRect().width, n: j.querySelectorAll('button').length }; });
+    const sg = await segsN();
+    check('Nano: four segments 關／鍵鼠／Xbox／手把, each with its icon',
+      JSON.stringify(sg.map(x => x.text)) === '["關","鍵鼠","Xbox","手把"]' && sg.every(x => x.svg === 1), JSON.stringify(sg));
+    check('Nano: Xbox and 手把 are both data-mode="pad" inside one .xjoin',
+      JSON.stringify(sg.map(x => x.mode)) === '["off","kbm","pad","pad"]' && (await joined())?.n === 2 &&
+      (await page.locator('#board .omode .xjoin .o-xbox + .o-pad').count()) === 1, JSON.stringify(sg));
+    check('Nano 鍵鼠: only 鍵鼠 pressed, .xjoin not on',
+      JSON.stringify(sg.map(x => x.on)) === '["false","true","false","false"]' && (await joined())?.on === false, JSON.stringify(sg));
+    for (const which of ['o-xbox', 'o-pad']) {
+      await page.click(`#board .omode .${which}`);
+      await settle(page);
+      const om = await lastCall(page, 'set_output_mode'), j = await joined(), s2 = await segsN();
+      check(`Nano ${which} → set_output_mode(xbox_nano, pad)`, om?.args?.kind === 'xbox_nano' && om.args.mode === 'pad', JSON.stringify(om?.args));
+      check(`Nano ${which}: .xjoin.on 124 wide, Xbox and 手把 both pressed`, !!j && j.on && j.w === 124 &&
+        JSON.stringify(s2.map(x => x.on)) === '["false","false","true","true"]', JSON.stringify({ j, s2 }));
+      check(`Nano ${which}: banner says the game reads it as an Xbox pad`, (await banner()) === '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用', await banner());
+      check(`Nano ${which}: no ViGEmBus prompt or !`, (await pop().count()) === 0 && (await bang().count()) === 0);
+      if (which === 'o-xbox') await page.screenshot({ path: path.join(outDir, 'web-nano-pad.png') });
+      await page.click('#board .omode .o-kbm');
+      await settle(page);
+      const mk = await lastCall(page, 'set_output_mode');
+      check(`Nano back to 鍵鼠 → set_output_mode(xbox_nano, kbm), only 鍵鼠 pressed`, mk?.args?.kind === 'xbox_nano' && mk.args.mode === 'kbm' &&
+        JSON.stringify((await segsN()).map(x => x.on)) === '["false","true","false","false"]' && (await joined())?.on === false);
+    }
+    // A config that says xbox for the Nano (hand-edited) reads as the joined option, without a ViGEmBus prompt.
+    await setXbox({ vigem: 'missing' });
+    await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'xbox'; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    check('Nano output_mode xbox (hand-edited) shows the joined option, no ViGEmBus prompt',
+      (await joined())?.on === true && (await pop().count()) === 0 && (await bang().count()) === 0 && (await banner()) === '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用', await banner());
+    await setXbox({ vigem: 'installed' });
+    await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    // Its key names: trigger plates, shoulder slots, the three middle keys and Share below the pad.
+    const qn = await page.locator('#board .qcap .qname').allTextContents();
+    check('Nano trigger plates read LT／RT', JSON.stringify(qn) === '["LT","RT"]', JSON.stringify(qn));
+    const tagOf = key => page.locator(`#board .slot[data-slot="${key}"] .tag`).evaluate(e => e.textContent.trim()).catch(() => null);
+    const tags = {};
+    for (const k of ['9', '10', '4', '5', '6', '29', '3', '2', '1', '0']) tags[k] = await tagOf(k);
+    check('Nano shoulder slots read LB／RB', tags['9'] === 'LB' && tags['10'] === 'RB', JSON.stringify(tags));
+    check('Nano middle slots read View／Xbox／Menu, Share below the pad', tags['4'] === 'View' && tags['5'] === 'Xbox' && tags['6'] === 'Menu' && tags['29'] === 'Share' &&
+      await page.evaluate(() => { const y = k => document.querySelector(`#board .slot[data-slot="${k}"]`).getBoundingClientRect().top, pad = document.querySelector('#board svg.pad').getBoundingClientRect(); return y('29') > pad.top + 150 && [4, 5, 6].every(k => y(k) < pad.top); }), JSON.stringify(tags));
+    check('Nano face slots read Y／X／B／A', tags['3'] === 'Y' && tags['2'] === 'X' && tags['1'] === 'B' && tags['0'] === 'A', JSON.stringify(tags));
+    check('Nano has no touchpad / GL / GR / C slots', (await page.locator('#board .slot[data-slot="25"], #board .slot[data-slot="30"], #board .slot[data-slot="31"], #board .slot[data-slot="32"]').count()) === 0);
+    await page.click('#board .qcap [data-qs="L"][data-mode="single"]');
+    await settle(page);
+    check('Nano 單鍵 folds LT into one slot tagged LT', (await tagOf('23')) === 'LT', String(await tagOf('23')));
+    await page.click('#board .qcap [data-qs="L"][data-mode="quick"]');
+    await settle(page);
+    // 鍵鼠 hides the Nano (HidHide): its reconnect hint says to press the Xbox key.
+    await setXbox({ hidden: false });
+    await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
+    await settle(page);
+    const rc = ((await page.locator('#board .obanner.rc span').first().textContent().catch(() => '')) || '').trim();
+    check('Nano 鍵鼠 reconnect hint: press the Xbox key', rc.startsWith('再連一次 Xbox Nano，') && rc.endsWith('再按 Xbox 鍵連回來'), rc);
+    await setXbox({ hidden: false, auto_off: true });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [] }));
+    await page.click('#board [data-pad="xbox_nano"]');
+    await settle(page);
+    const ao = ((await page.locator('#board .obanner.ao span').first().textContent().catch(() => '')) || '').trim();
+    check('Nano powered off by the app: press the Xbox key to turn it on', ao === '已替你把 Xbox Nano 關機，好讓遊戲看不到它。按 Xbox 鍵打開就能用了', ao);
+    await setXbox({ hidden: true, auto_off: false });
     await page.click('#board [data-pad="dualsense"]');
     await settle(page);
   }
@@ -2041,7 +2116,7 @@ try {
   // every L／R label sits inside its visible key face, and no shoulder sticks to a key.
   {
     const SHOULDER_GAP = { dualsense: { min: 5, skip: [[82, 50.5], [218, 50.5]] }, ns_pro: { min: 4 }, ns2_pro: { min: 4 } };
-    const pads = await page.locator('#board .hdr [data-pad]').evaluateAll(els => els.map(e => e.dataset.pad));
+    const pads = ['dualsense', 'ns_pro', 'ns2_pro'];
     for (const pad of pads) {
       await page.click(`#board .hdr [data-pad="${pad}"]`);
       await settle(page);
