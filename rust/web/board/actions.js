@@ -99,6 +99,7 @@ export function settingsFrom(c) {
     touchpad_accel_slow_threshold: c.touchpad_accel_slow_threshold, touchpad_accel_fast_threshold: c.touchpad_accel_fast_threshold,
     touchpad_accel_gain_slow: c.touchpad_accel_gain_slow, touchpad_accel_gain_fast: c.touchpad_accel_gain_fast,
     touchpad_deadzone_radius: c.touchpad_deadzone_radius, touchpad_click_freeze_enabled: c.touchpad_click_freeze_enabled,
+    cursor_stick_speed: c.cursor_stick_speed ?? 1, cursor_dpad_speed: c.cursor_dpad_speed ?? 1,
   };
 }
 

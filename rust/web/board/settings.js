@@ -75,6 +75,7 @@ function draftFrom(c) {
     midX: c.touchpad_midpoint_x, midY: c.touchpad_midpoint_y, slowThr: c.touchpad_accel_slow_threshold, fastThr: c.touchpad_accel_fast_threshold,
     gainSlow: c.touchpad_accel_gain_slow, gainFast: c.touchpad_accel_gain_fast, tpDead: c.touchpad_deadzone_radius,
     freeze: c.touchpad_click_freeze_enabled, log: c.log_events, tpOn: c.touchpad_cursor_enabled,
+    curStick: c.cursor_stick_speed ?? 1, curDpad: c.cursor_dpad_speed ?? 1,
   };
 }
 function settingsOf(d) {
@@ -84,6 +85,7 @@ function settingsOf(d) {
     touchpad_midpoint_x: d.midX, touchpad_midpoint_y: d.midY, touchpad_accel_slow_threshold: d.slowThr, touchpad_accel_fast_threshold: d.fastThr,
     touchpad_accel_gain_slow: d.gainSlow, touchpad_accel_gain_fast: d.gainFast, touchpad_deadzone_radius: d.tpDead,
     touchpad_click_freeze_enabled: d.freeze, log_events: d.log, touchpad_cursor_enabled: d.tpOn,
+    cursor_stick_speed: d.curStick, cursor_dpad_speed: d.curDpad,
   };
 }
 
@@ -94,6 +96,8 @@ export function settingsError(d) {
   if (badRange(d.press, true)) return ['按住維持下限：前面要比後面小', ['press0', 'press1'], 'timing'];
   if (badRange(d.jitter, false)) return ['按鈕反應隨機延遲：前面不能比後面大', ['jitter0', 'jitter1'], 'timing'];
   if (!(d.tpSens >= 0.1 && d.tpSens <= 10)) return ['游標速度要在 0.1 到 10 之間', ['tpSens'], 'tp'];
+  if (!(d.curStick >= 0.1 && d.curStick <= 10)) return ['搖桿移動游標的速度要在 0.1 到 10 之間', ['curStick'], 'stick'];
+  if (!(d.curDpad >= 0.1 && d.curDpad <= 10)) return ['十字鍵移動游標的速度要在 0.1 到 10 之間', ['curDpad'], 'stick'];
   if (!(d.midX >= 1 && d.midX <= 4094)) return ['中心點 X 要在 1 到 4094 之間', ['midX'], 'tp'];
   if (!(d.midY >= 1 && d.midY <= 4094)) return ['中心點 Y 要在 1 到 4094 之間', ['midY'], 'tp'];
   if (!(d.slowThr < d.fastThr)) return ['慢速門檻要比快速門檻小', ['slowThr', 'fastThr'], 'tp'];
@@ -183,7 +187,9 @@ function pane(d, t) {
   if (t === 'known') return knownPane();
   if (t === 'stick') return '<div class="two"><div id="stkbox">' + stickExtras.stk(d) + '</div><div class="col">' +
     slider('deadzone', '搖桿死區（粉紅圈）', 0, 0.9, 0.05, d.deadzone, d.deadzone.toFixed(2)) +
-    '<div class="trrow">' + trSvg(d.trigger) + slider('trigger', '扳機按到多深算按下', 0.05, 0.95, 0.05, d.trigger, Math.round(d.trigger * 100) + '%') + '</div></div></div>' +
+    '<div class="trrow">' + trSvg(d.trigger) + slider('trigger', '扳機按到多深算按下', 0.05, 0.95, 0.05, d.trigger, Math.round(d.trigger * 100) + '%') + '</div>' +
+    slider('curStick', '搖桿移動游標的速度', 0.1, 10, 0.1, d.curStick, d.curStick.toFixed(1) + '×') +
+    slider('curDpad', '十字鍵移動游標的速度', 0.1, 10, 0.1, d.curDpad, d.curDpad.toFixed(1) + '×') + '</div></div>' +
     '<div id="calbar">' + stickExtras.bar(d) + '</div>';
   if (t === 'tp') return '<div class="two"><div class="col tpcol"><div id="tpbox">' + tpHTML(d, 1) + '</div><button type="button" class="mini" data-act="tpmid"' + (finger ? '' : ' disabled') + '>中心設在手指位置</button><div id="tpxy">' + tpFields(d) + '</div></div><div class="col">' +
     sw('stp', '觸控板移動滑鼠游標', d.tpOn) + slider('tpSens', '游標速度', 0.1, 10, 0.1, d.tpSens, d.tpSens.toFixed(1) + '×') +
@@ -290,7 +296,7 @@ export async function startSettings(board) {
     const f = ev.target.dataset?.f, d = state.draft;
     if (!state.setOpen || !f || !d) return;
     const n = +ev.target.value;
-    if (f === 'deadzone' || f === 'trigger' || f === 'tpSens') {
+    if (f === 'deadzone' || f === 'trigger' || f === 'tpSens' || f === 'curStick' || f === 'curDpad') {
       d[f] = n;
       const out = board.querySelector('[data-out="' + f + '"]');
       if (out) out.textContent = f === 'deadzone' ? n.toFixed(2) : f === 'trigger' ? Math.round(n * 100) + '%' : n.toFixed(1) + '×';

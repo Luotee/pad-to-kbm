@@ -5,6 +5,7 @@ import { MAIN, NAV, LABEL, U, GAP, ROW } from './keys.js';
 import { esc } from './tags.js';
 import { routeHTML } from './layout.js';
 import { ICON } from './icons.js';
+import { CURSOR_TILE } from './model.js';
 
 export const PER = 8;
 
@@ -15,6 +16,15 @@ function arrowSvg(k) {
   const r = 'rotate(' + ARW[k] + ' 3.5 3.5)';
   return '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><g transform="translate(1 1)"><path d="' + UP + '" transform="' + r +
     '" fill="rgba(10,0,4,.8)"/></g><path d="' + UP + '" transform="' + r + '" fill="#fff"/></svg>';
+}
+
+// 游標 (v3.9.0): a 7×11 pixel mouse pointer, dark outline over white, with a 1px shadow like the arrows.
+const PTR = ['X......', 'XX.....', 'XWX....', 'XWWX...', 'XWWWX..', 'XWWWWX.', 'XWWWWWX', 'XWWXXXX', 'XWX....', 'XX.....', 'X......'];
+const ptrPath = c => PTR.flatMap((r, y) => [...r].map((v, x) => v === c ? 'M' + x + ' ' + y + 'h1v1h-1z' : '')).join('');
+const PTR_INK = ptrPath('X'), PTR_FILL = ptrPath('W');
+export function pointerSvg() {
+  return '<svg class="ptr" width="8" height="12" viewBox="0 0 8 12" aria-hidden="true"><g transform="translate(1 1)"><path d="' + PTR_INK +
+    '" fill="rgba(10,0,4,.55)"/></g><path d="' + PTR_INK + '" fill="#1d1420"/><path d="' + PTR_FILL + '" fill="#fff"/></svg>';
 }
 
 // `used`: tiles already bound on the shown pad, drawn pale (display only; they still drag and copy).
@@ -57,11 +67,16 @@ export function mouseHTML(st, used = new Set()) {
   const t = (key, x, y) => '<button type="button" class="tile' + (st.picked === key ? ' picked' : '') + (st.hot[key] ? ' hit' : '') + (used.has(key) ? ' used' : '') +
     '" draggable="true" data-tile="' + key + '" style="left:' + x + 'px;top:' + y + 'px;width:51px">' + key + '</button>';
   h += t('左鍵', 4, 4) + t('右鍵', 174, 4) + t('上滾', 174, 97) + t('中鍵', 174, 123) + t('下滾', 174, 150);
+  // 游標 (v3.9.0) bottom-left, level with 下滾: pointer + name, its line into the mouse body.
+  const c = CURSOR_TILE;
+  h += '<button type="button" class="tile cur' + (st.picked === c ? ' picked' : '') + (used.has(c) ? ' used' : '') +
+    '" draggable="true" data-tile="' + c + '" style="left:4px;top:150px;width:62px"><span class="ci">' + pointerSvg() + '<span>' + c + '</span></span></button>';
   h += '<svg class="lines" viewBox="0 0 260 210" aria-hidden="true">' +
     routeHTML([[62, 16], [80, 16], [80, 45]], 0, 'c') + routeHTML([[198, 16], [150, 16], [150, 45]], 0, 'c') +
     routeHTML([[198, 122], [192, 122], [192, 50], [115, 50]], 0, 'c') +
     routeHTML([[198, 152], [184, 152], [184, 68], [115, 68]], 0, 'c') +
-    routeHTML([[198, 182], [176, 182], [176, 86], [115, 86]], 0, 'c') + '</svg>';
+    routeHTML([[198, 182], [176, 182], [176, 86], [115, 86]], 0, 'c') +
+    routeHTML([[75, 182], [80, 182], [80, 150]], 0, 'c') + '</svg>';
   return h + '</div>';
 }
 
@@ -94,7 +109,7 @@ export function macroBoxHTML(st, lock, used = new Set()) {
 const cx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
 export function fitKeyLabels(root) {
   for (const el of root.querySelectorAll('.pal .tile')) {
-    if (el.closest('.mt')) continue;
+    if (el.closest('.mt') || el.classList.contains('cur')) continue;
     el.style.justifyContent = 'flex-start';
     if (el.firstElementChild?.tagName === 'svg') { el.style.paddingLeft = Math.floor((el.clientWidth - 8) / 2) + 'px'; continue; }
     const kb = !!el.closest('.kbd');
@@ -115,6 +130,7 @@ export function fitKeyLabels(root) {
 
 // The drag image of a key (reskin Q7 C): the 38px bound slot it will become.
 export function dragGhostHTML(key) {
+  if (key === CURSOR_TILE) return '<div class="slot on cur dragimg"><span class="val ic">' + pointerSvg() + '</span></div>';
   const mac = key.startsWith('M:');
   return '<div class="slot on' + (mac ? ' mac' : '') + ' dragimg"><span class="val">' + esc(mac ? key.slice(2) : (LABEL[key] || key)) + '</span></div>';
 }

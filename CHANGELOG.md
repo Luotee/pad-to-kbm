@@ -3,6 +3,48 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-11-10
+
+### Added
+
+- **游標: a stick or the D-pad moves the mouse.** A new tile, 游標, sits
+  bottom-left of the mouse, its line into the mouse body. Drop it on any
+  of the four directions of the left stick, the right stick, the D-pad or
+  a quick page's D-pad, and all four turn blue with a pointer: that stick
+  or D-pad now moves the mouse cursor. A stick moves faster the further it
+  is pushed past the deadzone (squared, so a light push aims); the D-pad
+  starts slow and speeds up to full speed in about half a second, diagonals
+  no faster than straight. Several groups can hold it at once and their
+  movement adds up (say, the right stick for big moves, the D-pad to fine
+  tune). A quick page's D-pad moves the cursor only while its trigger is
+  held. The stick press (L3 / R3) keeps its own binding.
+- While 游標 is dragged (or picked with a click), the slots that cannot take
+  it dim and each group that can gets one dashed outline around its four
+  slots; the group under the pointer turns solid. Slots do not change until
+  the drop, as with every other tile.
+- 設定 → 搖桿 has two new sliders, 搖桿移動游標的速度 and 十字鍵移動游標的速度
+  (0.1× to 10×). Config: `cursor_stick_speed`, `cursor_dpad_speed`
+  (default 1.0).
+
+### Changed
+
+- The four slots of a 游標 group act as one: a key dropped on one of them
+  takes that slot and empties the other three; clearing one (drag out,
+  double-click) clears all four; dragging one onto another stick or D-pad
+  swaps the two groups direction for direction. Letting a cursor go over a
+  slot that cannot take it changes nothing. The rules are in Rust
+  (`set_binding`, `swap_bindings`) and the config check: a hand-edited file
+  with the cursor on one slot, or on a slot outside these groups, is
+  refused with the ids named.
+- Anti-cheat: each cursor step varies by ±10 % and keeps the sub-pixel
+  remainder, so the movement has no fixed rhythm. The per-step movement is
+  not written to the event log.
+
+### Migration
+
+- None. `{"type": "cursor"}` is new; older configs load unchanged and get
+  both speeds at 1.0.
+
 ## [3.8.0] - 2026-11-09
 
 This release also carries v3.6.0 and v3.7.0 (below), which were not

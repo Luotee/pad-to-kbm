@@ -616,3 +616,21 @@ html,body,#app{background:transparent !important}
   white-space:nowrap;pointer-events:none;background:#778593;clip-path:var(--notch);color:#fff;font-size:12px;line-height:12px}
 .mock .btip>span{display:block;height:12px}
 .mock .pdw:hover .btip{display:flex}
+/* 游標 (v3.9.0): its own blue on the palette and on the four slots it covers; a pixel pointer in place of a name. */
+.mock .slot.on.cur{background:#7fa6c9;border:0;box-shadow:0 0 0 1px #10243a,inset 1px 1px 0 #f2fbff,inset 2px 0 0 #9bbcd8,inset -1px -1px 0 #567c9e,inset -2px 0 0 #86a9c8}
+.mock .slot .val.ic,.mock .slot.on .val.ic{line-height:0;right:5px;bottom:4px;padding:0}
+.mock .tile.cur{background:#7fa6c9;border-color:#10243a;box-shadow:0 0 0 1px #5e5d6a,inset 1px 1px 0 #f2fbff,inset -1px -1px 0 #567c9e;justify-content:center;padding:0}
+.mock .tile.cur .ci{display:flex;align-items:center;gap:4px}
+.mock .tile.cur .ci>span{width:24px;flex:none}
+.mock .pal .tile.cur.used{background:#c9d8e6;border-color:#6f8aa3;box-shadow:0 0 0 1px #9aa3ad,inset 1px 1px 0 #f1f6fa,inset -1px -1px 0 #a9bccd;text-shadow:0 1px 0 #6f8aa3,1px 1px 0 #6f8aa3bf,1px 0 0 #6f8aa380}
+.mock .pal .tile.cur.used svg path:first-of-type{fill:#6f8aa3}
+.mock .tile.cur.picked{background:#ffcf2e;border-color:#7a5c00;color:#3a2a00;text-shadow:none}
+/* 6A1: while 游標 is picked or dragged, the slots that cannot take it dim and each group that can gets one
+   plus-shaped dashed outline (never a ring per slot: the D-pad's slots touch); the group under the pointer turns solid. */
+.mock .cdim{opacity:.35}
+.mock .csil{position:absolute;left:0;top:0;width:980px;height:640px;pointer-events:none;overflow:visible;z-index:4}
+.mock .csil path{fill:none;stroke-linejoin:miter}
+.mock .csil .o{stroke:#7a5c00;stroke-width:4;stroke-dasharray:6 4}
+.mock .csil .i{stroke:#ffcf2e;stroke-width:2;stroke-dasharray:6 4}
+.mock .csil .hov .o{stroke-width:5;stroke-dasharray:none}
+.mock .csil .hov .i{stroke-width:3;stroke-dasharray:none;filter:drop-shadow(0 0 4px rgba(255,207,46,.9))}
