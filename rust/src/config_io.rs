@@ -180,6 +180,14 @@ impl ConfigDoc {
         self.raw["hidhide_prompt_dismissed"] = Value::from(v);
     }
 
+    /// 游標 speeds (v3.9.0): a stick group's and a D-pad group's.
+    pub fn set_cursor_speeds(&mut self, stick: f32, dpad: f32) {
+        self.typed.cursor_stick_speed = stick;
+        self.typed.cursor_dpad_speed = dpad;
+        self.raw["cursor_stick_speed"] = Value::from(stick);
+        self.raw["cursor_dpad_speed"] = Value::from(dpad);
+    }
+
     pub fn set_touchpad_click_freeze_enabled(&mut self, v: bool) {
         self.typed.touchpad_click_freeze_enabled = v;
         self.raw["touchpad_click_freeze_enabled"] = Value::from(v);

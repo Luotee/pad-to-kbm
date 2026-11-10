@@ -123,6 +123,8 @@ struct HandleInner {
     /// order. Runtime only: never written to the config, cleared by restart.
     off_pads: RwLock<Vec<ControllerKind>>,
     capture_active: AtomicBool,
+    /// Dry run: the total mouse movement asked for (engine tests).
+    mouse_moved: Arc<Mutex<(i64, i64)>>,
     shutdown: AtomicBool,
     event_tx: Sender<EngineEvent>,
     event_rx: Receiver<EngineEvent>,
@@ -456,6 +458,11 @@ impl Handle {
     /// call. Works only when spawned via `Engine::spawn_with_fake_gamepad`;
     /// 0 otherwise.
     #[doc(hidden)]
+    /// Dry run: the total mouse movement the engine asked for so far.
+    pub fn fake_mouse_moved(&self) -> (i64, i64) {
+        *self.inner.mouse_moved.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn fake_rumbles_received(&self) -> usize {
         self.fake_cmds_received(SourceCmd::Rumble)
     }
@@ -634,6 +641,7 @@ impl Engine {
             paused: AtomicBool::new(false),
             off_pads: RwLock::new(Vec::new()),
             capture_active: AtomicBool::new(false),
+            mouse_moved: Arc::new(Mutex::new((0, 0))),
             shutdown: AtomicBool::new(false),
             event_tx,
             event_rx,
@@ -695,7 +703,10 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     let mut sink = KeyboardSink::new(h.key_state.clone(), tick_jitter_ms, min_press_ms, dry_run)
         .expect("KeyboardSink::new failed");
     let mut mouse_sink = MouseSink::new(h.key_state.clone(), dry_run)
-        .expect("MouseSink::new failed");
+        .expect("MouseSink::new failed")
+        .with_move_total(h.mouse_moved.clone());
+    // 游標 (v3.9.0): the time of the last cursor step.
+    let mut cursor_at = Instant::now();
 
     // Set up macro → keyboard channel (std::sync::mpsc, matching MacroEngine).
     let (macro_tx, macro_rx) = std::sync::mpsc::channel::<KeyAction>();
@@ -977,7 +988,16 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                 }
                 execute_action(&action, &mut sink, &mut mouse_sink, &mut macros, mapper.config(), &h.event_tx, &mut elog);
             }
+
+            // ── 游標: a stick / D-pad group moves the mouse, once per tick ───
+            let dt = cursor_at.elapsed().as_secs_f32();
+            if mapping_on && !pad_off && !h.capture_active.load(Ordering::SeqCst) {
+                if let Some(action) = mapper.cursor_step(dt) {
+                    execute_action(&action, &mut sink, &mut mouse_sink, &mut macros, mapper.config(), &h.event_tx, &mut elog);
+                }
+            }
         }
+        cursor_at = Instant::now();
 
         // ── Connected pads / battery: re-publish the status on a change ─────
         // (a second pad connects or leaves while the owner keeps the session,

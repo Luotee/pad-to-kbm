@@ -23,7 +23,7 @@ For the current version see [CHANGELOG.md](CHANGELOG.md).
 
 | Problem | What PadToKBM does |
 |---|---|
-| The game only takes keyboard and mouse | Controller buttons send keys, mouse buttons and the wheel; the DualSense touchpad can move the mouse cursor |
+| The game only takes keyboard and mouse | Controller buttons send keys, mouse buttons and the wheel; a stick, the D-pad or the DualSense touchpad can move the mouse cursor |
 | Editing a config file to bind keys is a pain | Drag: a tile onto a slot binds it, a slot onto another swaps them, a slot dragged out is cleared; undo / redo |
 | Not enough buttons | **Quick pages** (快捷頁): while L2 / ZL (or R2 / ZR) is held, the D-pad and the four face buttons become another set of 8 keys |
 | Rapid fire or a combo takes many presses | **Macros** (巨集): record presses and releases, optionally looping; every step's delay is a min–max range |

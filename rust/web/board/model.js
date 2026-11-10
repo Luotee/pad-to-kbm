@@ -8,6 +8,15 @@ export const PADS = ['dualsense', 'ns_pro', 'ns2_pro', 'xbox_nano'];
 export const PAD_NAMES = { dualsense: 'DualSense', ns_pro: 'Switch Pro', ns2_pro: 'Switch 2 Pro', xbox_nano: 'Xbox Nano' };
 export const QUICK_IDS = [0, 1, 2, 3, 11, 12, 13, 14];
 export const MOUSE_TILE = { left: '左鍵', right: '右鍵', middle: '中鍵', 'wheel-up': '上滾', 'wheel-down': '下滾' };
+// 游標 (v3.9.0): one tile, `{type: 'cursor'}`, covering a stick's or a D-pad's four directions. The groups,
+// ↑ ↓ ← →, are display only here (which slots light up while it is dragged); Rust applies the group rules.
+export const CURSOR_TILE = '游標';
+const CURSOR_GROUPS = [['15', '16', '17', '18'], ['19', '20', '21', '22'], ['11', '12', '13', '14'],
+  ['L11', 'L12', 'L13', 'L14'], ['R11', 'R12', 'R13', 'R14']];
+export function cursorGroup(key) {
+  return CURSOR_GROUPS.find(g => g.includes(String(key))) || null;
+}
+export function cursorGroups() { return CURSOR_GROUPS; }
 const MOUSE_VALUE = Object.fromEntries(Object.entries(MOUSE_TILE).map(([v, t]) => [t, v]));
 const PAGE_FIELD = { base: 'buttons', quick_l: 'quick_l', quick_r: 'quick_r' };
 
@@ -32,6 +41,7 @@ export function tileOfEntry(e) {
   if (e.type === 'key') return keyToTile(e.value);
   if (e.type === 'mouse') return MOUSE_TILE[e.value] || e.value;
   if (e.type === 'macro') return 'M:' + e.value;
+  if (e.type === 'cursor') return CURSOR_TILE;
   return '';
 }
 
@@ -49,6 +59,7 @@ export function boardBinds(config, pad) {
 export function entryForTile(tile, label) {
   if (!tile) return { label, type: 'unbound' };
   if (tile.startsWith('M:')) return { label, type: 'macro', value: tile.slice(2) };
+  if (tile === CURSOR_TILE) return { label, type: 'cursor' };
   if (MOUSE_VALUE[tile]) return { label, type: 'mouse', value: MOUSE_VALUE[tile] };
   return { label, type: 'key', value: tileToKey(tile) };
 }

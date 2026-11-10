@@ -35,6 +35,12 @@ pub struct Config {
     pub touchpad_deadzone_radius: u32,
     #[serde(default = "default_touchpad_click_freeze_enabled")]
     pub touchpad_click_freeze_enabled: bool,
+    /// 游標 speed of a stick group (v3.9.0), × 1200 px/s at full push.
+    #[serde(default = "default_cursor_speed")]
+    pub cursor_stick_speed: f32,
+    /// 游標 speed of a D-pad group (v3.9.0), × the 150 → 900 px/s ramp.
+    #[serde(default = "default_cursor_speed")]
+    pub cursor_dpad_speed: f32,
     /// Pre-v3.6.0 per-controller switch, keyed by `ControllerKind::slug()`.
     /// Read only as the fallback for a slug missing from `output_mode`
     /// (`output_mode_for`); `ConfigDoc::set_output_mode` removes its entry.
@@ -162,6 +168,7 @@ fn default_touchpad_accel_gain_slow() -> f32 { 0.5 }
 fn default_touchpad_accel_gain_fast() -> f32 { 1.5 }
 fn default_touchpad_deadzone_radius() -> u32 { 2 }
 fn default_touchpad_click_freeze_enabled() -> bool { true }
+pub(crate) fn default_cursor_speed() -> f32 { 1.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ButtonEntry {
@@ -176,6 +183,9 @@ pub enum Binding {
     Key(String),
     Macro(String),
     Mouse(MouseButton),
+    /// 游標 (v3.9.0): the slot's group of four (a stick, the D-pad or a
+    /// quick page's D-pad) moves the mouse. `{"type": "cursor"}`.
+    Cursor,
     Unbound,
 }
 
@@ -214,7 +224,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use std::path::Path;
 
 use crate::gamepad::ControllerKind;
-use crate::pad_bindings::{default_pad_bindings, Page, PadBindings, QUICK_IDS};
+use crate::pad_bindings::{cursor_group, default_pad_bindings, Page, PadBindings, CURSOR_GROUPS, QUICK_IDS};
 
 /// The on-disk config version this build writes.
 pub const CONFIG_VERSION: u32 = 2;
@@ -402,6 +412,11 @@ impl Config {
                 self.touchpad_cursor_sensitivity
             );
         }
+        for (name, v) in [("cursor_stick_speed", self.cursor_stick_speed), ("cursor_dpad_speed", self.cursor_dpad_speed)] {
+            if !(0.1..=10.0).contains(&v) {
+                bail!("{name} must be in [0.1, 10.0], got {v}");
+            }
+        }
         if !(1..=4094).contains(&self.touchpad_midpoint_x) {
             bail!(
                 "touchpad_midpoint_x must be in [1, 4094], got {}",
@@ -538,8 +553,25 @@ impl Config {
                     Binding::Key(key) => {
                         parse_key(key).with_context(|| format!("pads.{slug}.{name}: button {id}"))?;
                     }
+                    Binding::Cursor => {
+                        let in_group = id.parse::<u32>().ok().and_then(|n| cursor_group(page, n)).is_some();
+                        if !in_group {
+                            bail!("pads.{slug}.{name}: button {id} cannot hold the cursor (only a stick's or a D-pad's four directions)");
+                        }
+                    }
                     _ => {}
                 }
+            }
+        }
+        // A 游標 group is all cursor or not cursor at all.
+        for (page, ids) in CURSOR_GROUPS {
+            let table = pad.table(page);
+            let on = |id: &u32| table.get(&id.to_string()).is_some_and(|e| e.binding == Binding::Cursor);
+            let n = ids.iter().filter(|id| on(id)).count();
+            if n != 0 && n != 4 {
+                let name = match page { Page::Base => "buttons", Page::QuickL => "quick_l", Page::QuickR => "quick_r" };
+                bail!("pads.{slug}.{name}: the cursor must cover all of {ids:?}, not only {:?}",
+                    ids.iter().filter(|id| on(id)).collect::<Vec<_>>());
             }
         }
         Ok(())
@@ -844,6 +876,8 @@ mod tests {
             touchpad_accel_gain_fast: 1.5,
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
+            cursor_stick_speed: 1.0,
+            cursor_dpad_speed: 1.0,
             mapping_enabled: Default::default(),
             output_mode: Default::default(),
             rumble_on_connect: true,
@@ -982,6 +1016,8 @@ mod tests {
             touchpad_accel_gain_fast: 1.5,
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
+            cursor_stick_speed: 1.0,
+            cursor_dpad_speed: 1.0,
             mapping_enabled: Default::default(),
             output_mode: Default::default(),
             rumble_on_connect: true,

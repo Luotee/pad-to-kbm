@@ -86,6 +86,32 @@ pub struct PadBindings {
 /// The ids a quick page may hold: face buttons 0..=3 and D-pad 11..=14.
 pub const QUICK_IDS: [u32; 8] = [0, 1, 2, 3, 11, 12, 13, 14];
 
+/// 游標 groups (v3.9.0): the four direction ids of each stick and D-pad,
+/// in the order ↑ ↓ ← →. A `Binding::Cursor` covers a whole group.
+pub const STICK_GROUPS: [[u32; 4]; 2] = [[15, 16, 17, 18], [19, 20, 21, 22]];
+pub const DPAD_GROUP: [u32; 4] = [11, 12, 13, 14];
+
+/// The 游標 group holding (`page`, `id`): either stick or the D-pad on the
+/// base table, the D-pad on a quick page; `None` for any other slot.
+pub fn cursor_group(page: Page, id: u32) -> Option<[u32; 4]> {
+    if DPAD_GROUP.contains(&id) {
+        return Some(DPAD_GROUP);
+    }
+    match page {
+        Page::Base => STICK_GROUPS.into_iter().find(|g| g.contains(&id)),
+        Page::QuickL | Page::QuickR => None,
+    }
+}
+
+/// Every 游標 group of a pad, with its page.
+pub const CURSOR_GROUPS: [(Page, [u32; 4]); 5] = [
+    (Page::Base, STICK_GROUPS[0]),
+    (Page::Base, STICK_GROUPS[1]),
+    (Page::Base, DPAD_GROUP),
+    (Page::QuickL, DPAD_GROUP),
+    (Page::QuickR, DPAD_GROUP),
+];
+
 /// The label of every button id, as shipped in `config.example.json`.
 pub const LABELS: [&str; 33] = [
     "Cross（叉叉）",

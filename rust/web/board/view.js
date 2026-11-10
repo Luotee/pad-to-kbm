@@ -5,8 +5,8 @@ import { layoutFor, slotsOf, groupSlots, routeHTML } from './layout.js';
 import { padSvg } from './padart.js';
 import { esc, tagSvg, TAGTXT, switchHTML } from './tags.js';
 import { LABEL } from './keys.js';
-import { boardBinds, PADS, PAD_NAMES, slotOff } from './model.js';
-import { keyboardHTML, mouseHTML, macroBoxHTML } from './palette.js';
+import { boardBinds, PADS, PAD_NAMES, slotOff, CURSOR_TILE, cursorGroup, cursorGroups } from './model.js';
+import { keyboardHTML, mouseHTML, macroBoxHTML, pointerSvg } from './palette.js';
 import { ICON } from './icons.js';
 import { battSvg, tipHTML } from './battery.js';
 import { editorHTML } from './macros.js';
@@ -82,13 +82,32 @@ export function disp(k) {
 }
 
 function slotBtn(st, key, tag, x, y, b) {
-  const k = b[key] || '', mac = k.startsWith('M:'), wait = st.sel === key, off = slotOff(st.pad, key);
+  const k = b[key] || '', mac = k.startsWith('M:'), cur = k === CURSOR_TILE, wait = st.sel === key, off = slotOff(st.pad, key);
+  // 游標 picked in the palette: the slots that cannot take it dim, like during its drag (events.js).
+  const dim = st.picked === CURSOR_TILE && !cursorGroup(key);
   // A slot the pad never sends (the Nano's Share) is greyed out and disabled; events.js ignores it too.
-  return '<button type="button" class="slot' + (k ? ' on' : '') + (mac ? ' mac' : '') + (st.held[key] ? ' hit' : '') + (wait ? ' wait sel' : '') +
+  return '<button type="button" class="slot' + (k ? ' on' : '') + (mac ? ' mac' : '') + (cur ? ' cur' : '') + (dim ? ' cdim' : '') + (st.held[key] ? ' hit' : '') + (wait ? ' wait sel' : '') +
     '" style="left:' + x + 'px;top:' + y + 'px" data-slot="' + key + '" draggable="' + (k && !off ? 'true' : 'false') + '"' +
     (off ? ' disabled title="' + esc(off) + '"' : '') + ' aria-label="' +
     esc((TAGTXT[tag] || tag) + (off ? '：無法使用' : k ? '：' + (mac ? '巨集 ' : '') + disp(k) : '：未設定')) + '"><span class="tag">' + tagSvg(tag) + '</span>' +
-    '<span class="val">' + esc(disp(k)) + '</span></button>';
+    (cur ? '<span class="val ic">' + pointerSvg() + '</span>' : '<span class="val">' + esc(disp(k)) + '</span>') + '</button>';
+}
+
+// 6A1 (v3.9.0): while 游標 is picked or dragged, each group that can take it gets one plus-shaped dashed
+// outline around its four slots (never one ring per slot: the D-pad's slots touch); the group under the
+// pointer turns solid. Slots stay as they are until the drop, like every other tile.
+export function cursorSilHTML(L, hov) {
+  const pos = {};
+  for (const g of L.groups) for (const s of groupSlots(g)) pos[s.key] = s;
+  let h = '<svg class="csil" viewBox="0 0 980 640" aria-hidden="true">';
+  for (const ids of cursorGroups()) {
+    const [u, d, l, r] = ids.map(k => pos[k]);
+    if (!u || !d || !l || !r) continue;
+    const p = 3, vx0 = u.x - p, vx1 = u.x + 38 + p, vy0 = u.y - p, vy1 = d.y + 38 + p, hx0 = l.x - p, hx1 = r.x + 38 + p, hy0 = l.y - p, hy1 = l.y + 38 + p;
+    const pts = [[vx0, vy0], [vx1, vy0], [vx1, hy0], [hx1, hy0], [hx1, hy1], [vx1, hy1], [vx1, vy1], [vx0, vy1], [vx0, hy1], [hx0, hy1], [hx0, hy0], [vx0, hy0]];
+    h += '<g data-cg="' + ids[0] + '"' + (hov && ids.includes(hov) ? ' class="hov"' : '') + '>' + ['o', 'i'].map(c => '<path class="' + c + '" d="M' + pts.map(q => q.join(' ')).join('L') + 'Z"/>').join('') + '</g>';
+  }
+  return h + '</svg>';
 }
 
 // L2 / R2 (ZL / ZR): a caption plate holding the name and one framed two-cell field, like the 燈條 dropdown.
@@ -136,7 +155,7 @@ export function render(st) {
   else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om, pad) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {
-    if (g.q) h += '<div class="qcap" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 66) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';
+    if (g.q) h += '<div class="qcap' + (st.picked === CURSOR_TILE ? ' cdim' : '') + '" style="left:' + (g.x - 124) + 'px;top:' + (g.y - 66) + 'px">' + qcapHTML(pad, g.q, g.q === 'L' ? modes.l : modes.r) + '</div>';
     // One dark plate under every slot; touching slots merge into one group base (MapleStory quick slot).
     for (const s of groupSlots(g)) h += '<i class="plate" style="left:' + (s.x - 2) + 'px;top:' + (s.y - 2) + 'px"></i>';
     for (const s of groupSlots(g)) {
@@ -145,7 +164,8 @@ export function render(st) {
     }
   }
   // Lines last: always on top (spec 4.3).
-  h += '<svg class="lines" viewBox="0 0 980 640" aria-hidden="true">' + L.routes.map(r => routeHTML(r.pts, r.r, r.m, !!hot[r.g])).join('') + '</svg>';
+  h += '<svg class="lines' + (st.picked === CURSOR_TILE ? ' cdim' : '') + '" viewBox="0 0 980 640" aria-hidden="true">' + L.routes.map(r => routeHTML(r.pts, r.r, r.m, !!hot[r.g])).join('') + '</svg>';
+  if (st.picked === CURSOR_TILE) h += cursorSilHTML(L, null);
   const lock = st.medit ? ' locked' : '';
   const waiting = st.sel !== null && !st.medit;
   // Tiles already bound on this pad are drawn pale (display only, iron rule 9).

@@ -135,6 +135,8 @@ function tauriMock({ config, version }) {
     if (page !== 'base' && entry.type === 'unbound') delete t[String(id)];
     else t[String(id)] = clone(entry);
   }
+  const CURSOR_GROUPS = { base: [[15, 16, 17, 18], [19, 20, 21, 22], [11, 12, 13, 14]], quick_l: [[11, 12, 13, 14]], quick_r: [[11, 12, 13, 14]] };
+  const cursorGroupOf = (page, id) => (CURSOR_GROUPS[page] || []).find(g => g.includes(Number(id))) || null;
   function get(pad, page, id) {
     return state.config.pads[pad][FIELD[page]][String(id)] || { label: LABELS[id] || '', type: 'unbound' };
   }
@@ -166,11 +168,30 @@ function tauriMock({ config, version }) {
       case 'get_app_version': return version;
       case 'get_config_path': return 'D:\\Games\\PadToKBM\\padtokbm.json';
       case 'get_stick_positions': return state.sticks ? clone(state.sticks) : null;
-      case 'set_binding': put(a.pad, a.page, a.id, a.entry); changed(); return null;
+      case 'set_binding': {
+        // 游標 (v3.9.0), as commands.rs: a cursor covers the slot's group; anything else on a cursor slot
+        // empties the other three.
+        const g = cursorGroupOf(a.page, a.id);
+        if (a.entry.type === 'cursor') {
+          if (!g) throw `button ${a.id} cannot hold the cursor (only a stick's or a D-pad's four directions)`;
+          for (const i of g) put(a.pad, a.page, i, { label: LABELS[i] || '', type: 'cursor' });
+        } else {
+          if (g && get(a.pad, a.page, a.id).type === 'cursor') for (const i of g) if (i !== a.id) put(a.pad, a.page, i, { label: LABELS[i] || '', type: 'unbound' });
+          put(a.pad, a.page, a.id, a.entry);
+        }
+        changed(); return null;
+      }
       case 'swap_bindings': {
-        const ea = get(a.pad, a.pageA, a.idA), eb = get(a.pad, a.pageB, a.idB);
-        put(a.pad, a.pageA, a.idA, { ...eb, label: ea.label });
-        put(a.pad, a.pageB, a.idB, { ...ea, label: eb.label });
+        const one = (pa, ia, pb, ib) => {
+          const ea = get(a.pad, pa, ia), eb = get(a.pad, pb, ib);
+          put(a.pad, pa, ia, { ...eb, label: ea.label });
+          put(a.pad, pb, ib, { ...ea, label: eb.label });
+        };
+        if (get(a.pad, a.pageA, a.idA).type === 'cursor' || get(a.pad, a.pageB, a.idB).type === 'cursor') {
+          const ga = cursorGroupOf(a.pageA, a.idA), gb = cursorGroupOf(a.pageB, a.idB);
+          if (!ga || !gb) throw "the cursor only goes on a stick's or a D-pad's four directions";
+          if (a.pageA !== a.pageB || ga[0] !== gb[0]) ga.forEach((ia, i) => one(a.pageA, ia, a.pageB, gb[i]));
+        } else one(a.pageA, a.idA, a.pageB, a.idB);
         changed(); return null;
       }
       case 'set_trigger_mode': c.pads[a.pad].trigger_mode[a.side] = a.mode; changed(); return null;
@@ -2400,6 +2421,115 @@ try {
       }
     }
     await page.click('#board .hdr [data-pad="dualsense"]');
+    await settle(page);
+  }
+
+  // ── v3.9.0: 游標 — a stick's or a D-pad's four directions move the mouse ──────────────────────────
+  // One tile bottom-left of the mouse (level with 下滾, its line into the body); a drop on any of a group's four
+  // slots covers all four (blue, pointer icon). While it is dragged or picked, the slots that cannot take it dim
+  // and each group that can gets one plus-shaped dashed outline (6A1); the hovered group turns solid.
+  {
+    await page.click('#board .hdr [data-pad="dualsense"]');
+    await page.click('#board [data-act="reset"]');
+    await settle(page);
+    const ct = tile(page, '游標');
+    const pos = await page.evaluate(() => {
+      const r = e => e.getBoundingClientRect(), m = document.querySelector('#board .m3');
+      const c = m.querySelector('[data-tile="游標"]'), d = m.querySelector('[data-tile="下滾"]'), l = m.querySelector('[data-tile="左鍵"]');
+      return { left: r(c).left - r(m).left, top: r(c).top, dTop: r(d).top, lLeft: r(l).left - r(m).left, w: r(c).width,
+        lines: m.querySelectorAll('.lines g').length, svg: !!c.querySelector('svg.ptr'), text: c.textContent.trim() };
+    });
+    check('游標 tile: bottom-left of the mouse, level with 下滾, under 左鍵, pointer + 游標', pos.top === pos.dTop && pos.left === pos.lLeft && pos.svg && pos.text === '游標' && pos.w === 62, JSON.stringify(pos));
+    check('游標 tile has its line into the mouse (six lines in all)', pos.lines === 6, String(pos.lines));
+
+    // Drag the tile by hand, so the board can be read mid-drag.
+    const centre = async loc => { const b = await loc.boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+    const midDrag = async (from, over) => {
+      await page.mouse.move(...await centre(from));
+      await page.mouse.down();
+      await page.mouse.move(...(await centre(over)).map(v => v + 3), { steps: 6 });
+      await page.mouse.move(...await centre(over), { steps: 3 });
+      await page.waitForTimeout(60);
+    };
+    await midDrag(ct, slot(page, '12'));
+    const mid = await page.evaluate(() => {
+      const g = [...document.querySelectorAll('#board .csil [data-cg]')];
+      const dim = k => document.querySelector(`#board [data-slot="${k}"]`).classList.contains('cdim');
+      const ring = [...document.querySelectorAll('#board .slot')].filter(s => getComputedStyle(s).outlineStyle !== 'none').map(s => s.dataset.slot);
+      return { groups: g.map(e => e.dataset.cg).sort(), hov: g.filter(e => e.classList.contains('hov')).map(e => e.dataset.cg),
+        dimmed: ['0', '3', '7', '9', '25', 'L0'].every(dim), lit: ['11', '12', '15', '19', 'L11', 'R14'].every(k => !dim(k)),
+        lines: document.querySelector('#board > .lines, #board .lines').classList.contains('cdim'), ring };
+    });
+    await page.screenshot({ path: path.join(outDir, 'web-cursor-drag.png') });
+    check('dragging 游標: five groups outlined (both sticks, D-pad, both quick-page D-pads)', JSON.stringify(mid.groups) === JSON.stringify(['11', '15', '19', 'L11', 'R11']), JSON.stringify(mid.groups));
+    check('dragging 游標: the hovered group (D-pad) alone is solid', JSON.stringify(mid.hov) === '["11"]', JSON.stringify(mid.hov));
+    check('dragging 游標: other slots and the lines dim, the group slots do not', mid.dimmed && mid.lit && mid.lines, JSON.stringify(mid));
+    check('dragging 游標: no slot draws its own ring (6A1)', mid.ring.length === 0, mid.ring.join(','));
+    await page.mouse.up();
+    await settle(page);
+    const cb = await lastCall(page, 'set_binding');
+    check('drop 游標 on D-pad ↓ → set_binding (dualsense, base, 12, cursor)', cb?.args?.pad === 'dualsense' && cb.args.page === 'base' && cb.args.id === 12 && cb.args.entry.type === 'cursor', JSON.stringify(cb?.args));
+    const curOf = keys => page.evaluate(ks => ks.map(k => { const e = document.querySelector(`#board [data-slot="${k}"]`); return !!e && e.classList.contains('cur') && !!e.querySelector('.val svg.ptr'); }), keys);
+    check('the D-pad\'s four slots turn 游標 (blue, pointer)', (await curOf(['11', '12', '13', '14'])).every(Boolean));
+    check('after the drop: nothing dimmed or outlined', (await page.locator('#board .cdim').count()) === 0 && (await page.locator('#board .csil').count()) === 0);
+    check('游標 tile drawn pale once used', await ct.evaluate(e => e.classList.contains('used')));
+
+    // A cursor slot let go over a slot that cannot take it: nothing happens (not a drag-out clear).
+    const before = (await calls(page)).length;
+    await midDrag(slot(page, '13'), slot(page, '0'));
+    const refused = await page.evaluate(() => document.querySelectorAll('#board .csil .hov').length);
+    await page.mouse.up();
+    await settle(page);
+    check('cursor slot over Cross: no group solid, letting go changes nothing', refused === 0 && (await calls(page)).length === before && (await curOf(['11', '12', '13', '14'])).every(Boolean),
+      `hov ${refused}, calls ${(await calls(page)).slice(before).map(c => c.cmd).join(',')}`);
+
+    // Cursor slot onto the left stick: the two groups swap, direction for direction.
+    await slot(page, '13').dragTo(slot(page, '17'));
+    await settle(page);
+    const sw = await lastCall(page, 'swap_bindings');
+    check('drag the D-pad cursor onto the left stick → swap_bindings (13 ↔ 17)', sw?.args?.idA === 13 && sw.args.idB === 17, JSON.stringify(sw?.args));
+    check('left stick is now 游標, the D-pad has the stick\'s arrows', (await curOf(['15', '16', '17', '18'])).every(Boolean) &&
+      JSON.stringify(await Promise.all(['11', '12', '13', '14'].map(k => slotText(page, k)))) === '["↑","↓","←","→"]');
+
+    // A key dropped on one cursor slot: that slot takes the key, the other three empty.
+    await tile(page, 'W').dragTo(slot(page, '15'));
+    await settle(page);
+    check('W on 搖桿上 → 15 = W, 16–18 empty', (await slotText(page, '15')) === 'W' &&
+      JSON.stringify(await Promise.all(['16', '17', '18'].map(k => slotText(page, k)))) === '["","",""]' && !(await curOf(['16'])).some(Boolean));
+
+    // Click-to-place: 游標 picked shows the same outline; a slot outside every group is refused with a note.
+    await ct.click();
+    await settle(page);
+    check('游標 picked: outlines drawn, Cross dimmed', (await page.locator('#board .csil [data-cg]').count()) === 5 && await slot(page, '0').evaluate(e => e.classList.contains('cdim')));
+    const nPick = (await calls(page)).length;
+    await slot(page, '0').click();
+    await settle(page);
+    check('游標 picked, click Cross → no IPC, note 游標只能放在搖桿或十字鍵', (await calls(page)).length === nPick &&
+      ((await page.locator('#board .ftr .note').textContent()) || '').includes('游標只能放在搖桿或十字鍵'));
+    check('游標 stays picked after the refused click', await ct.evaluate(e => e.classList.contains('picked')));
+    await slot(page, 'L13').click();
+    await settle(page);
+    const qb = await lastCall(page, 'set_binding');
+    check('游標 on L2 快捷頁 ← → set_binding (quick_l, 13, cursor), all four quick slots 游標', qb?.args?.page === 'quick_l' && qb.args.id === 13 && qb.args.entry.type === 'cursor' &&
+      (await curOf(['L11', 'L12', 'L13', 'L14'])).every(Boolean), JSON.stringify(qb?.args));
+    await page.screenshot({ path: path.join(outDir, 'web-cursor.png') });
+    await slot(page, 'L12').dblclick();
+    await settle(page);
+    check('double-click one quick cursor slot → the whole group empties', !(await curOf(['L11', 'L12', 'L13', 'L14'])).some(Boolean));
+
+    // 設定 → 搖桿: the two speeds.
+    await page.click('#board [data-act="setopen"]');
+    await page.click('#board [data-stab="stick"]');
+    await settle(page);
+    const labs = await page.locator('#board .setw .sl .lbl').allTextContents();
+    check('設定 → 搖桿 has 搖桿移動游標的速度 and 十字鍵移動游標的速度', labs.includes('搖桿移動游標的速度') && labs.includes('十字鍵移動游標的速度'), labs.join('|'));
+    await page.locator('#board [data-f="curStick"]').evaluate(e => { e.value = '2.5'; e.dispatchEvent(new Event('input', { bubbles: true })); });
+    check('speed slider shows 2.5×', ((await page.locator('#board [data-out="curStick"]').textContent()) || '').trim() === '2.5×');
+    await page.click('#board [data-act="setsave"]');
+    await settle(page);
+    const ss = await lastCall(page, 'set_settings');
+    check('儲存 → set_settings carries cursor_stick_speed 2.5, cursor_dpad_speed 1', ss?.args?.settings?.cursor_stick_speed === 2.5 && ss.args.settings.cursor_dpad_speed === 1, JSON.stringify(ss?.args?.settings));
+    await page.click('#board [data-act="reset"]');
     await settle(page);
   }
 

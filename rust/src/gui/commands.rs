@@ -19,7 +19,7 @@ use crate::engine::Handle;
 use crate::gamepad::lightbar::LightbarConfig;
 use crate::gamepad::ControllerKind;
 use crate::pad_bindings::{
-    default_pad_bindings, PadBindings, Page, Side, TriggerMode, LABELS, QUICK_IDS,
+    cursor_group, default_pad_bindings, PadBindings, Page, Side, TriggerMode, LABELS, QUICK_IDS,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -207,9 +207,49 @@ pub fn set_binding_impl(
 ) -> anyhow::Result<()> {
     check_slot(page, id)?;
     mutate_config(engine, config_path, |doc| {
+        let group = cursor_group(page, id);
+        if entry.binding == Binding::Cursor {
+            // 游標 covers the slot's whole group (v3.9.0).
+            let Some(ids) = group else {
+                anyhow::bail!("button {id} cannot hold the cursor (only a stick's or a D-pad's four directions)");
+            };
+            for gid in ids {
+                let label = base_label(doc, pad, gid);
+                doc.replace_binding(pad, page, gid, ButtonEntry { label, binding: Binding::Cursor });
+            }
+            return Ok(());
+        }
+        // Anything else on a cursor slot ends the cursor: the other three
+        // slots of its group become empty.
+        if let Some(ids) = group.filter(|_| slot_entry(doc, pad, (page, id)).binding == Binding::Cursor) {
+            for gid in ids.into_iter().filter(|g| *g != id) {
+                let label = base_label(doc, pad, gid);
+                doc.replace_binding(pad, page, gid, ButtonEntry { label, binding: Binding::Unbound });
+            }
+        }
         doc.replace_binding(pad, page, id, entry);
         Ok(())
     })
+}
+
+/// The label of `id` in `pad`'s base table (page slots store the same).
+fn base_label(doc: &ConfigDoc, pad: ControllerKind, id: u32) -> String {
+    doc.typed()
+        .pad(pad)
+        .buttons
+        .get(&id.to_string())
+        .map(|e| e.label.clone())
+        .unwrap_or_else(|| LABELS[id as usize].to_string())
+}
+
+/// One slot's entry; an empty page slot counts as `Unbound`.
+fn slot_entry(doc: &ConfigDoc, pad: ControllerKind, (page, id): (Page, u32)) -> ButtonEntry {
+    doc.typed()
+        .pad(pad)
+        .table(page)
+        .get(&id.to_string())
+        .cloned()
+        .unwrap_or_else(|| ButtonEntry { label: LABELS[id as usize].to_string(), binding: Binding::Unbound })
 }
 
 /// Pure implementation of `swap_bindings`: the two slots exchange their
@@ -225,21 +265,27 @@ pub fn swap_bindings_impl(
     check_slot(a.0, a.1)?;
     check_slot(b.0, b.1)?;
     mutate_config(engine, config_path, |doc| {
-        let slot = |doc: &ConfigDoc, (page, id): (Page, u32)| -> ButtonEntry {
-            doc.typed()
-                .pad(pad)
-                .table(page)
-                .get(&id.to_string())
-                .cloned()
-                .unwrap_or_else(|| ButtonEntry {
-                    label: LABELS[id as usize].to_string(),
-                    binding: Binding::Unbound,
-                })
+        let swap = |doc: &mut ConfigDoc, a: (Page, u32), b: (Page, u32)| {
+            let ea = slot_entry(doc, pad, a);
+            let eb = slot_entry(doc, pad, b);
+            doc.replace_binding(pad, a.0, a.1, ButtonEntry { label: ea.label, binding: eb.binding });
+            doc.replace_binding(pad, b.0, b.1, ButtonEntry { label: eb.label, binding: ea.binding });
         };
-        let ea = slot(doc, a);
-        let eb = slot(doc, b);
-        doc.replace_binding(pad, a.0, a.1, ButtonEntry { label: ea.label, binding: eb.binding });
-        doc.replace_binding(pad, b.0, b.1, ButtonEntry { label: eb.label, binding: ea.binding });
+        let cursor = |doc: &ConfigDoc, s: (Page, u32)| slot_entry(doc, pad, s).binding == Binding::Cursor;
+        if cursor(doc, a) || cursor(doc, b) {
+            // 游標 moves as a group (v3.9.0): the two groups swap, direction
+            // for direction.
+            let (Some(ga), Some(gb)) = (cursor_group(a.0, a.1), cursor_group(b.0, b.1)) else {
+                anyhow::bail!("the cursor only goes on a stick's or a D-pad's four directions");
+            };
+            if (a.0, ga) != (b.0, gb) {
+                for (ia, ib) in ga.into_iter().zip(gb) {
+                    swap(doc, (a.0, ia), (b.0, ib));
+                }
+            }
+            return Ok(());
+        }
+        swap(doc, a, b);
         Ok(())
     })
 }
@@ -476,6 +522,10 @@ pub struct Settings {
     pub touchpad_deadzone_radius: u32,
     #[serde(default = "default_touchpad_click_freeze_enabled")]
     pub touchpad_click_freeze_enabled: bool,
+    #[serde(default = "crate::config::default_cursor_speed")]
+    pub cursor_stick_speed: f32,
+    #[serde(default = "crate::config::default_cursor_speed")]
+    pub cursor_dpad_speed: f32,
 }
 
 fn default_touchpad_cursor_enabled() -> bool { true }
@@ -508,6 +558,8 @@ impl Settings {
             touchpad_accel_gain_fast: 1.5,
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
+            cursor_stick_speed: 1.0,
+            cursor_dpad_speed: 1.0,
         }
     }
 }
@@ -550,6 +602,7 @@ pub fn set_settings_impl(
     doc.set_touchpad_accel_gain_fast(s.touchpad_accel_gain_fast);
     doc.set_touchpad_deadzone_radius(s.touchpad_deadzone_radius);
     doc.set_touchpad_click_freeze_enabled(s.touchpad_click_freeze_enabled);
+    doc.set_cursor_speeds(s.cursor_stick_speed, s.cursor_dpad_speed);
     doc.validate()?;
     write_atomic(config_path, &doc)?;
     let mut live = engine.config_write();
@@ -568,6 +621,8 @@ pub fn set_settings_impl(
     live.touchpad_accel_gain_fast = s.touchpad_accel_gain_fast;
     live.touchpad_deadzone_radius = s.touchpad_deadzone_radius;
     live.touchpad_click_freeze_enabled = s.touchpad_click_freeze_enabled;
+    live.cursor_stick_speed = s.cursor_stick_speed;
+    live.cursor_dpad_speed = s.cursor_dpad_speed;
     drop(live);
     // Update the HID worker's atomics so cursor / quadrant changes take
     // effect on the next decoded frame without an engine restart.

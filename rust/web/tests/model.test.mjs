@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  PADS, PAD_NAMES, QUICK_IDS, slotRef, slotKey, boardBinds, entryForTile, keyToTile, tileToKey,
+  PADS, PAD_NAMES, QUICK_IDS, slotRef, slotKey, boardBinds, entryForTile, keyToTile, tileToKey, tileOfEntry, cursorGroup,
   MOUSE_TILE, slotLabel, slotOff,
 } from '../board/model.js';
 import { MAIN, NAV } from '../board/keys.js';
@@ -86,4 +86,21 @@ test('slotOff: only the Xbox Nano Share slot (29) is unavailable, with its title
   // Its other slots, and 29 on the Switch pads (Capture), stay usable.
   for (const k of ['0', '4', '5', '6', '23', '24', 'L11', 'R0']) assert.equal(slotOff('xbox_nano', k), '', k);
   for (const p of ['dualsense', 'ns_pro', 'ns2_pro']) assert.equal(slotOff(p, '29'), '', p);
+});
+
+test('游標 tile ↔ cursor entry (v3.9.0)', () => {
+  assert.deepEqual(entryForTile('游標', 'L-stick ↑'), { label: 'L-stick ↑', type: 'cursor' });
+  assert.equal(tileOfEntry({ label: 'x', type: 'cursor' }), '游標');
+  const cfg = { pads: { dualsense: { buttons: { 19: { type: 'cursor' }, 20: { type: 'cursor' } }, quick_l: { 11: { type: 'cursor' } } } } };
+  assert.deepEqual(boardBinds(cfg, 'dualsense'), { 19: '游標', 20: '游標', L11: '游標' });
+});
+
+test('cursorGroup: the four slots a 游標 covers, ↑ ↓ ← →', () => {
+  assert.deepEqual(cursorGroup('17'), ['15', '16', '17', '18']);
+  assert.deepEqual(cursorGroup(22), ['19', '20', '21', '22']);
+  assert.deepEqual(cursorGroup('13'), ['11', '12', '13', '14']);
+  assert.deepEqual(cursorGroup('R12'), ['R11', 'R12', 'R13', 'R14']);
+  assert.equal(cursorGroup('3'), null);
+  assert.equal(cursorGroup('L0'), null, "a quick page's face buttons are not a group");
+  assert.equal(cursorGroup('7'), null, 'the stick press is not part of its stick');
 });

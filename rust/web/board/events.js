@@ -3,11 +3,39 @@
 
 import { state, rerender, setPad } from './store.js';
 import * as act from './actions.js';
-import { boardBinds, slotOff } from './model.js';
+import { boardBinds, slotOff, CURSOR_TILE, cursorGroup } from './model.js';
 import { macroPages, dragGhostHTML } from './palette.js';
-import { boardLocked } from './view.js';
+import { boardLocked, cursorSilHTML, triggerModes } from './view.js';
+import { layoutFor } from './layout.js';
 
-const drag = { key: null, from: null, dropped: false, step: null };
+const drag = { key: null, from: null, dropped: false, step: null, cursor: false, refused: false };
+
+// 游標 (v3.9.0) covers a group of four, so some drops cannot happen: the cursor onto a slot outside every
+// group, or a slot outside every group onto a cursor slot (Rust refuses both; this only spares the call).
+function dropOk(key) {
+  const b = boardBinds(state.config, state.pad);
+  if (drag.cursor) return !!cursorGroup(key);
+  if (drag.from !== null && (b[key] === CURSOR_TILE)) return !!cursorGroup(drag.from);
+  return true;
+}
+
+// While the cursor is dragged: dim what cannot take it, outline the groups that can (6A1).
+function cursorDragStart(board) {
+  drag.cursor = true;
+  for (const s of board.querySelectorAll('.slot')) if (!cursorGroup(s.dataset.slot)) s.classList.add('cdim');
+  for (const e of board.querySelectorAll('.lines,.qcap')) e.classList.add('cdim');
+  board.insertAdjacentHTML('beforeend', cursorSilHTML(layoutFor(state.pad, triggerModes(state.config, state.pad)), null));
+}
+function cursorHover(board, key) {
+  const g = key && cursorGroup(key);
+  for (const e of board.querySelectorAll('.csil [data-cg]')) e.classList.toggle('hov', !!g && e.dataset.cg === g[0]);
+}
+function cursorDragEnd(board) {
+  if (!drag.cursor) return;
+  drag.cursor = false;
+  for (const e of board.querySelectorAll('.cdim')) e.classList.remove('cdim');
+  board.querySelector('.csil')?.remove();
+}
 const hooks = { click: [], dragover: [], drop: [], dragstart: [], dragend: [] };
 // Later features (capture, macro editor, settings) register handlers that run
 // first and return true when they consumed the event.
@@ -40,6 +68,7 @@ export function wire(board) {
     if (el.dataset.slot && ev.detail >= 2) { act.clearSlot(el.dataset.slot); return; }
     if (el.dataset.slot) {
       const key = el.dataset.slot;
+      if (state.picked === CURSOR_TILE && !cursorGroup(key)) { state.note = '游標只能放在搖桿或十字鍵'; rerender(); return; }
       if (state.picked) { act.bindSlot(key, state.picked); return; }
       selectSlot(state.sel === key ? null : key);
       return;
@@ -76,6 +105,7 @@ export function wire(board) {
       const ghost = board.lastChild;
       try { ev.dataTransfer.setDragImage(ghost, 19, 19); } catch (x) { /* ignore */ }
       setTimeout(() => ghost.remove(), 0);
+      if (drag.key === CURSOR_TILE) cursorDragStart(board);
       return;
     }
     const s = ev.target.closest('[data-slot]');
@@ -84,11 +114,17 @@ export function wire(board) {
       if (!boardBinds(state.config, state.pad)[key] || slotOff(state.pad, key)) { ev.preventDefault(); return; }
       drag.from = key; drag.key = null; drag.dropped = false;
       try { ev.dataTransfer.setData('text/plain', 'slot:' + key); ev.dataTransfer.effectAllowed = 'move'; } catch (x) { /* ignore */ }
+      if (boardBinds(state.config, state.pad)[key] === CURSOR_TILE) cursorDragStart(board);
     }
   });
   board.addEventListener('dragover', ev => {
     if (consumed('dragover', ev)) return;
-    if (ev.target.closest('[data-slot]')) ev.preventDefault();
+    const s = ev.target.closest('[data-slot]');
+    // A slot that cannot take this drop: no drop (the not-allowed pointer), and letting go there is a cancel,
+    // never the drag-out that clears a slot.
+    drag.refused = !!s && !dropOk(s.dataset.slot);
+    if (drag.cursor) cursorHover(board, s && !drag.refused ? s.dataset.slot : null);
+    if (s && !drag.refused) ev.preventDefault();
   });
   board.addEventListener('drop', ev => {
     if (consumed('drop', ev)) return;
@@ -108,10 +144,17 @@ export function wire(board) {
     if (k) act.bindSlot(key, k);
   });
   board.addEventListener('dragend', ev => {
+    cursorDragEnd(board);
     if (consumed('dragend', ev)) return;
-    // A bound slot dragged out to empty space is deleted (spec 4.5).
-    if (drag.from !== null && !drag.dropped) { const key = drag.from; drag.from = null; act.clearSlot(key); }
-    drag.from = null; drag.dropped = false; drag.key = null;
+    // A bound slot dragged out to empty space is deleted (spec 4.5); a cursor slot takes its group with it (Rust).
+    if (drag.from !== null && !drag.dropped && !drag.refused) { const key = drag.from; drag.from = null; act.clearSlot(key); }
+    drag.from = null; drag.dropped = false; drag.key = null; drag.refused = false;
+  });
+  // 游標 picked in the palette: the group under the pointer turns solid, as during its drag.
+  board.addEventListener('mouseover', ev => {
+    if (state.picked !== CURSOR_TILE) return;
+    const s = ev.target.closest('[data-slot]');
+    cursorHover(board, s && cursorGroup(s.dataset.slot) ? s.dataset.slot : null);
   });
 }
 
