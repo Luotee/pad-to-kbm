@@ -1,6 +1,6 @@
 use crate::config::{Binding, Config, MouseButton};
 use crate::gamepad::{ControllerKind, GamepadEvent};
-use crate::pad_bindings::{PadBindings, Side, TriggerMode, QUICK_IDS};
+use crate::pad_bindings::{PadBindings, Side, TriggerMode, DPAD_GROUP, QUICK_IDS, STICK_GROUPS};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +69,24 @@ pub struct Mapper {
     trigger_active: [bool; 2],
     /// Held page-mode triggers, in press order; the last one picks the page.
     page_stack: Vec<Side>,
+    /// 游標: the sub-pixel part of the movement not sent yet, and how long a
+    /// D-pad cursor direction has been held (its speed ramp).
+    cursor_rem: (f32, f32),
+    dpad_hold_s: f32,
+    rng: fastrand::Rng,
 }
+
+/// 游標 (v3.9.0) speeds in px/s at 1×: a stick pushed to the edge, and a
+/// D-pad from the first press to the top speed after `DPAD_RAMP_S`.
+const STICK_PX_S: f32 = 1200.0;
+const DPAD_START_PX_S: f32 = 150.0;
+const DPAD_TOP_PX_S: f32 = 900.0;
+const DPAD_RAMP_S: f32 = 0.5;
+/// A stalled tick moves at most this long a step, never a jump.
+const CURSOR_MAX_DT_S: f32 = 0.05;
+/// Each step's length varies by ± this fraction, so the movement never
+/// keeps one fixed rhythm (anti-cheat self-discipline, like `tick_jitter_ms`).
+const CURSOR_JITTER: f32 = 0.1;
 
 const TRIGGER_L: u32 = 23;
 const TRIGGER_R: u32 = 24;
@@ -108,6 +125,9 @@ impl Mapper {
             trigger_digital: [false; 2],
             trigger_active: [false; 2],
             page_stack: Vec::new(),
+            cursor_rem: (0.0, 0.0),
+            dpad_hold_s: 0.0,
+            rng: fastrand::Rng::new(),
         }
     }
 
@@ -137,6 +157,8 @@ impl Mapper {
         self.trigger_digital = [false; 2];
         self.trigger_active = [false; 2];
         self.page_stack.clear();
+        self.cursor_rem = (0.0, 0.0);
+        self.dpad_hold_s = 0.0;
     }
 
     /// Drain the buffered virtual-button transitions accumulated since the
@@ -185,6 +207,62 @@ impl Mapper {
                 vec![KeyAction::TouchpadHover { raw_x, raw_y, quadrant }]
             }
         }
+    }
+
+    /// One engine tick of 游標 movement (v3.9.0): `dt` seconds since the
+    /// last call. `None` when nothing moves.
+    ///
+    /// A stick whose four directions hold the cursor (base table) moves it
+    /// by how far it is pushed past the deadzone, squared, so a light push
+    /// aims. A D-pad direction held with the cursor (base or quick page:
+    /// the binding its press resolved to, iron rule 2) moves it from
+    /// `DPAD_START_PX_S`, ramping to `DPAD_TOP_PX_S`. Every source adds up.
+    pub fn cursor_step(&mut self, dt: f32) -> Option<KeyAction> {
+        let dt = dt.clamp(0.0, CURSOR_MAX_DT_S);
+        let (mut vx, mut vy) = (0.0f32, 0.0f32);
+        let pad = self.cfg.pad(self.pad);
+        let dz = self.cfg.deadzone;
+        for (g, (ax, ay)) in STICK_GROUPS.iter().zip([(0, 1), (2, 3)]) {
+            if pad.buttons.get(&g[0].to_string()).map_or(true, |e| e.binding != Binding::Cursor) {
+                continue;
+            }
+            let (x, y) = (self.last_axis[ax], self.last_axis[ay]);
+            let r = (x * x + y * y).sqrt();
+            if r <= dz {
+                continue;
+            }
+            let n = ((r - dz) / (1.0 - dz).max(1e-3)).min(1.0);
+            let speed = STICK_PX_S * self.cfg.cursor_stick_speed * n * n;
+            // gilrs +y is up; the screen's +y is down.
+            vx += speed * x / r;
+            vy -= speed * y / r;
+        }
+        let held = |id: u32| i32::from(self.held.get(&id) == Some(&Binding::Cursor));
+        let [up, down, left, right] = DPAD_GROUP;
+        let (dx, dy) = (held(right) - held(left), held(down) - held(up));
+        if dx != 0 || dy != 0 {
+            self.dpad_hold_s += dt;
+            let t = (self.dpad_hold_s / DPAD_RAMP_S).min(1.0);
+            let speed = (DPAD_START_PX_S + (DPAD_TOP_PX_S - DPAD_START_PX_S) * t) * self.cfg.cursor_dpad_speed;
+            let len = ((dx * dx + dy * dy) as f32).sqrt();
+            vx += speed * dx as f32 / len;
+            vy += speed * dy as f32 / len;
+        } else {
+            self.dpad_hold_s = 0.0;
+        }
+        if vx == 0.0 && vy == 0.0 {
+            self.cursor_rem = (0.0, 0.0);
+            return None;
+        }
+        let j = 1.0 + CURSOR_JITTER * (2.0 * self.rng.f32() - 1.0);
+        let fx = vx * dt * j + self.cursor_rem.0;
+        let fy = vy * dt * j + self.cursor_rem.1;
+        let (ix, iy) = (fx.trunc(), fy.trunc());
+        self.cursor_rem = (fx - ix, fy - iy);
+        if ix == 0.0 && iy == 0.0 {
+            return None;
+        }
+        Some(KeyAction::MouseMove { dx: ix as i32, dy: iy as i32 })
     }
 
     fn pad_bindings(&self) -> &PadBindings {
@@ -313,6 +391,7 @@ fn press_actions(id: u32, binding: &Binding) -> Vec<KeyAction> {
             tracing::info!(id, ?b, "mouse press");
             vec![KeyAction::MousePress(*b)]
         }
+        Binding::Cursor => Vec::new(),
         Binding::Unbound => {
             tracing::debug!(id, "press: unbound");
             Vec::new()
@@ -334,7 +413,7 @@ fn release_actions(id: u32, binding: &Binding) -> Vec<KeyAction> {
             tracing::info!(id, ?b, "mouse release");
             vec![KeyAction::MouseRelease(*b)]
         }
-        Binding::Unbound => Vec::new(),
+        Binding::Cursor | Binding::Unbound => Vec::new(),
     }
 }
 
@@ -391,6 +470,8 @@ mod tests {
             touchpad_accel_gain_fast: 1.5,
             touchpad_deadzone_radius: 2,
             touchpad_click_freeze_enabled: true,
+            cursor_stick_speed: 1.0,
+            cursor_dpad_speed: 1.0,
             mapping_enabled: Default::default(),
             output_mode: Default::default(),
             rumble_on_connect: true,
@@ -720,5 +801,191 @@ mod tests {
         assert!(m.handle(trig(5, 1.0)).is_empty(), "trigger state forgotten: a fresh page press");
         assert_eq!(m.take_visual_transitions().last(), Some(&(24, true)));
     }
-}
+    // ─── 游標 (v3.9.0): a stick or a D-pad moves the mouse ──────────────────
 
+    fn stick(axis: u32, value: f32) -> GamepadEvent { GamepadEvent::Stick { axis, value } }
+
+    /// `ids` hold the cursor in `page` of every pad.
+    fn cursor_mapper(groups: &[(Page, [u32; 4])]) -> Mapper {
+        let mut cfg = quick_cfg();
+        for kind in ControllerKind::ALL {
+            for (page, ids) in groups {
+                for id in ids {
+                    set(&mut cfg, kind, *page, *id, Binding::Cursor);
+                }
+            }
+        }
+        cfg.validate().unwrap();
+        let mut m = Mapper::new(cfg);
+        m.set_pad(Some(ControllerKind::DualSense));
+        m
+    }
+
+    fn step(m: &mut Mapper, dt: f32) -> (i32, i32) {
+        match m.cursor_step(dt) {
+            Some(KeyAction::MouseMove { dx, dy }) => (dx, dy),
+            None => (0, 0),
+            other => panic!("cursor_step returned {other:?}"),
+        }
+    }
+
+    /// `n` steps of `dt`, summed.
+    fn run(m: &mut Mapper, n: usize, dt: f32) -> (i32, i32) {
+        (0..n).map(|_| step(m, dt)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
+    }
+
+    const LS: (Page, [u32; 4]) = (Page::Base, [15, 16, 17, 18]);
+    const RS: (Page, [u32; 4]) = (Page::Base, [19, 20, 21, 22]);
+    const DP: (Page, [u32; 4]) = (Page::Base, [11, 12, 13, 14]);
+    const QL: (Page, [u32; 4]) = (Page::QuickL, [11, 12, 13, 14]);
+
+    #[test]
+    fn cursor_slots_press_nothing() {
+        let mut m = cursor_mapper(&[LS, DP]);
+        assert!(m.handle(stick(0, 1.0)).is_empty(), "stick right on a cursor stick types nothing");
+        assert!(m.handle(down(11)).is_empty());
+        assert!(m.handle(up(11)).is_empty());
+        assert_eq!(m.take_visual_transitions(), vec![(18, true)], "the board still lights the slot");
+    }
+
+    #[test]
+    fn stick_full_right_moves_right_at_full_speed() {
+        let mut m = cursor_mapper(&[RS]);
+        m.handle(stick(2, 1.0));
+        let (dx, dy) = step(&mut m, 0.05);
+        assert!((54..=66).contains(&dx), "1200 px/s × 0.05 s ± 10 %, got {dx}");
+        assert_eq!(dy, 0);
+    }
+
+    #[test]
+    fn stick_up_moves_the_cursor_up_the_screen() {
+        let mut m = cursor_mapper(&[LS]);
+        m.handle(stick(1, 1.0));
+        let (dx, dy) = step(&mut m, 0.05);
+        assert_eq!(dx, 0);
+        assert!(dy <= -54, "gilrs +y is up, the screen's +y is down; got {dy}");
+    }
+
+    #[test]
+    fn stick_inside_the_deadzone_does_not_move() {
+        let mut m = cursor_mapper(&[LS]);
+        m.handle(stick(0, 0.35));
+        assert_eq!(m.cursor_step(0.1), None);
+    }
+
+    #[test]
+    fn a_half_push_is_much_slower_than_a_full_push() {
+        let mut m = cursor_mapper(&[LS]);
+        m.handle(stick(0, 0.7));   // halfway between the 0.4 deadzone and the edge
+        let (half, _) = run(&mut m, 20, 0.05);
+        assert!((270..=330).contains(&half), "(0.5)² × 1200 = 300 ± 10 %, got {half}");
+    }
+
+    #[test]
+    fn a_stick_without_the_cursor_does_not_move_it() {
+        let mut m = cursor_mapper(&[RS]);
+        m.handle(stick(0, 1.0));
+        assert_eq!(m.cursor_step(0.1), None, "the left stick still types its keys");
+        m.handle(stick(2, 1.0));
+        assert!(step(&mut m, 0.1).0 > 0, "the right stick moves it");
+    }
+
+    #[test]
+    fn d_pad_starts_slow_and_speeds_up_while_held() {
+        let mut m = cursor_mapper(&[DP]);
+        m.handle(down(14));
+        let (first, _) = step(&mut m, 0.02);
+        for _ in 0..30 {
+            step(&mut m, 0.02);
+        }
+        let (later, _) = step(&mut m, 0.02);
+        assert!(first > 0 && first <= 6, "about 150 px/s at the start, got {first}");
+        assert!((16..=20).contains(&later), "900 px/s × 0.02 s ± 10 % after half a second, got {later}");
+        m.handle(up(14));
+        assert_eq!(m.cursor_step(0.02), None);
+        m.handle(down(13));
+        let (again, _) = step(&mut m, 0.02);
+        assert!((-6..0).contains(&again), "a new press starts slow again, got {again}");
+    }
+
+    #[test]
+    fn d_pad_diagonal_is_not_faster_than_straight() {
+        let mut m = cursor_mapper(&[DP]);
+        m.handle(down(11));
+        m.handle(down(14));
+        let (dx, dy) = run(&mut m, 20, 0.05);
+        let len = ((dx * dx + dy * dy) as f32).sqrt();
+        assert!(dx > 0 && dy < 0, "up-right, got ({dx}, {dy})");
+        assert!(len < 1.12 * 900.0, "normalised, got {len}");
+    }
+
+    #[test]
+    fn quick_page_d_pad_moves_only_while_its_trigger_is_held() {
+        let mut m = cursor_mapper(&[QL]);
+        assert_eq!(m.handle(down(13)), Vec::new(), "base 13 is unbound in quick_cfg");
+        assert_eq!(m.cursor_step(0.1), None, "no page: the base D-pad has no cursor");
+        m.handle(up(13));
+        m.handle(trig(4, 1.0));
+        m.handle(down(13));
+        let (dx, _) = step(&mut m, 0.1);
+        assert!(dx < 0, "L2 held: the quick page's ← moves left, got {dx}");
+        m.handle(trig(4, 0.0));
+        let (dx2, _) = step(&mut m, 0.1);
+        assert!(dx2 < 0, "the press keeps the binding it started with until released (iron rule 2)");
+        m.handle(up(13));
+        assert_eq!(m.cursor_step(0.1), None);
+    }
+
+    #[test]
+    fn several_groups_add_up() {
+        let mut m = cursor_mapper(&[RS, DP]);
+        m.handle(stick(2, 1.0));
+        let (alone, _) = run(&mut m, 20, 0.05);
+        m.handle(down(14));
+        let (both, _) = run(&mut m, 20, 0.05);
+        assert!(both > alone + 100, "stick {alone} + D-pad gives more, got {both}");
+    }
+
+    #[test]
+    fn cursor_speed_settings_scale_the_movement() {
+        let mut cfg = cursor_mapper(&[RS]).config().clone();
+        cfg.cursor_stick_speed = 2.0;
+        let mut m = Mapper::new(cfg);
+        m.set_pad(Some(ControllerKind::DualSense));
+        m.handle(stick(2, 1.0));
+        let (dx, _) = step(&mut m, 0.05);
+        assert!((108..=132).contains(&dx), "2 × 60 ± 10 %, got {dx}");
+    }
+
+    #[test]
+    fn each_step_is_jittered_and_sub_pixels_carry_over() {
+        let mut m = cursor_mapper(&[RS]);
+        m.handle(stick(2, 1.0));
+        let steps: Vec<i32> = (0..200).map(|_| step(&mut m, 0.008).0).collect();
+        let total: i32 = steps.iter().sum();
+        assert!((1728..=2112).contains(&total), "200 × 9.6 px ± 10 %, got {total}");
+        let mut distinct = steps.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert!(distinct.len() >= 2, "not one fixed step: {distinct:?}");
+        assert!(steps.iter().all(|s| (8..=11).contains(s)), "each step 9.6 ± 10 %: {steps:?}");
+    }
+
+    #[test]
+    fn a_long_stall_does_not_jump_the_cursor() {
+        let mut m = cursor_mapper(&[RS]);
+        m.handle(stick(2, 1.0));
+        let (dx, _) = step(&mut m, 3.0);
+        assert!((54..=66).contains(&dx), "dt clamped to 50 ms: 60 ± 10 %, got {dx}");
+    }
+
+    #[test]
+    fn reset_input_state_stops_the_cursor() {
+        let mut m = cursor_mapper(&[RS, DP]);
+        m.handle(stick(2, 1.0));
+        m.handle(down(14));
+        assert!(step(&mut m, 0.1).0 > 0, "moving before the reset");
+        m.reset_input_state();
+        assert_eq!(m.cursor_step(0.1), None);
+    }
+}

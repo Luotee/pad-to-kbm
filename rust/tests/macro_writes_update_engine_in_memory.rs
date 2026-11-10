@@ -48,6 +48,8 @@ fn baseline_config() -> Config {
         touchpad_accel_gain_fast: 1.5,
         touchpad_deadzone_radius: 2,
         touchpad_click_freeze_enabled: true,
+        cursor_stick_speed: 1.0,
+        cursor_dpad_speed: 1.0,
         mapping_enabled: Default::default(),
         output_mode: Default::default(),
         rumble_on_connect: true,

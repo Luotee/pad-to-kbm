@@ -17,12 +17,20 @@ pub struct MouseSink {
     enigo: Option<Enigo>,
     state: SharedKeyState,
     dry_run: bool,
+    /// Dry run only: the total movement asked for, for tests to read.
+    moved: Option<std::sync::Arc<std::sync::Mutex<(i64, i64)>>>,
 }
 
 impl MouseSink {
     pub fn new(state: SharedKeyState, dry_run: bool) -> Result<Self> {
         let enigo = if dry_run { None } else { Some(Enigo::new(&Settings::default())?) };
-        Ok(Self { enigo, state, dry_run })
+        Ok(Self { enigo, state, dry_run, moved: None })
+    }
+
+    /// Dry run: add every `move_rel` to `total` (engine tests).
+    pub fn with_move_total(mut self, total: std::sync::Arc<std::sync::Mutex<(i64, i64)>>) -> Self {
+        self.moved = Some(total);
+        self
     }
 
     pub fn click_press(&mut self, b: MouseButton) -> Result<()> {
@@ -63,6 +71,11 @@ impl MouseSink {
         }
         if self.dry_run {
             tracing::debug!(dx, dy, "[dry-run] mouse move_rel");
+            if let Some(t) = &self.moved {
+                let mut t = t.lock().unwrap_or_else(|p| p.into_inner());
+                t.0 += i64::from(dx);
+                t.1 += i64::from(dy);
+            }
             return Ok(());
         }
         let enigo = self.enigo.as_mut()
