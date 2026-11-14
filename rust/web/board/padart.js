@@ -24,17 +24,19 @@ var NS2_PLATE = 'M150,33.6 L82.7,37 C66,38 54,40 46.5,43 C40,45.5 36,48.5 34,52 
 // traced corner by the body fit (user Q13 / Q14): Switch Pro / Switch 2 Pro = shoulder A (the fit as is);
 // DualSense = shoulder F (the fit moved by (-2, -2), and the extended paths of ds-ext.json whose bumper meets
 // the touchpad). Labels: [x, y, rotate, cap height] in pad units, placed inside each visible key face.
+// v3.9.1: every pad follows the Xbox Nano's style — the trigger label near the inner end, the shoulder label 15
+// further out (12 on the DualSense, whose short trigger face keeps L2 where it is); web-smoke checks both.
 var CONTOUR = {
   back: 'M32,62 C36,36 56,18 86,14 L97,13 Q104,12.5 104,19 L104,32 L60,40 C46,45 38,53 35,64 Z',
   front: 'M19,84 C22,56 42,37 70,32 L98,29.5 Q104,29 104,35.5 Q104,42 98,42.5 L72,45 C53,49 39,63 34,86 Q33,92 26.5,91 Q18.5,90 19,84 Z'
 };
 var SHOULDER = {
   dualsense: { fit: { s: 0.9893, tx: 1.11 - 2, ty: -1.41 - 2 }, back: DS_EXT.back, front: DS_EXT.front, role: 'bump',
-    trigT: ['L2', 'R2', 74.3, 18.9, -6, 6], bumpT: ['L1', 'R1', 70.5, 34.6, -5, 5], trigA: [50, 30], bumpA: [31, 61] },
+    trigT: ['L2', 'R2', 74.3, 18.9, -6, 6], bumpT: ['L1', 'R1', 62.3, 35.6, -5, 5], trigA: [50, 30], bumpA: [31, 61] },
   ns_pro: { fit: { s: 0.9555, tx: 4.63, ty: -2.79 }, back: CONTOUR.back, front: CONTOUR.front, role: 'bump',
-    trigT: ['ZL', 'ZR', 85.8475, 18.231, 0, 6], bumpT: ['L', 'R', 54.4, 40.8, -11, 5.5], trigA: [60, 25], bumpA: [27, 72] },
+    trigT: ['ZL', 'ZR', 94.7, 18.231, 0, 6], bumpT: ['L', 'R', 79.7, 33.5, -5, 5], trigA: [60, 25], bumpA: [27, 72] },
   ns2_pro: { fit: { s: 0.9507, tx: 5.13, ty: -1.14 }, back: CONTOUR.back, front: CONTOUR.front, role: 'bumpLite',
-    trigT: ['ZL', 'ZR', 86.4, 19.8, 0, 6], bumpT: ['L', 'R', 84, 34.2, -5, 5], trigA: [60, 25], bumpA: [27, 72] }
+    trigT: ['ZL', 'ZR', 94.7, 19.8, 0, 6], bumpT: ['L', 'R', 79.7, 34.7, -5, 5], trigA: [60, 25], bumpA: [27, 72] }
 };
 function fitOf(pad) { var f = SHOULDER[pad].fit; return { tf: 'translate(' + f.tx + ' ' + f.ty + ') scale(' + f.s + ')', at: function (q) { return [f.tx + f.s * q[0], f.ty + f.s * q[1]]; } }; }
 
