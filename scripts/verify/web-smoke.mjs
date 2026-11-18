@@ -2408,6 +2408,12 @@ try {
       const m = await page.evaluate(padArtMetrics, { skip: SHOULDER_GAP[pad]?.skip });
       const lab = m.labels.map(l => `${l.at} ${l.clr}`).join(', ');
       check(`${pad}: every L／R label ≥ 1.45 inside its visible key face (8x raster)`, m.labels.length === 4 && m.labels.every(l => l.clr >= 1.45), lab || 'no labels');
+      // v3.9.1: one style on every pad, the Xbox Nano's — the trigger label near the inner end, the shoulder label
+      // further out by 12–16 (the DualSense's short trigger face allows 12), mirrored on the right.
+      const lx = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#board svg.pad g[data-glyph]')]
+        .filter(g => /^(trigT|bumpT|bumpLiteT)$/.test(g.dataset.glyph)).map(g => [(+g.dataset.x < 150 ? 'L' : 'R') + (g.dataset.glyph === 'trigT' ? 't' : 'b'), +g.dataset.x])));
+      const stL = lx.Lt - lx.Lb, stR = lx.Rb - lx.Rt;
+      check(`${pad}: shoulder label sits 12–16 further out than the trigger label, both sides`, stL >= 12 && stL <= 16 && Math.abs(stL - stR) < 1e-6, JSON.stringify(lx));
       if (SHOULDER_GAP[pad]) {
         const g = SHOULDER_GAP[pad];
         check(`${pad}: L／R shoulders ≥ ${g.min} from every key${g.skip ? ' but Create / Options' : ''}`, m.gap.keys >= g.min,

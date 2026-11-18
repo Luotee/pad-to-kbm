@@ -3,6 +3,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.1] - 2026-11-14
+
+### Changed
+
+- **Shoulder labels follow one style on every pad**, the Xbox Nano's: the
+  trigger label (L2 / ZL / LT) sits near the inner end of its key, the
+  shoulder label (L1 / L / LB) 15 further out (12 on the DualSense, whose
+  trigger shows too little to move L2 further in), mirrored on the right.
+  The Switch Pro's L / R leave the curve for the straight part of the
+  key, as on the Switch 2 Pro. Every label still clears its visible key
+  face by at least 1.45; web-smoke now also checks the stagger.
+
 ## [3.9.0] - 2026-11-10
 
 ### Added
