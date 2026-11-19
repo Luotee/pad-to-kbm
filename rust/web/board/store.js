@@ -2,7 +2,7 @@
 // change goes through a command, and `config-changed` re-reads it (spec 9).
 
 import { invoke, listen } from '../ipc.js';
-import { PADS } from './model.js';
+import { PADS, powerOffFrom } from './model.js';
 import { batteryFrom } from './battery.js';
 
 export const state = {
@@ -11,6 +11,7 @@ export const state = {
   offPads: new Set(), // pads switched off for this session (header 關; runtime only)
   warnings: [],       // controller status warnings (e.g. vigem_missing)
   battery: {},        // slug -> { pct, charging } for the connected pads whose battery is readable (v3.8.0)
+  powerOff: new Set(), // connected pads whose power key works (v3.10.0; the Xbox Nano only with its companion channel)
   pad: 'dualsense',
   sel: null,          // slot waiting for a key (capture)
   picked: null,       // palette tile picked by click, waiting for a slot
@@ -83,6 +84,7 @@ export async function init() {
   state.offPads = offFrom(status);
   state.warnings = (status && status.warnings) || [];
   state.battery = batteryFrom(status);
+  state.powerOff = powerOffFrom(status);
   state.prefs = prefs || {};
   state.version = version || '';
   state.configPath = configPath || '';
@@ -100,6 +102,7 @@ export async function init() {
     state.offPads = offFrom(s, state.offPads);
     state.warnings = (s && s.warnings) || [];
     state.battery = batteryFrom(s);
+    state.powerOff = powerOffFrom(s);
     const fresh = [...state.connected].filter(p => !before.has(p));
     if (fresh.length) await setPad(fresh[0]);   // a pad that connects is auto-selected (spec 4.5)
     rerender();

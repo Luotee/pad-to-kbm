@@ -95,6 +95,12 @@ export function tileToKey(tile) {
 // Slots the board never binds: the reason (its title), or '' when the slot is usable. The Xbox Nano's
 // Share (29) reaches neither the XInput state nor the HID report, so a binding there could never fire.
 const OFF_SLOTS = { xbox_nano: { 29: 'Xbox Nano 的 Share 鍵目前不會送給電腦' } };
+// v3.10.0: the connected pads whose power key works, from a controller-status payload (`power_off`); the Xbox Nano is in
+// it only while its companion channel is ready. A payload without the list: none.
+export function powerOffFrom(s) {
+  return new Set(s && Array.isArray(s.power_off) ? s.power_off : []);
+}
+
 export function slotOff(pad, key) {
   return OFF_SLOTS[pad]?.[String(key)] || '';
 }
