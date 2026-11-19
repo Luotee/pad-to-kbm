@@ -973,6 +973,11 @@ fn worker_real(
                     &io, &mut session, &tx, &mut last_state, &mut prev_buttons, &mut touchpad,
                     &params, &stop, &cmd_rx,
                 );
+                // Xbox Nano: the ⏻ turns it off through its companion
+                // channel (v3.10.0); without one nothing is sent.
+                let nano_off = outcome == "manual-disconnect"
+                    && kind == ControllerKind::XboxNano
+                    && battery.as_ref().is_some_and(|c| c.power_off());
                 // Switch Pro: ask the pad to sleep while the handle is still
                 // open, then drop it below.
                 if outcome == "manual-disconnect" && kind == ControllerKind::NsPro {
@@ -986,13 +991,24 @@ fn worker_real(
                 // the Bluetooth link (see `crate::platform`). The DualSense
                 // has no HID power-off command; the Switch Pro got its
                 // subcmd 0x06 above and the link drop makes it certain.
-                if outcome == "manual-disconnect" {
+                if outcome == "manual-disconnect" && kind != ControllerKind::XboxNano {
                     power_off(kind);
                 }
                 tracing::info!(?outcome, "read loop exited; back to Searching");
                 // No battery reading may land after `Disconnected`.
                 drop(battery);
                 let _ = tx.send(GamepadEvent::Disconnected);
+                // The Nano was told to turn off: until its link is down its
+                // HID path is still listed, and re-opening it would connect
+                // a dying pad again (and clear an automatic power-off).
+                if nano_off {
+                    let listed = || {
+                        let _ = with_hidapi(|| api.refresh_devices());
+                        api.device_list().any(|i| i.path() == path.as_c_str())
+                    };
+                    let gone = wait_until_gone(listed, OFF_WAIT, &mut |t| thread::sleep(t));
+                    tracing::info!(gone, "Xbox Nano powered off; searching again");
+                }
                 // `last_state` is set exactly when `Connected` was emitted: by
                 // the first decoded report (the Nano's initial report
                 // included).
@@ -1038,18 +1054,53 @@ fn route(kind: ControllerKind, path: &str) -> Route {
     }
 }
 
+/// After the Nano's power-off: how long the worker waits for its device to
+/// go before it searches again (v3.10.0).
+pub(crate) const OFF_WAIT: Duration = Duration::from_secs(10);
+
+/// Wait until `listed` says the device is gone, checking every 250 ms, at
+/// most `max`. True when it went.
+fn wait_until_gone(mut listed: impl FnMut() -> bool, max: Duration, sleep: &mut dyn FnMut(Duration)) -> bool {
+    const STEP: Duration = Duration::from_millis(250);
+    let mut waited = Duration::ZERO;
+    loop {
+        if !listed() {
+            return true;
+        }
+        if waited >= max {
+            return false;
+        }
+        let step = STEP.min(max - waited);
+        sleep(step);
+        waited += step;
+    }
+}
+
+/// What a Nano session's worker needs of its companion: the ⏻.
+pub(crate) trait PowerOffGuard {
+    fn power_off(&self) -> bool;
+}
+
+impl PowerOffGuard for NanoCompanion {
+    fn power_off(&self) -> bool {
+        NanoCompanion::power_off(self)
+    }
+}
+
 /// One Nano round through XInput: find its slot and read it until it is
 /// gone (then `Disconnected`, which releases everything, iron rule 3).
 /// `None`: no slot holds the Nano now.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn nano_xinput_round(
+#[allow(clippy::too_many_arguments)]
+fn nano_xinput_round<C: PowerOffGuard>(
     api: &dyn XInputApi,
     own: OwnPad,
     tx: &Sender<GamepadEvent>,
     stop: &AtomicBool,
     cmd_rx: &Receiver<SourceCmd>,
     poll: Duration,
-    battery: impl FnOnce(&Sender<GamepadEvent>) -> NanoCompanion,
+    off_wait: Duration,
+    battery: impl FnOnce(&Sender<GamepadEvent>) -> C,
 ) -> Option<(&'static str, bool)> {
     let slot = xinput_source::find_slot(api, own)?;
     tracing::info!(slot, "Xbox Nano on Microsoft's Xbox driver: reading XInput slot");
@@ -1058,13 +1109,19 @@ fn nano_xinput_round(
     // The battery over GATT, for this session only (display only).
     let battery = battery(tx);
     let (outcome, connected) = xinput_source::run_session(api, slot, tx, stop, cmd_rx, poll);
-    if outcome == "manual-disconnect" {
-        power_off(ControllerKind::XboxNano);
-    }
+    // The ⏻: through the companion channel (v3.10.0); without one nothing
+    // is sent.
+    let off = outcome == "manual-disconnect" && battery.power_off();
     tracing::info!(?outcome, "Xbox Nano XInput session ended; back to Searching");
     // No battery reading may land after `Disconnected`.
     drop(battery);
     let _ = tx.send(GamepadEvent::Disconnected);
+    // Powered off: its slot reads until the link is down; wait for it so
+    // the next round does not connect the dying pad again.
+    if off {
+        let gone = wait_until_gone(|| xinput_source::find_slot(api, own) == Some(slot), off_wait, &mut |t| thread::sleep(t));
+        tracing::info!(gone, "Xbox Nano powered off; searching again");
+    }
     Some((outcome, connected))
 }
 
@@ -1080,7 +1137,7 @@ fn nano_via_xinput(
 ) {
     #[cfg(windows)]
     let round = xinput_source::RealXInput::get().map(|api| {
-        nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL, |tx| {
+        nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL, OFF_WAIT, |tx| {
             nano_companion::start(addr, tx)
         })
     });
@@ -2128,7 +2185,7 @@ mod read_loop_tests {
         let x = FakeX { nano_slot: Some(2), reads: Mutex::new(VecDeque::from([Some(held), Some(held), None])) };
         let (tx, rx) = unbounded();
         let (_ctx, crx) = unbounded();
-        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
+        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, Duration::ZERO, |tx| {
             nano_companion::start(None, tx)
         });
         assert_eq!(round, Some(("xinput-gone", true)));
@@ -2140,7 +2197,7 @@ mod read_loop_tests {
         // No slot holds the Nano (only our virtual pad): no session, nothing sent.
         let x = FakeX { nano_slot: None, reads: Mutex::new(VecDeque::new()) };
         assert_eq!(
-            nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |_| {
+            nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, Duration::ZERO, |_| -> NanoCompanion {
                 panic!("no session: no battery read")
             }),
             None
@@ -2173,7 +2230,7 @@ mod read_loop_tests {
         let (_ctx, crx) = unbounded();
         let gate = Arc::new(std::sync::Mutex::new(()));
         let g = gate.lock().unwrap();
-        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
+        let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, Duration::ZERO, |tx| {
             nano_companion::start_with(NoCompanion, LateLevel(gate.clone()), nano_companion::Timing::default(), tx)
         });
         assert_eq!(round, Some(("xinput-gone", true)));
@@ -2182,6 +2239,100 @@ mod read_loop_tests {
         let evs: Vec<GamepadEvent> = rx.try_iter().collect();
         assert_eq!(evs.last(), Some(&GamepadEvent::Disconnected), "{evs:?}");
         assert!(!evs.iter().any(|e| matches!(e, GamepadEvent::Battery(_))), "{evs:?}");
+    }
+
+    #[test]
+    fn off_wait_returns_when_path_vanishes() {
+        let mut seq = VecDeque::from([true, true, false]);
+        let mut slept = Vec::new();
+        let gone = wait_until_gone(|| seq.pop_front().unwrap_or(false), OFF_WAIT, &mut |d| slept.push(d));
+        assert!(gone);
+        assert_eq!(slept, vec![Duration::from_millis(250); 2]);
+    }
+
+    #[test]
+    fn off_wait_resumes_after_cap() {
+        let mut slept = Duration::ZERO;
+        let gone = wait_until_gone(|| true, OFF_WAIT, &mut |d| slept += d);
+        assert!(!gone, "still listed: give up and search");
+        assert_eq!(slept, OFF_WAIT, "never longer than OFF_WAIT");
+        assert_eq!(OFF_WAIT, Duration::from_secs(10));
+    }
+
+    /// A companion that records its power-off: how many events had been
+    /// sent at that moment, and what it answers.
+    struct FakeOff {
+        ok: bool,
+        sent_before: Arc<Mutex<Vec<usize>>>,
+        rx: crossbeam_channel::Receiver<GamepadEvent>,
+    }
+    impl PowerOffGuard for FakeOff {
+        fn power_off(&self) -> bool {
+            self.sent_before.lock().unwrap().push(self.rx.len());
+            self.ok
+        }
+    }
+
+    /// XInput that sends the ⏻'s Disconnect after `after` reads, and keeps
+    /// the Nano's slot listed for `listed` more slot lookups after that.
+    struct DiscX {
+        x: FakeX,
+        cmd: crossbeam_channel::Sender<SourceCmd>,
+        after: std::sync::atomic::AtomicUsize,
+    }
+    impl XInputApi for DiscX {
+        fn slot_info(&self, slot: u32) -> xinput_source::SlotInfo {
+            self.x.slot_info(slot)
+        }
+        fn state(&self, slot: u32) -> Option<xinput_source::XRead> {
+            if self.after.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                self.cmd.send(SourceCmd::Disconnect).unwrap();
+            }
+            self.x.state(slot)
+        }
+    }
+
+    fn held_reads(n: usize) -> Mutex<VecDeque<Option<xinput_source::XRead>>> {
+        let r = xinput_source::XRead { packet: 1, ..Default::default() };
+        Mutex::new((0..n).map(|_| Some(r)).collect())
+    }
+
+    #[test]
+    fn nano_disconnect_powers_off_via_companion() {
+        let (ctx, crx) = unbounded();
+        let x = DiscX { x: FakeX { nano_slot: Some(1), reads: held_reads(50) }, cmd: ctx, after: 3.into() };
+        let (tx, rx) = unbounded();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let rx2 = rx.clone();
+        let l2 = log.clone();
+        let t0 = Instant::now();
+        let round = nano_xinput_round(
+            &x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, Duration::from_millis(600),
+            move |_| FakeOff { ok: true, sent_before: l2, rx: rx2 },
+        );
+        assert_eq!(round, Some(("manual-disconnect", true)));
+        let evs: Vec<GamepadEvent> = rx.try_iter().collect();
+        let at = log.lock().unwrap().clone();
+        assert_eq!(at.len(), 1, "one power-off");
+        let disc = evs.iter().position(|e| *e == GamepadEvent::Disconnected).expect("Disconnected");
+        assert!(at[0] <= disc, "power-off before Disconnected: {at:?} {evs:?}");
+        // The slot stays listed in this fake: the round waits up to its cap.
+        assert!(t0.elapsed() >= Duration::from_millis(500), "waited for the slot to go");
+    }
+
+    #[test]
+    fn nano_disconnect_without_ready_companion_still_ends() {
+        let (ctx, crx) = unbounded();
+        let x = DiscX { x: FakeX { nano_slot: Some(1), reads: held_reads(50) }, cmd: ctx, after: 3.into() };
+        let (tx, rx) = unbounded();
+        let t0 = Instant::now();
+        let round = nano_xinput_round(
+            &x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, Duration::from_secs(5),
+            |tx| nano_companion::start(None, tx),
+        );
+        assert_eq!(round, Some(("manual-disconnect", true)));
+        assert_eq!(rx.try_iter().last(), Some(GamepadEvent::Disconnected));
+        assert!(t0.elapsed() < Duration::from_secs(2), "no power-off sent: no wait");
     }
 
     #[test]
