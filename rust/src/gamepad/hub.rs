@@ -88,11 +88,14 @@ struct Slot {
     session: Option<ControllerKind>,
     /// The source's last battery reading, cleared by its `Disconnected`.
     battery: Option<Battery>,
+    /// The app can turn this pad off (`GamepadEvent::PowerOff`, the Xbox
+    /// Nano's companion channel), cleared by its `Disconnected`.
+    power_off: bool,
 }
 
 impl Slot {
     fn new(src: Src, cmd_tx: Option<Sender<SourceCmd>>, suspend: Option<Arc<AtomicBool>>) -> Self {
-        Slot { src, cmd_tx, suspend, session: None, battery: None }
+        Slot { src, cmd_tx, suspend, session: None, battery: None, power_off: false }
     }
 }
 
@@ -253,6 +256,16 @@ impl SourceHub {
         owner.into_iter().chain(waiting).collect()
     }
 
+    /// The connected pads the app can turn off (in `connected_kinds`
+    /// order): every pad but the Xbox Nano, which needs its companion
+    /// channel (v3.10.0).
+    pub fn power_off_kinds(&self) -> Vec<ControllerKind> {
+        let can = |k: ControllerKind| {
+            k != ControllerKind::XboxNano || self.slots.iter().any(|s| s.session == Some(k) && s.power_off)
+        };
+        self.connected_kinds().into_iter().filter(|k| can(*k)).collect()
+    }
+
     /// The last battery reading of each connected pad (owner or waiting)
     /// that reports one.
     pub fn batteries(&self) -> BTreeMap<ControllerKind, Battery> {
@@ -300,11 +313,14 @@ impl SourceHub {
                 self.slots[i].battery = b;
                 return;
             }
-            // Stored per pad in v3.10.0's next step; never passed on.
-            GamepadEvent::PowerOff(_) => return,
+            GamepadEvent::PowerOff(p) => {
+                self.slots[i].power_off = p;
+                return;
+            }
             GamepadEvent::Disconnected => {
                 self.slots[i].session = None;
                 self.slots[i].battery = None;
+                self.slots[i].power_off = false;
                 if self.owner == Some(i) {
                     out.push(ev);
                     self.owner = None;
@@ -974,5 +990,38 @@ mod tests {
         send(&r.a, &[DS]);
         assert_eq!(poll(&mut hub), vec![DS]);
         assert_eq!(hub.batteries(), BTreeMap::from([(ControllerKind::DualSense, b)]));
+    }
+
+    #[test]
+    fn power_off_lists_classic_pads_and_ready_nano() {
+        let r = rig();
+        let mut hub = r.hub;
+        let nano = GamepadEvent::Connected(ControllerKind::XboxNano);
+        send(&r.a, &[DS]);
+        send(&r.b, &[nano]);
+        poll(&mut hub);
+        assert_eq!(hub.power_off_kinds(), vec![ControllerKind::DualSense], "the Nano only once its channel is ready");
+        send(&r.b, &[GamepadEvent::PowerOff(true)]);
+        assert_eq!(poll(&mut hub), vec![], "not an event");
+        assert_eq!(hub.power_off_kinds(), vec![ControllerKind::DualSense, ControllerKind::XboxNano]);
+        send(&r.b, &[GamepadEvent::PowerOff(false)]);
+        poll(&mut hub);
+        assert_eq!(hub.power_off_kinds(), vec![ControllerKind::DualSense], "lost");
+        send(&r.b, &[GamepadEvent::PowerOff(true), OFF]);
+        poll(&mut hub);
+        assert_eq!(hub.power_off_kinds(), vec![ControllerKind::DualSense], "left");
+        send(&r.b, &[nano]);
+        poll(&mut hub);
+        assert_eq!(hub.power_off_kinds(), vec![ControllerKind::DualSense], "reconnected: reset until it says so again");
+    }
+
+    #[test]
+    fn power_off_never_opens_a_session() {
+        let r = rig();
+        let mut hub = r.hub;
+        send(&r.a, &[GamepadEvent::PowerOff(true)]);
+        assert_eq!(poll(&mut hub), vec![]);
+        assert!(hub.connected_kinds().is_empty());
+        assert!(hub.power_off_kinds().is_empty());
     }
 }

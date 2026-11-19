@@ -47,6 +47,8 @@ pub enum EngineEvent {
         off_pads: Vec<ControllerKind>,
         /// The battery of each connected pad that reports one (v3.8.0).
         battery: BTreeMap<ControllerKind, Battery>,
+        /// The connected pads the app can turn off (v3.10.0).
+        power_off: Vec<ControllerKind>,
     },
     ControllerDisconnected,
     ButtonDown { id: u32 },
@@ -84,6 +86,9 @@ pub struct ControllerStatus {
     /// The battery of each connected pad that reports one, by slug (v3.8.0).
     /// Display only: never part of the connection state (iron rule 11).
     pub battery: BTreeMap<ControllerKind, Battery>,
+    /// The connected pads whose ⏻ works (v3.10.0): every pad but the Xbox
+    /// Nano, which needs its companion channel (`SourceHub::power_off_kinds`).
+    pub power_off: Vec<ControllerKind>,
 }
 
 // ─── ConfigWriteGuard — bumps generation on drop ─────────────────────────────
@@ -739,6 +744,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     // status.
     let mut last_connected: Vec<ControllerKind> = Vec::new();
     let mut last_battery: BTreeMap<ControllerKind, Battery> = BTreeMap::new();
+    let mut last_power_off: Vec<ControllerKind> = Vec::new();
     // The `log_events` file (no folder until `Handle::set_log_dir`).
     let mut elog = EventLog::new(None);
     // HidHide inputs: the kinds wanted hidden (from the live config) and the
@@ -906,6 +912,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         pad.sync(wants_pad(paused || pad_off, mode, current_kind));
                         last_connected = source.connected_kinds();
                         last_battery = source.batteries();
+                        last_power_off = source.power_off_kinds();
                         let status = ControllerStatus {
                             name: kind.display_name().to_string(),
                             transport: "BT".to_string(),
@@ -914,6 +921,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                             connected: last_connected.clone(),
                             off_pads: last_off_pads.clone(),
                             battery: last_battery.clone(),
+                            power_off: last_power_off.clone(),
                         };
                         *h.current_status.write().unwrap() = Some(status.clone());
                         let _ = h.event_tx.send(connected_event(&status));
@@ -931,6 +939,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         pad_off = false;
                         last_connected.clear();
                         last_battery.clear();
+                        last_power_off.clear();
                         // The pad is gone: so is its virtual twin.
                         pad.sync(false);
                         pad.reset_session();
@@ -1005,12 +1014,15 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
         // takes its battery with it in the same status.
         let now_connected = source.connected_kinds();
         let now_battery = source.batteries();
-        if now_connected != last_connected || now_battery != last_battery {
+        let now_power_off = source.power_off_kinds();
+        if now_connected != last_connected || now_battery != last_battery || now_power_off != last_power_off {
             last_connected = now_connected;
             last_battery = now_battery;
+            last_power_off = now_power_off;
             republish_status(&h, |s| {
                 s.connected = last_connected.clone();
                 s.battery = last_battery.clone();
+                s.power_off = last_power_off.clone();
             });
         }
 
@@ -1184,6 +1196,7 @@ fn connected_event(status: &ControllerStatus) -> EngineEvent {
         connected: status.connected.clone(),
         off_pads: status.off_pads.clone(),
         battery: status.battery.clone(),
+        power_off: status.power_off.clone(),
     }
 }
 
