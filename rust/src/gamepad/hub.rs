@@ -300,6 +300,8 @@ impl SourceHub {
                 self.slots[i].battery = b;
                 return;
             }
+            // Stored per pad in v3.10.0's next step; never passed on.
+            GamepadEvent::PowerOff(_) => return,
             GamepadEvent::Disconnected => {
                 self.slots[i].session = None;
                 self.slots[i].battery = None;

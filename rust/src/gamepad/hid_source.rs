@@ -17,7 +17,7 @@ use super::ds_protocol::{build_handshake_buffer, decode_31, REPORT_LEN_BT};
 use super::ns_handshake::{ns_handshake_counted, send_input_mode_full, send_turn_off};
 use super::ns_protocol::{decode_30, StickCal, NEUTRAL_RUMBLE};
 use super::xbox_protocol::decode_xbox_bt;
-use super::nano_battery::{self, NanoBattery};
+use super::nano_companion::{self, NanoCompanion};
 use super::xinput_source::{self, OwnPad, XInputApi};
 use super::pad::{emit_pad_diff, PadState, BUTTON_SLOTS};
 use super::rumble::{
@@ -964,7 +964,7 @@ fn worker_real(
                 // The Nano's battery comes over GATT on its own thread
                 // (display only, iron rule 11); it ends with this session.
                 let battery = (kind == ControllerKind::XboxNano)
-                    .then(|| nano_battery::start(nano_addr(&path.to_string_lossy()), &tx));
+                    .then(|| nano_companion::start(nano_addr(&path.to_string_lossy()), &tx));
                 let mut prev_buttons = [false; BUTTON_SLOTS];
                 let mut last_state: Option<PadState> = None;
                 let mut touchpad = TouchpadState::default();
@@ -1049,7 +1049,7 @@ fn nano_xinput_round(
     stop: &AtomicBool,
     cmd_rx: &Receiver<SourceCmd>,
     poll: Duration,
-    battery: impl FnOnce(&Sender<GamepadEvent>) -> NanoBattery,
+    battery: impl FnOnce(&Sender<GamepadEvent>) -> NanoCompanion,
 ) -> Option<(&'static str, bool)> {
     let slot = xinput_source::find_slot(api, own)?;
     tracing::info!(slot, "Xbox Nano on Microsoft's Xbox driver: reading XInput slot");
@@ -1081,7 +1081,7 @@ fn nano_via_xinput(
     #[cfg(windows)]
     let round = xinput_source::RealXInput::get().map(|api| {
         nano_xinput_round(api, crate::xinput_sink::own_slot(), tx, stop, cmd_rx, xinput_source::POLL, |tx| {
-            nano_battery::start(addr, tx)
+            nano_companion::start(addr, tx)
         })
     });
     #[cfg(not(windows))]
@@ -2129,7 +2129,7 @@ mod read_loop_tests {
         let (tx, rx) = unbounded();
         let (_ctx, crx) = unbounded();
         let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
-            nano_battery::start(None, tx)
+            nano_companion::start(None, tx)
         });
         assert_eq!(round, Some(("xinput-gone", true)));
         let evs: Vec<GamepadEvent> = rx.try_iter().collect();
@@ -2148,9 +2148,17 @@ mod read_loop_tests {
         assert_eq!(rx.try_iter().count(), 0);
     }
 
+    /// No companion channel (the v3.9.1 percentage-only reader).
+    struct NoCompanion;
+    impl nano_companion::CompanionOpener for NoCompanion {
+        fn open(&mut self) -> Option<Box<dyn nano_companion::CompanionLink>> {
+            None
+        }
+    }
+
     /// A Battery Level read that answers only after the session ended.
     struct LateLevel(Arc<std::sync::Mutex<()>>);
-    impl nano_battery::LevelReader for LateLevel {
+    impl nano_companion::LevelReader for LateLevel {
         fn read(&mut self) -> Option<Vec<u8>> {
             let _g = self.0.lock().unwrap();
             Some(vec![70])
@@ -2166,7 +2174,7 @@ mod read_loop_tests {
         let gate = Arc::new(std::sync::Mutex::new(()));
         let g = gate.lock().unwrap();
         let round = nano_xinput_round(&x, OwnPad::Slot(0), &tx, &AtomicBool::new(false), &crx, Duration::ZERO, |tx| {
-            nano_battery::start_with(LateLevel(gate.clone()), Duration::from_secs(60), tx)
+            nano_companion::start_with(NoCompanion, LateLevel(gate.clone()), nano_companion::Timing::default(), tx)
         });
         assert_eq!(round, Some(("xinput-gone", true)));
         drop(g);

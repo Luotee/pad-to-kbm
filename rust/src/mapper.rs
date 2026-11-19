@@ -174,7 +174,7 @@ impl Mapper {
 
     pub fn handle(&mut self, ev: GamepadEvent) -> Vec<KeyAction> {
         match ev {
-            GamepadEvent::Connected(_) | GamepadEvent::Disconnected | GamepadEvent::Battery(_) => {
+            GamepadEvent::Connected(_) | GamepadEvent::Disconnected | GamepadEvent::Battery(_) | GamepadEvent::PowerOff(_) => {
                 Vec::new()
             }
             GamepadEvent::ButtonDown(id) => match trigger_side(id) {
