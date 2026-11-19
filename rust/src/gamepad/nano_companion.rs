@@ -14,7 +14,8 @@
 //!   percentage only, never charging, no power-off.
 //! * One session per Nano worker session: `start` when it connects, the
 //!   guard dropped before the worker's `Disconnected`. Dropping it never
-//!   waits for a read or a write in flight, and nothing is sent after it.
+//!   waits for a read or a write in flight (one already started may still
+//!   finish), no new one starts and no event is sent after it.
 //! * Display and command only: `Battery` and `PowerOff` never open or
 //!   close a session (iron rule 11; the hub stores them, `hub.rs`).
 //!
@@ -144,22 +145,32 @@ impl NanoCompanion {
         Self { alive: Arc::new(Mutex::new(false)), cmd: None }
     }
 
-    /// Turn the Nano off through the companion channel. True once the pad
-    /// ACKed the power-off; false without a working channel (then nothing
-    /// was sent) or without an ACK in time.
+    /// Turn the Nano off through the companion channel. False when nothing
+    /// was sent (no working channel, or the pad did not ACK it); true once
+    /// the pad ACKed it, and also when the session did not answer within
+    /// one step in flight plus the ACK wait (`READ_TIMEOUT` +
+    /// `POWER_OFF_ACK`): the power-off may still go out, so the caller
+    /// treats the pad as going off.
     pub fn power_off(&self) -> bool {
         let Some(cmd) = &self.cmd else { return false };
         let (rtx, rrx) = bounded(1);
         if cmd.try_send(Cmd::PowerOff(rtx)).is_err() {
             return false;
         }
-        rrx.recv_timeout(POWER_OFF_ACK + Duration::from_millis(500)).unwrap_or(false)
+        match rrx.recv_timeout(READ_TIMEOUT + POWER_OFF_ACK) {
+            Ok(acked) => acked,
+            Err(RecvTimeoutError::Timeout) => {
+                tracing::info!("Xbox Nano companion: power-off not answered in time; treating the pad as going off");
+                true
+            }
+            Err(RecvTimeoutError::Disconnected) => false,
+        }
     }
 }
 
 impl Drop for NanoCompanion {
     fn drop(&mut self) {
-        // Held only around a send or a write, never across a wait.
+        // Held only around a send, never across a read or a write.
         if let Ok(mut alive) = self.alive.lock() {
             *alive = false;
         }
@@ -240,12 +251,11 @@ impl Run {
         }
     }
 
-    /// Write while the session is alive.
+    /// Write while the session is alive. The lock is not held across the
+    /// write (it can take `READ_TIMEOUT`): dropping the guard must never
+    /// wait for it.
     fn write(&self, link: &mut dyn CompanionLink, frame: &[u8]) -> bool {
-        match self.alive.lock() {
-            Ok(a) if *a => link.write(frame),
-            _ => false,
-        }
+        self.alive() && link.write(frame)
     }
 
     fn emit_battery(&mut self) {

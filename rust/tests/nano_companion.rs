@@ -171,6 +171,10 @@ struct Pad {
     echo: bool,
     answer_batt: Arc<AtomicBool>,
     hold: Arc<Mutex<()>>,
+    /// Held: every write blocks (a GATT write that takes its time).
+    write_hold: Arc<Mutex<()>>,
+    /// Each write of a power-off frame takes this long (ms).
+    slow_rst_ms: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Pad {
@@ -182,6 +186,8 @@ impl Pad {
             echo: true,
             answer_batt: Arc::new(AtomicBool::new(true)),
             hold: Arc::default(),
+            write_hold: Arc::default(),
+            slow_rst_ms: Arc::default(),
         }
     }
     fn data_types(&self) -> Vec<u8> {
@@ -197,6 +203,10 @@ impl Pad {
 
 impl CompanionLink for Pad {
     fn write(&mut self, f: &[u8]) -> bool {
+        drop(self.write_hold.lock().unwrap());
+        if f.len() > 2 && f[0] == 5 && f[2] == T_RST {
+            std::thread::sleep(Duration::from_millis(self.slow_rst_ms.load(Ordering::SeqCst)));
+        }
         self.writes.lock().unwrap().push(f.to_vec());
         let mut q = self.inbox.lock().unwrap();
         if f[0] == 0xff && self.echo {
@@ -363,4 +373,36 @@ fn drop_mid_request_emits_nothing_more() {
     let n = pad.writes.lock().unwrap().len();
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(pad.writes.lock().unwrap().len(), n, "no write after the session");
+}
+
+#[test]
+fn drop_never_waits_for_a_write_in_flight() {
+    let pad = Pad::new(0x01);
+    let (tx, rx) = unbounded();
+    let guard = nano_companion::start_with(Opens(Some(pad.clone())), level(90), fast(), &tx);
+    wait_for(&rx, GamepadEvent::PowerOff(true));
+    // The next battery request's write stalls.
+    let held = pad.write_hold.lock().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        drop(guard);
+        let _ = done_tx.send(());
+    });
+    let quick = done_rx.recv_timeout(Duration::from_millis(300)).is_ok();
+    drop(held);
+    assert!(quick, "drop waited for the write in flight (it delays the worker's Disconnected)");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(rx.try_iter().all(|e| !matches!(e, GamepadEvent::PowerOff(_) | GamepadEvent::Battery(_))), "nothing after the session");
+}
+
+#[test]
+fn power_off_waits_for_a_slow_write() {
+    let pad = Pad::new(0x01);
+    let (tx, rx) = unbounded();
+    let guard = nano_companion::start_with(Opens(Some(pad.clone())), level(90), fast(), &tx);
+    wait_for(&rx, GamepadEvent::PowerOff(true));
+    pad.slow_rst_ms.store(2000, Ordering::SeqCst);
+    assert!(guard.power_off(), "a power-off written in 2 s is still answered, not given up on");
+    drop(guard);
 }
