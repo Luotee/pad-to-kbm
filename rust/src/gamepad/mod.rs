@@ -16,6 +16,7 @@ pub mod hid_source;
 pub mod hub;
 pub mod lightbar;
 pub mod nano_battery;
+pub mod nano_companion_proto;
 pub mod ns_handshake;
 pub mod ns_protocol;
 pub mod ns2_ble;
