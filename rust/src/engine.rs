@@ -1069,6 +1069,30 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                     continue;
                 }
                 let of_kind: Vec<u64> = addrs.iter().filter(|(k, _)| *k == kind).map(|(_, a)| *a).collect();
+                if of_kind.is_empty() && kind == ControllerKind::XboxNano && last_power_off.contains(&kind) {
+                    // v3.10.0: the Nano (Bluetooth LE, no classic link to
+                    // drop) is turned off through its companion channel: the
+                    // same Disconnect as its ⏻. Once per Nano per launch.
+                    let fresh: Vec<u64> = link
+                        .present_addrs()
+                        .into_iter()
+                        .filter(|(k, a)| *k == kind && !auto_tried.contains(a))
+                        .map(|(_, a)| a)
+                        .collect();
+                    if !fresh.is_empty() && h.source_cmd.try_send(HubCmd { to: Some(kind), cmd: SourceCmd::Disconnect }).is_ok() {
+                        tracing::info!("HidHide: Xbox Nano hidden while connected; turning it off once");
+                        auto_tried.extend(&fresh);
+                        let mut v = h.auto_off.write().unwrap_or_else(|p| p.into_inner());
+                        for addr in fresh {
+                            if !v.iter().any(|a| a.addr == addr) {
+                                v.push(AutoOff { kind, addr, away: false });
+                            }
+                        }
+                        drop(v);
+                        republish_status(&h, |_| {});
+                    }
+                    continue;
+                }
                 if of_kind.is_empty() {
                     if !auto_no_addr.contains(&kind) {
                         auto_no_addr.push(kind);
