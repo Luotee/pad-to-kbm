@@ -3,6 +3,43 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-11-19
+
+### Added
+
+- **Xbox Nano: charging bolt and power key.** The Nano's tab now shows the
+  breathing charging bolt while it charges, and its ⏻ works: click it and
+  the Nano turns off (the pairing stays; press Xbox to turn it back on).
+- **Xbox Nano: turned off for the 鍵鼠 reconnect.** A Nano that HidHide
+  hides while it is connected is turned off once by the app, like the
+  DualSense and the Switch Pro, so the banner says to press Xbox instead
+  of holding it for 6 seconds.
+- Both go through the Nano's vendor GATT "companion" channel
+  (`00000000-16e2-…`), the one Microsoft's Xbox Accessories service uses:
+  a link hello, an app hello, a battery request every 5 s (its flags say
+  charging), and the power-off. Only these messages can be sent; firmware
+  update and reboot cannot (issue #56).
+
+### Changed
+
+- The Nano's battery percentage still comes from Battery Level (0x2A19).
+  When the companion channel does not open (for example while Microsoft's
+  Xbox driver holds it) the Nano behaves as in 3.9.1: no bolt, a grey ⏻
+  and the reconnect hint.
+- `controller-status` and `get_controller_status` carry `power_off`, the
+  connected pads whose ⏻ works.
+- The `nano_battery_probe` example is now `nano_companion_probe`
+  (`--off` tests the power-off).
+
+### Notes
+
+- macOS: the companion channel is Phase 2 TBD, like the rest of the Nano.
+- Share on the Nano is still not available: it is not on this channel.
+
+### Migration
+
+- None.
+
 ## [3.9.1] - 2026-11-14
 
 ### Changed
