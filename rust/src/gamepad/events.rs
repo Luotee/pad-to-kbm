@@ -34,4 +34,10 @@ pub enum GamepadEvent {
     /// passes it to the engine as an event; it never affects the
     /// connection state (iron rule 11).
     Battery(Option<crate::gamepad::Battery>),
+    /// Whether the app can turn this pad off right now (v3.10.0: the Xbox
+    /// Nano, once its companion channel is ready; `false` when it is
+    /// lost). Like `Battery`, the hub keeps it per connected pad and never
+    /// passes it to the engine; it never affects the connection state
+    /// (iron rule 11).
+    PowerOff(bool),
 }

@@ -171,9 +171,11 @@ present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 `open_config_folder`. Events the board listens for: `controller-status`
 (`connected` bool + `connected_pads` + `off_pads` + `warnings` + `battery`
 `{ "<slug>": { pct, charging } }` for the connected pads that report one —
-DualSense, Switch Pro, Xbox Nano (over GATT, never `charging`); re-sent when a reading changes, never part of the
+DualSense, Switch Pro, Xbox Nano (over GATT; `charging` only through its companion channel); re-sent when a reading changes, never part of the
 connection state; the pad slugs are `dualsense`, `ns_pro`, `ns2_pro`,
-`xbox_nano`; `get_controller_status` carries the same `battery`),
+`xbox_nano`; + `power_off`: the connected pads whose ⏻ works, the Xbox Nano
+only while its companion channel is ready (v3.10.0);
+`get_controller_status` carries the same `battery` and `power_off`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
 `{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
 hider remembers a pad).
@@ -340,9 +342,15 @@ regresses real, observed bugs the codebase already fixed once:
    `hidhide::bt_addr_of_instance`; never another pad of the same kind),
    once per pad per launch (`platform::power_off_addrs`, the ⏻'s
    `IOCTL_BTH_DISCONNECT_DEVICE`, no administrator rights); a pad with no
-   address (USB) is not touched, nor is a Bluetooth LE pad (the Xbox Nano:
-   its address is shown, but that IOCTL is a classic-Bluetooth disconnect;
-   its tab's ⏻ is greyed out). Of the Nano only the gamepad collection
+   address (USB) is not touched, nor is a Bluetooth LE pad by that IOCTL
+   (a classic-Bluetooth disconnect). The Xbox Nano (v3.10.0) is turned off
+   instead through its vendor GATT "companion" channel
+   (`gamepad/nano_companion.rs`, user-mode WinRT, no administrator rights;
+   only the allow-listed link / app hello, battery request and power-off
+   `0x24 00` can be sent, never firmware update or reboot), for both its
+   ⏻ and this reconnect, once per Nano per launch; while that channel is
+   not open (e.g. Microsoft's Xbox driver holds it) its ⏻ is greyed out and
+   it keeps the reconnect hint. Of the Nano only the gamepad collection
    (`&Col01`, in both id formats: `…_REV&0609_<addr>&Col01` and, with
    Microsoft's Xbox driver, `…&REV_0619&<addr>&COL01&IG_00`) is hidden and
    remembered.
@@ -414,9 +422,12 @@ regresses real, observed bugs the codebase already fixed once:
     presence/absence. The worker that owns the session may also write
     rumble and lightbar output reports to its pad (on connect and while
     streaming); these writes never affect connection state. The Xbox
-    Nano's battery is read over Bluetooth GATT (Battery Level 0x2A19,
-    `gamepad/nano_battery.rs`) on its own thread per session, display
-    only: a reading or a failed read never opens or ends a session.
+    Nano's battery is read over Bluetooth GATT (Battery Level 0x2A19, and
+    since v3.10.0 its charging and the power-off through the companion
+    channel, `gamepad/nano_companion.rs`) on its own thread per session,
+    display and command only: a reading, a `PowerOff` capability or a
+    failed read never opens or ends a session; after a power-off the link
+    drop is observed like any other.
 
 ## Anti-cheat self-discipline
 

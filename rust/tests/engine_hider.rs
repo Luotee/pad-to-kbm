@@ -88,6 +88,7 @@ impl Backend for FakeBackend {
         match id {
             DS_BT => Some("7C66EF8223D2".into()),
             DS_BT2 => Some("A0B1C2D3E4F5".into()),
+            NANO_COL01 => Some("FB3A7C7DF9A8".into()),
             _ => None,
         }
     }
@@ -583,6 +584,55 @@ fn the_nano_over_bluetooth_le_is_hidden_in_kbm() {
     // 手把 releases it.
     r.h.config_write().output_mode.insert("xbox_nano".into(), OutputMode::Pad);
     eventually("unhidden", || r.ctl.black() == vec![FOREIGN_DEV.to_string()]);
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+// ── Xbox Nano power-off through its companion channel (v3.10.0) ──
+
+const ADDR_NANO: u64 = 0xFB3A_7C7D_F9A8;
+const XN: ControllerKind = ControllerKind::XboxNano;
+
+fn nano_auto_off(h: &Handle) -> bool {
+    xbox_status_impl(h, "xbox_nano", "installed", "installed").unwrap().auto_off
+}
+
+#[test]
+fn nano_hidden_while_connected_is_powered_off_once_when_ready() {
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, NANO_COL01, NANO_COL02], |_, _| Box::new(|_| {}));
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(XN));
+    r.h.fake_event(GamepadEvent::PowerOff(true));
+    eventually("the Nano is turned off through its session", || r.h.fake_disconnects_received() == 1);
+    eventually("auto_off reported", || nano_auto_off(&r.h));
+    assert_eq!(r.h.fake_power_offs(), Vec::<Vec<u64>>::new(), "no classic link drop for a BLE pad");
+    let _ = ADDR_NANO;
+    // Once per launch: nothing more while it is still there.
+    no_power_off(&r.h, "once");
+    // It goes, then comes back hidden: auto_off clears.
+    set_present(&r, &[MOUSE]);
+    r.h.fake_event(GamepadEvent::Disconnected);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(nano_auto_off(&r.h), "off and not back yet");
+    set_present(&r, &[MOUSE, NANO_COL01, NANO_COL02]);
+    r.h.fake_event(GamepadEvent::Connected(XN));
+    eventually("auto_off cleared on the reconnect", || !nano_auto_off(&r.h));
+    no_power_off(&r.h, "hidden already, and once per launch");
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn nano_without_ready_companion_keeps_reconnect_hint() {
+    let r = rig_present(test_helpers::load_example(), &[MOUSE, NANO_COL01, NANO_COL02], |_, _| Box::new(|_| {}));
+    r.h.fake_disconnects_received();
+    r.h.fake_event(GamepadEvent::Connected(XN));
+    eventually("needs the reconnect", || r.h.hider().unwrap().hidden(XN) == Some(false));
+    no_power_off(&r.h, "no companion channel: the reconnect hint");
+    assert!(!nano_auto_off(&r.h));
+    // The channel becomes ready later in the session: then it is turned off.
+    r.h.fake_event(GamepadEvent::PowerOff(true));
+    eventually("turned off once ready", || r.h.fake_disconnects_received() == 1);
     r.worker.stop();
     r.engine.shutdown();
 }

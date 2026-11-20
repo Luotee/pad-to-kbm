@@ -96,7 +96,7 @@ function tauriMock({ config, version }) {
     config: clone(config),
     // `battery` as the engine sends it (v3.8.0): empty here so the first-load lamp / header checks see the green
     // lamp; the battery checks below send readings.
-    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [], battery: {} },
+    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [], battery: {}, power_off: ['dualsense'] },
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).
@@ -1252,6 +1252,18 @@ try {
     const dcBefore = await countCalls(page, 'disconnect_gamepad');
     await page.locator('#board .hdr .pwr').click({ force: true });
     check('Nano ⏻ click sends no disconnect_gamepad', (await countCalls(page, 'disconnect_gamepad')) === dcBefore);
+    // v3.10.0: once the Nano's companion channel is ready (controller-status.power_off lists it) its ⏻ works.
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'xbox_nano', connected_pads: ['dualsense', 'xbox_nano'], warnings: [], off_pads: [], power_off: ['dualsense', 'xbox_nano'] }));
+    await settle(page);
+    check('Nano ⏻ enabled when power_off lists it, title 斷開手把',
+      (await page.locator('#board .hdr .pwr').count()) === 1 &&
+      !(await page.locator('#board .hdr .pwr').isDisabled()) &&
+      (await page.locator('#board .hdr .pwr').getAttribute('title')) === '斷開手把');
+    await page.click('#board .hdr .pwr');
+    check('Nano ⏻ → disconnect_gamepad (xbox_nano)', (await lastCall(page, 'disconnect_gamepad'))?.args?.pad === 'xbox_nano');
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'xbox_nano', connected_pads: ['dualsense', 'xbox_nano'], warnings: [], off_pads: [], power_off: ['dualsense'] }));
+    await settle(page);
+    check('Nano ⏻ grey again when the channel is lost', await page.locator('#board .hdr .pwr').isDisabled());
     const sg = await segsN();
     check('Nano: four segments 關／鍵鼠／Xbox／手把, each with its icon',
       JSON.stringify(sg.map(x => x.text)) === '["關","鍵鼠","Xbox","手把"]' && sg.every(x => x.svg === 1), JSON.stringify(sg));

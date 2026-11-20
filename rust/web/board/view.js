@@ -130,8 +130,9 @@ export function render(st) {
   const pad = st.pad, cfg = st.config, modes = triggerModes(cfg, pad), L = layoutFor(pad, modes), b = boardBinds(cfg, pad);
   let h = '<header class="hdr"><div class="ttl">按鍵設定</div><div class="pads">';
   for (const p of PADS) {
-    // The Xbox Nano's power key is greyed out and disabled: the app cannot turn a Bluetooth LE pad off.
-    const c = st.connected.has(p), act = pad === p, pwr = c && act, nano = p === 'xbox_nano';
+    // The Xbox Nano's power key works only while its companion channel is ready (v3.10.0, `power_off`); otherwise it
+    // is greyed out and disabled.
+    const c = st.connected.has(p), act = pad === p, pwr = c && act, nano = p === 'xbox_nano' && !(st.powerOff && st.powerOff.has(p));
     // v3.8.0: a connected pad whose battery is readable shows it in place of the lamp, and the plate on hover.
     const bt = c && st.battery ? st.battery[p] : null;
     h += '<span class="pdw' + (act ? ' act' : '') + (c ? ' c' : '') + '"><button type="button" class="pd' + (act ? ' act' : '') + '" data-pad="' + p +

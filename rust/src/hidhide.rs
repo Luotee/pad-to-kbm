@@ -203,7 +203,7 @@ pub fn bt_addr_from_instance(id: &str) -> Option<String> {
 /// The Bluetooth address in a Bluetooth LE HID device's hidapi path
 /// (`\\?\HID#{00001812-…}…&fb3a7c7df9a8&Col01#8&…#{…}`): the path is the
 /// instance id with `#` for `\` (`bt_addr_from_instance`). The Xbox Nano's
-/// GATT battery read takes it (`gamepad::nano_battery`).
+/// GATT battery read takes it (`gamepad::nano_companion`).
 pub fn bt_addr_from_hid_path(path: &str) -> Option<String> {
     let rest = path.strip_prefix(r"\\?\").unwrap_or(path);
     bt_addr_from_instance(&rest.replace('#', "\\"))
