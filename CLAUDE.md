@@ -174,8 +174,11 @@ present pad) and `forget_all_hidden_pads` (the absent ones); fire-and-forget
 DualSense, Switch Pro, Xbox Nano (over GATT; `charging` only through its companion channel); re-sent when a reading changes, never part of the
 connection state; the pad slugs are `dualsense`, `ns_pro`, `ns2_pro`,
 `xbox_nano`; + `power_off`: the connected pads whose ⏻ works, the Xbox Nano
-only while its companion channel is ready (v3.10.0);
-`get_controller_status` carries the same `battery` and `power_off`),
+only while its companion channel is ready (v3.10.0); + `native_xinput`:
+the connected pads Microsoft's Xbox driver owns, the Nano read through
+XInput (v3.11.0; the board shows no ViGEmBus / HidHide prompt for them);
+`get_controller_status` carries the same `battery`, `power_off` and
+`native_xinput`),
 `button-down/up`, `touchpad-click/hover`, `activity` (with `source`:
 `{button}` / `{macro}`), `config-changed` (also sent, with `ui: true`, when the
 hider remembers a pad).
@@ -314,8 +317,11 @@ regresses real, observed bugs the codebase already fixed once:
    (its HID path carries `&IG_`, and that collection sends no report) it is
    read through XInput (`gamepad/xinput_source.rs`, Windows only: its slot
    by `XInputGetCapabilitiesEx` 045E:0B4F, never our ViGEm pad), otherwise
-   through its HID report. Its Share is in neither, so the board greys that
-   slot out (`model.js` `slotOff`). New platform quirks live here.
+   through its HID report. Its worker reports the route
+   (`GamepadEvent::NativeXInput`; hub `native_xinput`) so the engine knows
+   whether Microsoft's driver is there (v3.11.0). Its Share is in neither
+   (proven not to reach Windows, issue #56), so the board greys that slot
+   out (`model.js` `slotOff`). New platform quirks live here.
 7. **No process hooking, no DLL injection, no driver.** User-mode
    `SendInput` (Windows) / `CGEvent` (macOS) only, via the `enigo`
    crate. Anything else lands us in actual cheat-software territory.
@@ -350,7 +356,12 @@ regresses real, observed bugs the codebase already fixed once:
    `0x24 00` can be sent, never firmware update or reboot), for both its
    ⏻ and this reconnect, once per Nano per launch; while that channel is
    not open (e.g. Microsoft's Xbox driver holds it) its ⏻ is greyed out and
-   it keeps the reconnect hint. Of the Nano only the gamepad collection
+   it keeps the reconnect hint. The Nano's joined Xbox|手把 option (stored
+   `pad`, v3.11.0) plugs the ViGEmBus virtual pad and hides the real Nano
+   while the Nano is driverless (read over its HID report: route known, or
+   unknown but a remembered driverless id); under Microsoft's driver it
+   does neither, and only driverless instance ids (no `&IG_`) are ever
+   hidden in that option. Of the Nano only the gamepad collection
    (`&Col01`, in both id formats: `…_REV&0609_<addr>&Col01` and, with
    Microsoft's Xbox driver, `…&REV_0619&<addr>&COL01&IG_00`) is hidden and
    remembered.
