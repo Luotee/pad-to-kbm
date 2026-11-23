@@ -97,6 +97,12 @@ export function tileToKey(tile) {
 const OFF_SLOTS = { xbox_nano: { 29: 'Xbox Nano 的 Share 鍵目前不會送給電腦' } };
 // v3.10.0: the connected pads whose power key works, from a controller-status payload (`power_off`); the Xbox Nano is in
 // it only while its companion channel is ready. A payload without the list: none.
+// v3.11.0: the connected pads Microsoft's Xbox driver owns, from a controller-status payload (`native_xinput`; the
+// Xbox Nano read through XInput). A payload without the list: none.
+export function nativeFrom(s) {
+  return new Set(s && Array.isArray(s.native_xinput) ? s.native_xinput : []);
+}
+
 export function powerOffFrom(s) {
   return new Set(s && Array.isArray(s.power_off) ? s.power_off : []);
 }

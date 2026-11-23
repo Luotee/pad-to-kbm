@@ -68,7 +68,7 @@ function omodeHTML(st, pad) {
 // The Nano keeps the four cells, but Xbox and 手把 are one option (both send `pad`): one .xjoin holds the
 // two, and its pink spans both cells when it is on.
 function nanoModeHTML(st, pad) {
-  const m = outputMode(st, pad), on = m === 'pad', t = 'Nano 本身就是 Xbox 手把：程式不送東西，遊戲直接讀它（不需要 ViGEmBus）';
+  const m = outputMode(st, pad), on = m === 'pad', t = '遊戲把 Nano 當 Xbox 手把用：沒裝微軟驅動時，PadToKBM 用 ViGEmBus 產生虛擬 Xbox 手把並藏起實體 Nano';
   const b = (mode, cls, icon, label, title, p) => '<button type="button" class="' + cls + '" data-act="mode" data-mode="' + mode + '" aria-pressed="' + p + '" title="' + title + '">' + icon + '<span>' + label + '</span></button>';
   return '<span class="omode" role="group" aria-label="輸出">' + b('off', 'o-off', ICON.pause, '關', '這次先關掉這支手把（重開程式會恢復）', m === 'off') +
     b('kbm', 'o-kbm', ICON.kbd, '鍵鼠', '手把按鍵送出鍵盤、滑鼠；遊戲看不到這支手把（HidHide）', m === 'kbm') +

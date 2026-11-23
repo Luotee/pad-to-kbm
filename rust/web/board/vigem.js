@@ -21,9 +21,16 @@ const powerKey = pad => POWER_KEY[pad] || 'HOME';
 const DRIVER = { vigem: { name: 'ViGEmBus', cmd: 'install_vigem' }, hidhide: { name: 'HidHide', cmd: 'install_hidhide' } };
 
 // Which hiding the selected tab needs: Xbox mode, 鍵鼠 on a pad Windows can read itself, or none.
+// The Nano's joined Xbox|手把 option (`pad`) is an Xbox mode while it is connected and driverless: a virtual Xbox
+// pad and HidHide stand in for it (v3.11.0). Under Microsoft's driver (native_xinput) or not connected (its route is
+// unknown) it needs nothing.
+function nanoXbox(pad, mode) {
+  return mode === 'pad' && pad === 'xbox_nano' && state.connected.has('xbox_nano') && !state.nativeXinput.has('xbox_nano');
+}
+
 function hideMode() {
   const m = outputMode(state, state.pad);
-  if (m === 'xbox') return 'xbox';
+  if (m === 'xbox' || nanoXbox(state.pad, m)) return 'xbox';
   if (m === 'kbm' && hasNative(state.pad)) return 'kbm';
   return null;
 }
@@ -167,7 +174,8 @@ export async function startVigem() {
   act.onModeChange((pad, mode) => {
     // 改回鍵鼠 (the user just declined the installs) re-probes quietly: only the !.
     const quiet = VG.quiet; VG.quiet = false;
-    if (mode === 'xbox' || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode, open: !quiet }); } else VG.pop = false;
+    const xb = mode === 'xbox' || nanoXbox(pad, mode);
+    if (xb || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode: xb ? 'xbox' : mode, open: !quiet }); } else VG.pop = false;
   });
   // Another tab: the drivers are the same, `hidden` / `auto_off` are per pad (refreshed on the next paint).
   onPadChange(() => {
