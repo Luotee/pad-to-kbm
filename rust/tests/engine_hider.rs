@@ -636,3 +636,41 @@ fn nano_without_ready_companion_keeps_reconnect_hint() {
     r.worker.stop();
     r.engine.shutdown();
 }
+
+// ── v3.11.0: the Nano's joined Xbox|手把 option hides it only when driverless ──
+
+const NANO_IG: &str = r"HID\{00001812-0000-1000-8000-00805F9B34FB}&DEV&VID_045E&PID_0B4F&REV_0619&FB3A7C7DF9A8&COL01&IG_00\8&4CA2C2&0&0000";
+
+fn nano_pad() -> Config {
+    let mut cfg = test_helpers::load_example();
+    cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+    cfg
+}
+
+#[test]
+fn driverless_nano_in_pad_mode_is_hidden() {
+    let r = rig_present(nano_pad(), &[MOUSE, NANO_COL01, NANO_COL02], |_, _| Box::new(|_| {}));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!r.ctl.black().contains(&NANO_COL01.to_string()), "route unknown, nothing remembered: not hidden yet");
+    r.h.fake_event(GamepadEvent::NativeXInput(false));
+    r.h.fake_event(GamepadEvent::Connected(XN));
+    eventually("driverless Nano hidden", || r.ctl.black().contains(&NANO_COL01.to_string()));
+    assert!(!r.ctl.black().contains(&NANO_COL02.to_string()), "the keyboard collection stays visible");
+    r.worker.stop();
+    r.engine.shutdown();
+}
+
+#[test]
+fn seen_native_nano_is_not_hidden_even_with_driverless_known_id() {
+    let mut cfg = nano_pad();
+    cfg.hidhide_known.push(KnownPad { kind: "xbox_nano".into(), id: NANO_COL01.into(), addr: Some("FB3A7C7DF9A8".into()) });
+    let r = rig_present(cfg, &[MOUSE, NANO_IG], |_, _| Box::new(|_| {}));
+    eventually("remembered driverless id hidden while the route is unknown", || r.ctl.black().contains(&NANO_COL01.to_string()));
+    assert!(!r.ctl.black().contains(&NANO_IG.to_string()), "a Microsoft-driver id is never hidden in the joined mode");
+    r.h.fake_event(GamepadEvent::NativeXInput(true));
+    r.h.fake_event(GamepadEvent::Connected(XN));
+    eventually("seen on XInput: unhidden", || !r.ctl.black().contains(&NANO_COL01.to_string()));
+    assert!(!r.ctl.black().contains(&NANO_IG.to_string()));
+    r.worker.stop();
+    r.engine.shutdown();
+}

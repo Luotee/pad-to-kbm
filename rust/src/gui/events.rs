@@ -11,7 +11,7 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
         loop {
             for ev in engine.drain_events() {
                 let _ = match ev {
-                    EngineEvent::ControllerConnected { name, transport, kind, warnings, connected, off_pads, battery, power_off } => {
+                    EngineEvent::ControllerConnected { name, transport, kind, warnings, connected, off_pads, battery, power_off, native_xinput } => {
                         // Spec §10: tray icon swaps to "connected" on plug-in.
                         // Also re-sent when `warnings`, the connected pads or a
                         // battery reading change (idempotent here). `battery`:
@@ -23,7 +23,7 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
                         app.emit("controller-status", serde_json::json!({
                             "connected": true, "name": name, "transport": transport, "kind": kind,
                             "warnings": warnings, "connected_pads": connected, "off_pads": off_pads,
-                            "battery": battery, "power_off": power_off
+                            "battery": battery, "power_off": power_off, "native_xinput": native_xinput
                         }))
                     }
                     EngineEvent::ControllerDisconnected => {
@@ -33,7 +33,7 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Handle) {
                         app.emit("controller-status", serde_json::json!({
                             "connected": false, "name": "", "transport": "", "kind": null,
                             "warnings": [], "connected_pads": [], "off_pads": engine.off_pads(),
-                            "battery": {}, "power_off": []
+                            "battery": {}, "power_off": [], "native_xinput": []
                         }))
                     }
                     EngineEvent::ButtonDown { id } =>

@@ -49,6 +49,8 @@ pub enum EngineEvent {
         battery: BTreeMap<ControllerKind, Battery>,
         /// The connected pads the app can turn off (v3.10.0).
         power_off: Vec<ControllerKind>,
+        /// The connected pads read through XInput (v3.11.0).
+        native_xinput: Vec<ControllerKind>,
     },
     ControllerDisconnected,
     ButtonDown { id: u32 },
@@ -89,6 +91,10 @@ pub struct ControllerStatus {
     /// The connected pads whose ⏻ works (v3.10.0): every pad but the Xbox
     /// Nano, which needs its companion channel (`SourceHub::power_off_kinds`).
     pub power_off: Vec<ControllerKind>,
+    /// The connected pads read through XInput, i.e. Microsoft's driver owns
+    /// them (v3.11.0: the Xbox Nano). The board shows no ViGEmBus / HidHide
+    /// prompt for those.
+    pub native_xinput: Vec<ControllerKind>,
 }
 
 // ─── ConfigWriteGuard — bumps generation on drop ─────────────────────────────
@@ -745,12 +751,21 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
     let mut last_connected: Vec<ControllerKind> = Vec::new();
     let mut last_battery: BTreeMap<ControllerKind, Battery> = BTreeMap::new();
     let mut last_power_off: Vec<ControllerKind> = Vec::new();
+    let mut last_native: Vec<ControllerKind> = Vec::new();
+    // Whether the last tick wanted the virtual pad's mode (Xbox, or the
+    // driverless Nano's joined option): an edge into it re-arms the plug.
+    let mut padish = false;
     // The `log_events` file (no folder until `Handle::set_log_dir`).
     let mut elog = EventLog::new(None);
     // HidHide inputs: the kinds wanted hidden (from the live config) and the
     // connected kinds last sent to the worker (`None`: not sent yet).
-    let mut hide_wanted = hide_wanted_kinds(&h.config.read().unwrap());
-    let mut hider_sent: Option<(Vec<ControllerKind>, Vec<ControllerKind>)> = None;
+    // v3.11.0: the Nano's route last seen this launch (`Some(true)`:
+    // Microsoft's driver), and whether it counts as driverless for hiding.
+    let mut nano_native_seen: Option<bool> = None;
+    let mut nano_driverless = nano_is_driverless(None, &h.config.read().unwrap());
+    let mut hide_wanted = hide_wanted_kinds(&h.config.read().unwrap(), nano_driverless);
+    let mut hide_skip = hide_skip_ig(&h.config.read().unwrap());
+    let mut hider_sent: Option<(Vec<ControllerKind>, Vec<ControllerKind>, Vec<ControllerKind>)> = None;
     // The remembered pads' ids (`hidhide_known`) and those last sent.
     let mut hide_known = hide_known_ids(&h.config.read().unwrap());
     let mut known_sent: Option<Vec<String>> = None;
@@ -800,10 +815,25 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             h.stick_cal.replace_from(&cfg);
             h.lightbar.set_config(cfg.lightbar);
             mapper.replace_config(cfg.clone());
-            hide_wanted = hide_wanted_kinds(&cfg);
+            nano_driverless = nano_is_driverless(nano_native_seen, &cfg);
+            hide_wanted = hide_wanted_kinds(&cfg, nano_driverless);
+            hide_skip = hide_skip_ig(&cfg);
             hide_known = hide_known_ids(&cfg);
             last_config_gen = current_gen;
         }
+
+        // ── The Nano's route (v3.11.0) ───────────────────────────────────────
+        if let Some(n) = source.native_xinput(ControllerKind::XboxNano) {
+            if nano_native_seen != Some(n) {
+                nano_native_seen = Some(n);
+                let cfg = h.config.read().unwrap();
+                nano_driverless = nano_is_driverless(nano_native_seen, &cfg);
+                hide_wanted = hide_wanted_kinds(&cfg, nano_driverless);
+            }
+        }
+        // The owner is a Nano read over its own HID report (route known).
+        let driverless_nano = current_kind == Some(ControllerKind::XboxNano)
+            && source.native_xinput(ControllerKind::XboxNano) == Some(false);
 
         // ── Mapping ON→OFF edge: release everything ──────────────────────────
         let now_mode = output_mode(&h, current_kind);
@@ -812,10 +842,14 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
             drain_and_release(&mut macros, &macro_rx, &mut sink, &mut mouse_sink, mapper.config(), &h.event_tx, &mut elog);
             mapper.reset_input_state();
         }
-        if now_mode == OutputMode::Xbox && mode != OutputMode::Xbox {
-            // An edge into Xbox may retry a plug that failed earlier this session.
+        let now_padish = now_mode == OutputMode::Xbox
+            || (driverless_nano && now_mode == OutputMode::Pad);
+        if now_padish && !padish {
+            // An edge into Xbox (or the driverless Nano's joined option) may
+            // retry a plug that failed earlier this session.
             pad.rearm();
         }
+        padish = now_padish;
         mode = now_mode;
         mapping_on = now_on;
 
@@ -847,7 +881,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
         // ── Virtual pad: plugged only in Xbox mode ───────────────────────────
         // After the OFF edge's release above (keys up, then the pad appears);
         // before polling on the ON edge (pad gone, then keys resume).
-        warnings_changed |= pad.sync(wants_pad(paused || pad_off, mode, current_kind));
+        warnings_changed |= pad.sync(wants_pad(paused || pad_off, mode, current_kind, driverless_nano));
         if warnings_changed {
             publish_warnings(&h, status_warnings(&worker_warnings, &pad));
         }
@@ -909,10 +943,13 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         pad_off = now_off;
                         // A fresh session: neutral pad state, one plug attempt.
                         pad.reset_session();
-                        pad.sync(wants_pad(paused || pad_off, mode, current_kind));
+                        let driverless_nano = kind == ControllerKind::XboxNano
+                            && source.native_xinput(ControllerKind::XboxNano) == Some(false);
+                        pad.sync(wants_pad(paused || pad_off, mode, current_kind, driverless_nano));
                         last_connected = source.connected_kinds();
                         last_battery = source.batteries();
                         last_power_off = source.power_off_kinds();
+                        last_native = source.native_xinput_kinds();
                         let status = ControllerStatus {
                             name: kind.display_name().to_string(),
                             transport: "BT".to_string(),
@@ -922,6 +959,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                             off_pads: last_off_pads.clone(),
                             battery: last_battery.clone(),
                             power_off: last_power_off.clone(),
+                            native_xinput: last_native.clone(),
                         };
                         *h.current_status.write().unwrap() = Some(status.clone());
                         let _ = h.event_tx.send(connected_event(&status));
@@ -940,6 +978,7 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                         last_connected.clear();
                         last_battery.clear();
                         last_power_off.clear();
+                        last_native.clear();
                         // The pad is gone: so is its virtual twin.
                         pad.sync(false);
                         pad.reset_session();
@@ -1015,14 +1054,21 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
         let now_connected = source.connected_kinds();
         let now_battery = source.batteries();
         let now_power_off = source.power_off_kinds();
-        if now_connected != last_connected || now_battery != last_battery || now_power_off != last_power_off {
+        let now_native = source.native_xinput_kinds();
+        if now_connected != last_connected
+            || now_battery != last_battery
+            || now_power_off != last_power_off
+            || now_native != last_native
+        {
             last_connected = now_connected;
             last_battery = now_battery;
             last_power_off = now_power_off;
+            last_native = now_native;
             republish_status(&h, |s| {
                 s.connected = last_connected.clone();
                 s.battery = last_battery.clone();
                 s.power_off = last_power_off.clone();
+                s.native_xinput = last_native.clone();
             });
         }
 
@@ -1124,9 +1170,9 @@ fn run_loop(h: Arc<HandleInner>, mut source: GamepadSource, dry_run: bool, pad: 
                 link.set_known(hide_known.clone());
                 known_sent = Some(hide_known.clone());
             }
-            if hider_sent.as_ref().map_or(true, |(w, c)| *w != hide_wanted || *c != last_connected) {
-                link.update(hide_wanted.clone());
-                hider_sent = Some((hide_wanted.clone(), last_connected.clone()));
+            if hider_sent.as_ref().map_or(true, |(w, c, k)| *w != hide_wanted || *c != last_connected || *k != hide_skip) {
+                link.update_with(hide_wanted.clone(), hide_skip.clone());
+                hider_sent = Some((hide_wanted.clone(), last_connected.clone(), hide_skip.clone()));
             }
         }
 
@@ -1160,11 +1206,38 @@ fn output_mode(h: &HandleInner, kind: Option<ControllerKind>) -> OutputMode {
 /// The kinds HidHide should hide: in 鍵鼠 or Xbox output mode (whether
 /// connected or not, so a reconnect arrives hidden; 手把 mode never hides) and driven natively by Windows (the
 /// Switch 2 Pro is not, so a game cannot see it anyway).
-fn hide_wanted_kinds(cfg: &Config) -> Vec<ControllerKind> {
+///
+/// v3.11.0: the Xbox Nano on its joined Xbox|手把 option (`Pad`) is hidden
+/// too when it is known to be driverless (`nano_driverless`): a virtual
+/// Xbox pad stands in for it then.
+fn hide_wanted_kinds(cfg: &Config, nano_driverless: bool) -> Vec<ControllerKind> {
     ControllerKind::ALL
         .into_iter()
-        .filter(|k| k.has_native_driver() && matches!(cfg.output_mode_for(*k), OutputMode::Kbm | OutputMode::Xbox))
+        .filter(|k| {
+            k.has_native_driver()
+                && match cfg.output_mode_for(*k) {
+                    OutputMode::Kbm | OutputMode::Xbox => true,
+                    OutputMode::Pad => *k == ControllerKind::XboxNano && nano_driverless,
+                }
+        })
         .collect()
+}
+
+/// Kinds whose Microsoft-driver ids (`&IG_`) the hider must not hide: the
+/// Nano in its joined option (only its driverless ids stand behind the
+/// virtual pad).
+fn hide_skip_ig(cfg: &Config) -> Vec<ControllerKind> {
+    if cfg.output_mode_for(ControllerKind::XboxNano) == OutputMode::Pad {
+        vec![ControllerKind::XboxNano]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Whether the Nano is driverless: the route last seen this launch, else a
+/// remembered driverless id (`hidhide_known`).
+fn nano_is_driverless(seen_native: Option<bool>, cfg: &Config) -> bool {
+    seen_native.map(|n| !n).unwrap_or_else(|| cfg.hidhide_known.iter().any(|k| crate::hidhide::is_nano_driverless_id(&k.id)))
 }
 
 /// The remembered pads' instance ids (`hidhide_known`): hidden while their
@@ -1180,9 +1253,13 @@ fn is_off(off: &[ControllerKind], kind: Option<ControllerKind>) -> bool {
 
 /// The virtual Xbox pad is plugged only for a connected pad (any kind) in
 /// Xbox mode, and not while paused or off (no input is forwarded then, so a
-/// plugged pad would freeze whatever it last reported).
-fn wants_pad(paused_or_off: bool, mode: OutputMode, kind: Option<ControllerKind>) -> bool {
-    !paused_or_off && mode == OutputMode::Xbox && kind.is_some()
+/// plugged pad would freeze whatever it last reported). v3.11.0: also for
+/// the Xbox Nano on its joined option (`Pad`) when it is read driverless
+/// (`driverless_nano`: its route is known to be HID).
+fn wants_pad(paused_or_off: bool, mode: OutputMode, kind: Option<ControllerKind>, driverless_nano: bool) -> bool {
+    !paused_or_off
+        && kind.is_some()
+        && (mode == OutputMode::Xbox || (kind == Some(ControllerKind::XboxNano) && mode == OutputMode::Pad && driverless_nano))
 }
 
 /// Warnings for `ControllerStatus`: the workers' (process lifetime), then
@@ -1221,6 +1298,7 @@ fn connected_event(status: &ControllerStatus) -> EngineEvent {
         off_pads: status.off_pads.clone(),
         battery: status.battery.clone(),
         power_off: status.power_off.clone(),
+        native_xinput: status.native_xinput.clone(),
     }
 }
 
@@ -1542,11 +1620,11 @@ mod tests {
         let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
         cfg.output_mode.clear();
         cfg.mapping_enabled.clear();
-        assert!(hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "鍵鼠 hides the Nano");
+        assert!(hide_wanted_kinds(&cfg, false).contains(&ControllerKind::XboxNano), "鍵鼠 hides the Nano");
         cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
-        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano));
+        assert!(!hide_wanted_kinds(&cfg, false).contains(&ControllerKind::XboxNano));
         cfg.output_mode.insert("xbox_nano".into(), OutputMode::Xbox);
-        assert!(!hide_wanted_kinds(&cfg).contains(&ControllerKind::XboxNano), "a stray xbox is 手把 for the Nano");
+        assert!(!hide_wanted_kinds(&cfg, false).contains(&ControllerKind::XboxNano), "a stray xbox is 手把 for the Nano");
     }
 
     #[test]
@@ -1554,14 +1632,14 @@ mod tests {
         let mut cfg: Config = serde_json::from_str(include_str!("../config.example.json")).unwrap();
         cfg.output_mode.clear();
         cfg.mapping_enabled.clear();
-        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense, ControllerKind::NsPro, ControllerKind::XboxNano], "default 鍵鼠 is hidden");
+        assert_eq!(hide_wanted_kinds(&cfg, false), vec![ControllerKind::DualSense, ControllerKind::NsPro, ControllerKind::XboxNano], "default 鍵鼠 is hidden");
         for k in ControllerKind::ALL {
             cfg.output_mode.insert(k.slug().into(), OutputMode::Pad);
         }
-        assert!(hide_wanted_kinds(&cfg).is_empty(), "手把 is never hidden");
+        assert!(hide_wanted_kinds(&cfg, false).is_empty(), "手把 is never hidden");
         cfg.output_mode.insert("dualsense".into(), OutputMode::Xbox);
         cfg.output_mode.insert("ns2_pro".into(), OutputMode::Kbm);
-        assert_eq!(hide_wanted_kinds(&cfg), vec![ControllerKind::DualSense], "Switch 2 Pro has no native driver");
+        assert_eq!(hide_wanted_kinds(&cfg, false), vec![ControllerKind::DualSense], "Switch 2 Pro has no native driver");
     }
 
     #[test]
@@ -1570,13 +1648,39 @@ mod tests {
         for kind in ControllerKind::ALL {
             for mode in modes {
                 for paused_or_off in [false, true] {
-                    let want = !paused_or_off && mode == OutputMode::Xbox;
-                    assert_eq!(wants_pad(paused_or_off, mode, Some(kind)), want, "{kind:?} {mode:?} {paused_or_off}");
+                    for driverless in [false, true] {
+                        let nano_pad = kind == ControllerKind::XboxNano && mode == OutputMode::Pad && driverless;
+                        let want = !paused_or_off && (mode == OutputMode::Xbox || nano_pad);
+                        assert_eq!(
+                            wants_pad(paused_or_off, mode, Some(kind), driverless),
+                            want,
+                            "{kind:?} {mode:?} {paused_or_off} {driverless}"
+                        );
+                    }
                 }
             }
         }
         for mode in modes {
-            assert!(!wants_pad(false, mode, None), "no controller, no pad ({mode:?})");
+            assert!(!wants_pad(false, mode, None, true), "no controller, no pad ({mode:?})");
         }
     }
+
+    #[test]
+    fn nano_in_its_joined_mode_is_hidden_only_when_driverless() {
+        let mut cfg = Config::load_from_str(include_str!("../config.example.json")).unwrap();
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+        assert!(hide_wanted_kinds(&cfg, true).contains(&ControllerKind::XboxNano));
+        assert!(!hide_wanted_kinds(&cfg, false).contains(&ControllerKind::XboxNano), "driver / unknown: left alone");
+        cfg.output_mode.insert("xbox_nano".into(), OutputMode::Kbm);
+        assert!(hide_wanted_kinds(&cfg, false).contains(&ControllerKind::XboxNano), "鍵鼠 hides it either way");
+    }
+
+    #[test]
+    fn nano_driverless_ids() {
+        use crate::hidhide::is_nano_driverless_id;
+        assert!(is_nano_driverless_id(r"HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e_PID&0b4f_REV&0619_fb3a7c7df9a8&Col01\8&4ca2c2&0&0000"));
+        assert!(!is_nano_driverless_id(r"HID\{00001812-0000-1000-8000-00805F9B34FB}&DEV&VID_045E&PID_0B4F&REV_0619&FB3A7C7DF9A8&COL01&IG_00\8&4CA2C2&0&0000"));
+        assert!(!is_nano_driverless_id(r"HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002054c_PID&0ce6\9&2d1c&0&0000"));
+    }
+
 }
