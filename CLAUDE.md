@@ -328,8 +328,9 @@ regresses real, observed bugs the codebase already fixed once:
    Single exception (v2.6.0, widened in v3.6.0): two externally installed
    Nefarius drivers, ViGEmBus (a virtual Xbox 360 pad) and HidHide (hides
    the real pad from games). ViGEmBus is used only while the pad is on
-   Xbox (`output_mode` `xbox`); HidHide only while it is on 鍵鼠 or Xbox
-   (`kbm` or `xbox`, never 手把) and only for a pad with a native driver
+   Xbox (`output_mode` `xbox`) or is a driverless Xbox Nano on its joined
+   option (below); HidHide only while it is on 鍵鼠 or Xbox (`kbm` or
+   `xbox`, never 手把, that Nano excepted) and only for a pad with a native driver
    (`ControllerKind::has_native_driver`). The app never ships a
    driver. On the user's click it may download each pinned official
    installer, verify size + sha256, and run it; the user goes through the
