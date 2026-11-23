@@ -1104,6 +1104,8 @@ fn nano_xinput_round<C: PowerOffGuard>(
 ) -> Option<(&'static str, bool)> {
     let slot = xinput_source::find_slot(api, own)?;
     tracing::info!(slot, "Xbox Nano on Microsoft's Xbox driver: reading XInput slot");
+    // Read through XInput: Microsoft's driver owns it (v3.11.0).
+    let _ = tx.send(GamepadEvent::NativeXInput(true));
     // Nothing queued for an earlier session acts on this one.
     drain_commands(cmd_rx);
     // The battery over GATT, for this session only (display only).
@@ -1209,6 +1211,8 @@ fn read_loop(
     // Xbox Nano only: when to look up whether its device is still there.
     let mut look_at = (session.kind == ControllerKind::XboxNano).then(|| Instant::now() + NANO_PRESENCE_AFTER);
     if session.kind == ControllerKind::XboxNano {
+        // Read over its own HID report: driverless (v3.11.0).
+        let _ = tx.send(GamepadEvent::NativeXInput(false));
         nano_initial_report(
             d, session, &mut emitted_connected, last_state, prev_buttons, touchpad, params, tx,
         );
@@ -2031,7 +2035,7 @@ mod read_loop_tests {
         let (outcome, elapsed, evs) = run(&io, &mut s);
         assert_eq!(outcome, "stop-signal");
         assert!(elapsed >= Duration::from_millis(1300), "{elapsed:?}");
-        assert!(evs.is_empty(), "{evs:?}");
+        assert!(first_input(&evs).is_none(), "only the route fact: {evs:?}");
         assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
     }
 
@@ -2104,6 +2108,26 @@ mod read_loop_tests {
         assert_eq!(most.load(Ordering::SeqCst), 1);
     }
 
+    /// The first event that is not the route fact (`NativeXInput`).
+    fn first_input(evs: &[GamepadEvent]) -> Option<&GamepadEvent> {
+        evs.iter().find(|e| !matches!(e, GamepadEvent::NativeXInput(_)))
+    }
+
+    #[test]
+    fn a_nano_hid_session_reports_its_route_before_connected() {
+        let io = ScriptIo::new(vec![Step::Frame(nano_frame(true)), Step::Error]);
+        let mut s = Session::new(ControllerKind::XboxNano);
+        let (_, _, evs) = run(&io, &mut s);
+        let route = evs.iter().position(|e| *e == GamepadEvent::NativeXInput(false)).expect("route reported");
+        let conn = evs.iter().position(|e| matches!(e, GamepadEvent::Connected(_))).expect("connected");
+        assert!(route < conn, "{evs:?}");
+        // Other pads report no route.
+        let io = ScriptIo::new(vec![Step::Frame(ds_frame()), Step::Error]);
+        let mut s = Session::new(ControllerKind::DualSense);
+        let (_, _, evs) = run(&io, &mut s);
+        assert!(!evs.iter().any(|e| matches!(e, GamepadEvent::NativeXInput(_))), "{evs:?}");
+    }
+
     #[test]
     fn nano_initial_report_connects_with_the_current_state() {
         // The Nano sends nothing until something changes; a GET_REPORT at
@@ -2113,7 +2137,7 @@ mod read_loop_tests {
         let mut s = Session::new(ControllerKind::XboxNano);
         let (outcome, _, evs) = run(&io, &mut s);
         assert_eq!(outcome, "read-error");
-        assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
+        assert_eq!(first_input(&evs), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
         assert!(evs.contains(&GamepadEvent::ButtonDown(0)), "{evs:?}");
         assert_eq!(*io.input_asked.lock().unwrap(), vec![0x01], "one GET_REPORT of report 0x01");
         assert!(io.writes.lock().unwrap().is_empty(), "nothing is written to the Nano");
@@ -2127,14 +2151,14 @@ mod read_loop_tests {
             io.input_report = report.clone();
             let mut s = Session::new(ControllerKind::XboxNano);
             let (_, _, evs) = run(&io, &mut s);
-            assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{report:?}");
+            assert_eq!(first_input(&evs), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{report:?}");
             assert!(!evs.iter().any(|e| matches!(e, GamepadEvent::ButtonDown(_))), "{report:?}: {evs:?}");
             assert_eq!(io.input_asked.lock().unwrap().len(), 1, "asked once: {report:?}");
         }
         // Nothing at all: no Connected.
         let io = ScriptIo::new(vec![Step::Idle(5), Step::Error]);
         let mut s = Session::new(ControllerKind::XboxNano);
-        assert!(run(&io, &mut s).2.is_empty());
+        assert!(first_input(&run(&io, &mut s).2).is_none(), "only the route fact");
     }
 
     #[test]
@@ -2190,7 +2214,8 @@ mod read_loop_tests {
         });
         assert_eq!(round, Some(("xinput-gone", true)));
         let evs: Vec<GamepadEvent> = rx.try_iter().collect();
-        assert_eq!(evs.first(), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
+        assert_eq!(evs.first(), Some(&GamepadEvent::NativeXInput(true)), "the route first: {evs:?}");
+        assert_eq!(evs.get(1), Some(&GamepadEvent::Connected(ControllerKind::XboxNano)), "{evs:?}");
         assert!(evs.contains(&GamepadEvent::ButtonDown(0)), "{evs:?}");
         assert!(!evs.contains(&GamepadEvent::ButtonUp(0)), "released by the engine, not here: {evs:?}");
         assert_eq!(evs.last(), Some(&GamepadEvent::Disconnected), "{evs:?}");
