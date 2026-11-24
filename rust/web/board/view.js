@@ -49,7 +49,7 @@ export function boardLocked(st) {
 
 export const OFF_BANNER = '這支手把已關閉';
 export function padBanner(mode, pad) {
-  if (pad === 'xbox_nano') return '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用';
+  if (pad === 'xbox_nano') return '遊戲把 Nano 當 Xbox 手把用；沒裝微軟驅動時用 ViGEmBus 虛擬手把；下面的鍵鼠綁定這時不作用';
   return mode === 'xbox' ? '遊戲看到的是 Xbox 手把；下面的鍵鼠綁定這時不作用' : '程式不送東西，遊戲直接用手把；下面的鍵鼠綁定這時不作用';
 }
 
@@ -151,8 +151,8 @@ export function render(st) {
   h += '<div class="stage"></div>' + padSvg(pad) + lbarHTML(st);
   const om = outputMode(st, pad);
   if (om === 'off') h += '<div class="obanner gold" role="status">' + ICON.pause + '<span>' + OFF_BANNER + '</span></div>';
-  else if ((om === 'xbox' || om === 'kbm') && autoOffBanner()) h += '<div class="obanner white ao" role="status"><span>' + autoOffBanner() + '</span></div>';
-  else if ((om === 'xbox' || om === 'kbm') && reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span>' + (reconnectDismissable() ? '<button type="button" class="mini" data-act="rcdismiss">這次不再提醒</button>' : '') + '</div>';
+  else if (autoOffBanner()) h += '<div class="obanner white ao" role="status"><span>' + autoOffBanner() + '</span></div>';
+  else if (reconnectBanner()) h += '<div class="obanner white rc" role="status"><span>' + reconnectBanner() + '</span>' + (reconnectDismissable() ? '<button type="button" class="mini" data-act="rcdismiss">這次不再提醒</button>' : '') + '</div>';
   else if ((om === 'pad' || om === 'xbox') && !vigemBlocksBanner()) h += '<div class="obanner white" role="status"><span>' + padBanner(om, pad) + '</span></div>';
   const hot = {};
   for (const g of L.groups) {
