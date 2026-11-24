@@ -581,3 +581,79 @@ fn nano_never_plugs_a_virtual_pad() {
     assert!(r.warnings().is_empty());
     r.engine.shutdown();
 }
+
+// ── v3.11.0: a driverless Xbox Nano on its joined Xbox|手把 option (`pad`) ──
+
+fn nano_pad() -> Config {
+    let mut cfg = test_helpers::load_example();
+    cfg.output_mode.insert("xbox_nano".into(), OutputMode::Pad);
+    cfg
+}
+
+const XN: ControllerKind = ControllerKind::XboxNano;
+
+#[test]
+fn nano_driverless_pad_mode_plugs_and_forwards() {
+    let r = Rig::new(nano_pad(), None);
+    r.h.fake_event(GamepadEvent::NativeXInput(false));
+    r.event(GamepadEvent::Connected(XN));
+    assert_eq!(r.plugs(), 1, "{:?}", r.ops());
+    r.h.fake_event(GamepadEvent::ButtonDown(0));
+    r.h.fake_event(GamepadEvent::Stick { axis: 0, value: -1.0 });
+    r.h.fake_event(GamepadEvent::Trigger { axis: 4, value: 0.5 });
+    std::thread::sleep(STEP);
+    let s = r.last_update().expect("state pushed");
+    assert_eq!(s.buttons, xbutton::A);
+    assert_eq!((s.lx, s.lt), (-32767, 128));
+    assert_eq!(r.h.held_keys_count(), 0, "no keys in the joined option");
+    assert_eq!(r.h.current_status().unwrap().native_xinput, Vec::<ControllerKind>::new());
+    assert_balanced(&r.ops());
+    r.engine.shutdown();
+}
+
+#[test]
+fn nano_native_pad_mode_never_plugs() {
+    let r = Rig::new(nano_pad(), None);
+    r.h.fake_event(GamepadEvent::NativeXInput(true));
+    r.event(GamepadEvent::Connected(XN));
+    r.event(GamepadEvent::ButtonDown(0));
+    assert_eq!(r.plugs(), 0, "Microsoft's driver: the game reads the Nano: {:?}", r.ops());
+    assert_eq!(r.h.current_status().unwrap().native_xinput, vec![XN]);
+    r.engine.shutdown();
+}
+
+#[test]
+fn nano_route_unknown_plugs_only_once_known() {
+    let r = Rig::new(nano_pad(), None);
+    r.event(GamepadEvent::Connected(XN));
+    assert_eq!(r.plugs(), 0, "route not known yet");
+    r.event(GamepadEvent::NativeXInput(false));
+    assert_eq!(r.plugs(), 1, "{:?}", r.ops());
+    r.event(GamepadEvent::ButtonDown(1));
+    assert_eq!(r.plugs(), 1, "one plug");
+    r.engine.shutdown();
+}
+
+#[test]
+fn nano_leaving_pad_mode_unplugs() {
+    let r = Rig::new(nano_pad(), None);
+    r.h.fake_event(GamepadEvent::NativeXInput(false));
+    r.event(GamepadEvent::Connected(XN));
+    assert_eq!(r.plugs(), 1);
+    r.set_mode("xbox_nano", OutputMode::Kbm);
+    assert_eq!(r.unplugs(), 1, "鍵鼠: the virtual pad goes: {:?}", r.ops());
+    r.set_mode("xbox_nano", OutputMode::Pad);
+    assert_eq!(r.plugs(), 2, "back: plugged again: {:?}", r.ops());
+    assert_balanced(&r.ops());
+    r.engine.shutdown();
+}
+
+#[test]
+fn nano_disconnect_unplugs() {
+    let r = Rig::new(nano_pad(), None);
+    r.h.fake_event(GamepadEvent::NativeXInput(false));
+    r.event(GamepadEvent::Connected(XN));
+    r.event(GamepadEvent::Disconnected);
+    assert_eq!((r.plugs(), r.unplugs()), (1, 1), "{:?}", r.ops());
+    r.engine.shutdown();
+}

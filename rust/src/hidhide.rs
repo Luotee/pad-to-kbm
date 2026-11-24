@@ -223,6 +223,13 @@ fn ble_addr_in(device_id: &str) -> Option<String> {
 /// Switch 2 Pro. Its link is not one the automatic power-off drops
 /// (`crate::platform::power_off_addrs` sends the classic-Bluetooth
 /// disconnect), so it gets the reconnect hint instead.
+/// An Xbox Nano instance id read without Microsoft's Xbox driver (PID
+/// 0B4F, no `&IG_`): the driverless format (v3.11.0).
+pub fn is_nano_driverless_id(id: &str) -> bool {
+    let up = id.to_ascii_uppercase();
+    (up.contains("PID&0B4F") || up.contains("PID_0B4F")) && !up.contains("&IG_")
+}
+
 pub fn is_ble_instance(id: &str) -> bool {
     id.to_ascii_lowercase().contains("{00001812-")
 }

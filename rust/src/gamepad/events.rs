@@ -40,4 +40,10 @@ pub enum GamepadEvent {
     /// passes it to the engine; it never affects the connection state
     /// (iron rule 11).
     PowerOff(bool),
+    /// The Xbox Nano is read through XInput, i.e. Microsoft's Xbox driver
+    /// owns it (true), or over its own HID report, driverless (false)
+    /// (v3.11.0). Sent by its worker at the start of each session; like
+    /// `Battery`, kept per connected pad by the hub and never passed to the
+    /// engine as input; it never affects the connection state (iron rule 11).
+    NativeXInput(bool),
 }

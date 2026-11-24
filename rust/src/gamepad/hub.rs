@@ -91,11 +91,14 @@ struct Slot {
     /// The app can turn this pad off (`GamepadEvent::PowerOff`, the Xbox
     /// Nano's companion channel), cleared by its `Disconnected`.
     power_off: bool,
+    /// The Nano's read route (`GamepadEvent::NativeXInput`), cleared by its
+    /// `Disconnected`.
+    native: Option<bool>,
 }
 
 impl Slot {
     fn new(src: Src, cmd_tx: Option<Sender<SourceCmd>>, suspend: Option<Arc<AtomicBool>>) -> Self {
-        Slot { src, cmd_tx, suspend, session: None, battery: None, power_off: false }
+        Slot { src, cmd_tx, suspend, session: None, battery: None, power_off: false, native: None }
     }
 }
 
@@ -266,6 +269,18 @@ impl SourceHub {
         self.connected_kinds().into_iter().filter(|k| can(*k)).collect()
     }
 
+    /// The read route of the connected pad of `kind` (`Some(true)`: through
+    /// XInput, Microsoft's driver; `Some(false)`: its own HID report; `None`:
+    /// not connected or not reported yet). v3.11.0, the Xbox Nano.
+    pub fn native_xinput(&self, kind: ControllerKind) -> Option<bool> {
+        self.slots.iter().find(|s| s.session == Some(kind)).and_then(|s| s.native)
+    }
+
+    /// The connected pads read through XInput (`connected_kinds` order).
+    pub fn native_xinput_kinds(&self) -> Vec<ControllerKind> {
+        self.connected_kinds().into_iter().filter(|k| self.native_xinput(*k) == Some(true)).collect()
+    }
+
     /// The last battery reading of each connected pad (owner or waiting)
     /// that reports one.
     pub fn batteries(&self) -> BTreeMap<ControllerKind, Battery> {
@@ -317,10 +332,15 @@ impl SourceHub {
                 self.slots[i].power_off = p;
                 return;
             }
+            GamepadEvent::NativeXInput(n) => {
+                self.slots[i].native = Some(n);
+                return;
+            }
             GamepadEvent::Disconnected => {
                 self.slots[i].session = None;
                 self.slots[i].battery = None;
                 self.slots[i].power_off = false;
+                self.slots[i].native = None;
                 if self.owner == Some(i) {
                     out.push(ev);
                     self.owner = None;
@@ -1023,5 +1043,34 @@ mod tests {
         assert_eq!(poll(&mut hub), vec![]);
         assert!(hub.connected_kinds().is_empty());
         assert!(hub.power_off_kinds().is_empty());
+    }
+
+    #[test]
+    fn native_xinput_kept_per_pad_and_never_passed_on() {
+        let r = rig();
+        let mut hub = r.hub;
+        let nano = GamepadEvent::Connected(ControllerKind::XboxNano);
+        send(&r.b, &[nano, GamepadEvent::NativeXInput(false)]);
+        poll(&mut hub);
+        assert_eq!(hub.native_xinput(ControllerKind::XboxNano), Some(false));
+        assert!(hub.native_xinput_kinds().is_empty());
+        send(&r.b, &[GamepadEvent::NativeXInput(true)]);
+        assert_eq!(poll(&mut hub), vec![], "not an event");
+        assert_eq!(hub.native_xinput(ControllerKind::XboxNano), Some(true));
+        assert_eq!(hub.native_xinput_kinds(), vec![ControllerKind::XboxNano]);
+        send(&r.b, &[OFF]);
+        poll(&mut hub);
+        assert_eq!(hub.native_xinput(ControllerKind::XboxNano), None, "cleared by Disconnected");
+        assert!(hub.native_xinput_kinds().is_empty());
+    }
+
+    #[test]
+    fn native_xinput_never_opens_a_session() {
+        let r = rig();
+        let mut hub = r.hub;
+        send(&r.a, &[GamepadEvent::NativeXInput(true)]);
+        assert_eq!(poll(&mut hub), vec![]);
+        assert!(hub.connected_kinds().is_empty());
+        assert!(hub.native_xinput_kinds().is_empty());
     }
 }

@@ -103,6 +103,9 @@ pub struct Hider {
     state: HideState,
     state_path: PathBuf,
     wanted: Vec<ControllerKind>,
+    /// Kinds whose Microsoft-driver ids (`&IG_`) are never hidden (v3.11.0:
+    /// the Xbox Nano in its joined Xbox|手把 mode).
+    skip_ig: Vec<ControllerKind>,
     /// Ids added while present and present since: a game may hold them open
     /// (their kinds are `HideStatus::needs_replug`).
     replug_ids: Vec<String>,
@@ -135,6 +138,7 @@ impl Hider {
             state,
             state_path,
             wanted: Vec::new(),
+            skip_ig: Vec::new(),
             replug_ids: Vec::new(),
             known: Vec::new(),
             pending: Vec::new(),
@@ -207,6 +211,15 @@ impl Hider {
             .collect();
         self.replug_ids.retain(|id| kind_of(id).is_some_and(|k| wanted.contains(&k)));
         self.wanted = wanted;
+    }
+
+    /// Kinds whose ids carrying `&IG_` (Microsoft's Xbox driver) are not
+    /// hidden even when the kind is wanted; ones we hid are taken out at the
+    /// next round.
+    pub fn set_skip_ig(&mut self, kinds: &[ControllerKind]) {
+        self.skip_ig = kinds.to_vec();
+        let skip = self.skip_ig.clone();
+        self.replug_ids.retain(|id| !skipped(&skip, id));
     }
 
     /// The config's remembered ids (`hidhide_known`). An id that left the
@@ -308,8 +321,8 @@ impl Hider {
         // 2. Blacklist: + present and remembered ids of wanted kinds,
         //    − ours of unwanted kinds and ours forgotten while absent.
         let black = ctl.blacklist()?;
-        let wanted = &self.wanted;
-        let is_wanted = |id: &String| kind_of(id).is_some_and(|k| wanted.contains(&k));
+        let (wanted, skip_ig) = (&self.wanted, &self.skip_ig);
+        let is_wanted = |id: &String| kind_of(id).is_some_and(|k| wanted.contains(&k)) && !skipped(skip_ig, id);
         let present_wanted: Vec<String> = merge(&[], &present.iter().filter(|id| is_wanted(id)).cloned().collect::<Vec<_>>());
         let remembered = merge(&self.known, &self.pending);
         let to_hide = merge(&present_wanted, &remembered.iter().filter(|id| is_wanted(id)).cloned().collect::<Vec<_>>());
@@ -409,7 +422,7 @@ pub trait Backend: Send + 'static {
 }
 
 enum Msg {
-    Update { wanted: Vec<ControllerKind> },
+    Update { wanted: Vec<ControllerKind>, skip_ig: Vec<ControllerKind> },
     Known(Vec<String>),
     Retry,
     Stop(Sender<()>),
@@ -428,7 +441,13 @@ impl HiderLink {
     /// they or its connected kinds change: a pad that connected or left is
     /// what the round finds present or not.
     pub fn update(&self, wanted: Vec<ControllerKind>) {
-        let _ = self.tx.send(Msg::Update { wanted });
+        self.update_with(wanted, Vec::new());
+    }
+
+    /// [`HiderLink::update`] with kinds whose `&IG_` ids are never hidden
+    /// ([`Hider::set_skip_ig`]).
+    pub fn update_with(&self, wanted: Vec<ControllerKind>, skip_ig: Vec<ControllerKind>) {
+        let _ = self.tx.send(Msg::Update { wanted, skip_ig });
     }
 
     /// The config's remembered ids (`hidhide_known`) changed. Runs a round
@@ -623,8 +642,9 @@ fn run_worker<B: Backend>(
         let mut stop = None;
         for msg in first.into_iter().chain(rx.try_iter()) {
             match msg {
-                Msg::Update { wanted } => {
+                Msg::Update { wanted, skip_ig } => {
                     hider.set_inputs(&wanted);
+                    hider.set_skip_ig(&skip_ig);
                     started = true;
                     run = true;
                 }
@@ -692,6 +712,11 @@ fn run_worker<B: Backend>(
         st.present_addrs = addrs_of(&st.present);
         publish(st);
     }
+}
+
+/// An id of a `skip_ig` kind that Microsoft's Xbox driver owns (`&IG_`).
+fn skipped(skip_ig: &[ControllerKind], id: &str) -> bool {
+    kind_of(id).is_some_and(|k| skip_ig.contains(&k)) && id.to_ascii_uppercase().contains("&IG_")
 }
 
 /// The same ids, in any order and case.
@@ -964,6 +989,38 @@ mod tests {
     }
 
     // ── the round ──
+
+    /// The same Nano gamepad collection under Microsoft's Xbox driver.
+    const NANO_IG: &str = r"HID\{00001812-0000-1000-8000-00805f9b34fb}&Dev&VID_045e&PID_0b4f&REV_0619&fb3a7c7df9a8&Col01&IG_00\8&4ca2c2&0&0000";
+
+    #[test]
+    fn skip_ig_leaves_driver_ids_alone() {
+        let nano = ControllerKind::XboxNano;
+        let mut r = rig(foreign());
+        r.hider.set_inputs(&[nano]);
+        r.hider.set_skip_ig(&[nano]);
+        round(&mut r, &[NANO_BLE, NANO_IG]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, NANO_BLE]), "only the driverless id");
+        // Without the skip both formats are hidden (鍵鼠).
+        let mut r = rig(foreign());
+        r.hider.set_inputs(&[nano]);
+        round(&mut r, &[NANO_BLE, NANO_IG]).unwrap();
+        let black = r.ctl.f().black.clone();
+        assert!(black.contains(&NANO_BLE.to_string()) && black.contains(&NANO_IG.to_string()), "{black:?}");
+    }
+
+    #[test]
+    fn skip_ig_change_removes_the_ig_id() {
+        let nano = ControllerKind::XboxNano;
+        let mut r = rig(foreign());
+        r.hider.set_inputs(&[nano]);
+        round(&mut r, &[NANO_BLE, NANO_IG]).unwrap();
+        assert!(r.ctl.f().black.contains(&NANO_IG.to_string()));
+        r.hider.set_skip_ig(&[nano]);
+        round(&mut r, &[NANO_BLE, NANO_IG]).unwrap();
+        assert_eq!(r.ctl.f().black, s(&[FOREIGN_DEV, NANO_BLE]), "the IG id we added is taken out");
+        assert_eq!(r.hider.state().ids, s(&[NANO_BLE]));
+    }
 
     #[test]
     fn hides_present_ids_of_wanted_kinds_and_keeps_foreign_entries() {

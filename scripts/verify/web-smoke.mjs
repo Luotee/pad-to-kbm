@@ -96,7 +96,7 @@ function tauriMock({ config, version }) {
     config: clone(config),
     // `battery` as the engine sends it (v3.8.0): empty here so the first-load lamp / header checks see the green
     // lamp; the battery checks below send readings.
-    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [], battery: {}, power_off: ['dualsense'] },
+    status: { name: 'DualSense', transport: 'BT', kind: 'dualsense', warnings: [], connected: ['dualsense'], off_pads: [], battery: {}, power_off: ['dualsense'], native_xinput: [] },
     sticks: null,
     // get_xbox_status reply (drivers + whether the selected pad is hidden yet) and what each
     // installer leaves behind (install_vigem / install_hidhide reply).
@@ -1279,7 +1279,7 @@ try {
       check(`Nano ${which} → set_output_mode(xbox_nano, pad)`, om?.args?.kind === 'xbox_nano' && om.args.mode === 'pad', JSON.stringify(om?.args));
       check(`Nano ${which}: .xjoin.on 124 wide, Xbox and 手把 both pressed`, !!j && j.on && j.w === 124 &&
         JSON.stringify(s2.map(x => x.on)) === '["false","false","true","true"]', JSON.stringify({ j, s2 }));
-      check(`Nano ${which}: banner says the game reads it as an Xbox pad`, (await banner()) === '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用', await banner());
+      check(`Nano ${which}: banner says the game reads it as an Xbox pad`, (await banner()) === '遊戲把 Nano 當 Xbox 手把用；沒裝微軟驅動時用 ViGEmBus 虛擬手把；下面的鍵鼠綁定這時不作用', await banner());
       check(`Nano ${which}: no ViGEmBus prompt or !`, (await pop().count()) === 0 && (await bang().count()) === 0);
       if (which === 'o-xbox') await page.screenshot({ path: path.join(outDir, 'web-nano-pad.png') });
       await page.click('#board .omode .o-kbm');
@@ -1289,12 +1289,65 @@ try {
         JSON.stringify((await segsN()).map(x => x.on)) === '["false","true","false","false"]' && (await joined())?.on === false);
     }
     // A config that says xbox for the Nano (hand-edited) reads as the joined option, without a ViGEmBus prompt.
+    // Microsoft's driver owns the Nano (native_xinput): v3.10.0 behaviour, no ViGEmBus prompt even when it is missing.
+    const nanoStatus = native => page.evaluate(n => window.__mockEmit('controller-status', { connected: true, kind: 'xbox_nano', connected_pads: ['dualsense', 'xbox_nano'], warnings: [], off_pads: [], native_xinput: n }), native);
+    await nanoStatus(['xbox_nano']);
+    await settle(page);
     await setXbox({ vigem: 'missing' });
     await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'xbox'; window.__mockEmit('config-changed', { source: 'external' }); });
     await settle(page);
     check('Nano output_mode xbox (hand-edited) shows the joined option, no ViGEmBus prompt',
-      (await joined())?.on === true && (await pop().count()) === 0 && (await bang().count()) === 0 && (await banner()) === '遊戲直接把它當 Xbox 手把用；下面的鍵鼠綁定這時不作用', await banner());
-    await setXbox({ vigem: 'installed' });
+      (await joined())?.on === true && (await pop().count()) === 0 && (await bang().count()) === 0 && (await banner()) === '遊戲把 Nano 當 Xbox 手把用；沒裝微軟驅動時用 ViGEmBus 虛擬手把；下面的鍵鼠綁定這時不作用', await banner());
+    // v3.11.0: the joined option's title says what it does in both cases.
+    check('Nano joined option title explains the driverless virtual pad',
+      (await page.locator('#board .omode .o-xbox').getAttribute('title')) === '遊戲把 Nano 當 Xbox 手把用：沒裝微軟驅動時，PadToKBM 用 ViGEmBus 產生虛擬 Xbox 手把並藏起實體 Nano',
+      await page.locator('#board .omode .o-xbox').getAttribute('title'));
+    check('Nano: the old 「不需要 ViGEmBus」 copy is gone', !(await page.content()).includes('不需要 ViGEmBus'));
+    // Driverless (native_xinput empty): the joined option needs ViGEmBus and HidHide like any Xbox pad.
+    await nanoStatus([]);
+    await settle(page);
+    await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
+    await settle(page);
+    await setXbox({ vigem: 'missing', hidhide: 'installed', hidden: null }, { vigem: 'missing', hidhide: 'installed' });
+    await page.click('#board .omode .o-xbox');
+    await settle(page);
+    check('driverless Nano: picking the joined option opens the ViGEmBus prompt for it',
+      (await pop().count()) === 1 && (await lastCall(page, 'get_xbox_status'))?.args?.kind === 'xbox_nano' && JSON.stringify(await popRows()) === '["ViGEmBus:未安裝","HidHide:已安裝"]', JSON.stringify(await popRows().catch(() => null)));
+    await page.click('#board [data-act="vglater"]');
+    await settle(page);
+    check('driverless Nano: 稍後 leaves the !', (await pop().count()) === 0 && (await bang().count()) === 1);
+    await nanoStatus(['xbox_nano']);
+    await settle(page);
+    check('Nano under the driver: the ! goes', (await bang().count()) === 0);
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [], native_xinput: [] }));
+    await settle(page);
+    check('Nano disconnected: no ! (its route is unknown)', (await bang().count()) === 0);
+    // Review finding (v3.11.0): the Nano's joined option shows the reconnect hint while it is connected and
+    // driverless, and the auto power-off banner while it is away; neither under Microsoft's driver.
+    await setXbox({ vigem: 'installed', hidhide: 'installed', hidden: false, auto_off: false, replug_usb: false }, { vigem: 'installed', hidhide: 'installed' });
+    await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'pad'; window.__mockEmit('config-changed', { source: 'external' }); });
+    await nanoStatus([]);
+    await settle(page);
+    await page.evaluate(() => window.__mockEmit('config-changed', { source: 'external' }));
+    await settle(page);
+    check('driverless Nano in Xbox｜手把, hidden but connected: the reconnect hint',
+      ((await page.locator('#board .obanner.rc span').first().textContent().catch(() => '')) || '').trim() === '再連一次 Xbox Nano，遊戲才看不到原本的手把：長按 Xbox 鍵約 6 秒關機，再按 Xbox 鍵打開',
+      await banner());
+    await nanoStatus(['xbox_nano']);
+    await settle(page);
+    check('Nano under the driver: no reconnect hint', (await page.locator('#board .obanner.rc').count()) === 0);
+    await nanoStatus([]);
+    await settle(page);
+    await setXbox({ hidden: true, auto_off: true });
+    await page.evaluate(() => window.__mockEmit('controller-status', { connected: true, kind: 'dualsense', connected_pads: ['dualsense'], warnings: [], off_pads: [], native_xinput: [] }));
+    await settle(page);
+    check('Nano powered off by the app in Xbox｜手把: the auto power-off banner, no popover or !',
+      ((await page.locator('#board .obanner.ao span').first().textContent().catch(() => '')) || '').trim() === '已替你把 Xbox Nano 關機，好讓遊戲看不到它。按 Xbox 鍵打開就能用了' &&
+      (await pop().count()) === 0 && (await bang().count()) === 0, await banner());
+    await setXbox({ hidden: true, auto_off: false });
+    await nanoStatus([]);
+    await settle(page);
+    await setXbox({ vigem: 'installed', hidhide: 'installed' }, { vigem: 'installed', hidhide: 'installed' });
     await page.evaluate(() => { window.__mock.config.output_mode.xbox_nano = 'kbm'; window.__mockEmit('config-changed', { source: 'external' }); });
     await settle(page);
     // Its key names: trigger plates, shoulder slots, the three middle keys and Share below the pad.

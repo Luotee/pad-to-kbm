@@ -3,6 +3,38 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-11-24
+
+### Added
+
+- **Xbox Nano as an Xbox pad without Microsoft's driver.** The Nano's
+  Xbox｜手把 option (one option, as before) now makes games see an Xbox 360
+  controller when the Nano is driverless: PadToKBM plugs a virtual pad
+  through ViGEmBus, fed from the Nano (buttons by position, analog sticks
+  and triggers, Xbox → Guide), and hides the real Nano with HidHide. A Nano
+  hidden while it is connected is turned off once by the app (v3.10.0), so
+  pressing Xbox brings it back hidden. XInput games, most PC games, read it.
+
+### Changed
+
+- Microsoft's Xbox driver, if installed, is left alone: the game reads the
+  Nano itself, so there is no virtual pad and no ViGEmBus / HidHide prompt
+  for it. PadToKBM decides by how it reads the Nano (HID or XInput), and
+  hides only driverless Nano device ids in this option.
+- The Nano's Xbox｜手把 title says what the option does in both cases. The
+  ViGEmBus / HidHide prompt and `vigem_missing` banner appear for it only
+  while the Nano is connected and driverless.
+- `controller-status` and `get_controller_status` carry `native_xinput`,
+  the connected pads Microsoft's Xbox driver owns.
+
+### Migration
+
+- No config change. A driverless Nano on Xbox｜手把 now gets a virtual pad
+  and its real device is hidden from games. No option is left that lets a
+  game read a driverless Nano's raw HID; XInput games never could. To use
+  the Nano with only keyboard and mouse, pick 鍵鼠.
+- macOS: Phase 2 TBD, like the rest of the Nano and Xbox output.
+
 ## [3.10.0] - 2026-11-19
 
 ### Added

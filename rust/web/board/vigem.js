@@ -21,11 +21,26 @@ const powerKey = pad => POWER_KEY[pad] || 'HOME';
 const DRIVER = { vigem: { name: 'ViGEmBus', cmd: 'install_vigem' }, hidhide: { name: 'HidHide', cmd: 'install_hidhide' } };
 
 // Which hiding the selected tab needs: Xbox mode, 鍵鼠 on a pad Windows can read itself, or none.
+// The Nano's joined Xbox|手把 option (`pad`) is an Xbox mode while it is connected and driverless: a virtual Xbox
+// pad and HidHide stand in for it (v3.11.0). Under Microsoft's driver (native_xinput) or not connected (its route is
+// unknown) it needs nothing.
+function nanoXbox(pad, mode) {
+  return mode === 'pad' && pad === 'xbox_nano' && state.connected.has('xbox_nano') && !state.nativeXinput.has('xbox_nano');
+}
+
 function hideMode() {
   const m = outputMode(state, state.pad);
-  if (m === 'xbox') return 'xbox';
+  if (m === 'xbox' || nanoXbox(state.pad, m)) return 'xbox';
   if (m === 'kbm' && hasNative(state.pad)) return 'kbm';
   return null;
+}
+// The mode the banners go by. Like hideMode, but the Nano's joined option counts as Xbox while it is away too (the
+// app may have powered it off for its reconnect: `auto_off`, which Rust reports only for a pad it powered off), not
+// only while it is connected. Nothing is prompted for a Nano that is away: its route is unknown.
+function bannerMode() {
+  const m = outputMode(state, state.pad);
+  if (m === 'pad' && state.pad === 'xbox_nano' && !state.nativeXinput.has('xbox_nano')) return 'xbox';
+  return hideMode();
 }
 // What this pad still needs: Xbox = ViGEmBus always, plus HidHide when Windows can read the pad
 // itself; 鍵鼠 = HidHide only. `mode` is passed by a caller whose config may not have caught up yet.
@@ -122,7 +137,7 @@ export function reconnectBanner() {
 // so while no pad of the kind is connected (another one in use: quiet). No 這次不再提醒: it goes when
 // the pad is back.
 export function autoOffBanner() {
-  if (!hideMode() || !hasNative(state.pad) || missing().length || !VG.status || !VG.status.auto_off) return '';
+  if (!bannerMode() || !hasNative(state.pad) || missing().length || !VG.status || !VG.status.auto_off) return '';
   if (state.connected.has(state.pad)) return '';
   return '已替你把 ' + NAME[state.pad] + ' 關機，好讓遊戲看不到它。按 ' + powerKey(state.pad) + ' 鍵打開就能用了';
 }
@@ -167,7 +182,8 @@ export async function startVigem() {
   act.onModeChange((pad, mode) => {
     // 改回鍵鼠 (the user just declined the installs) re-probes quietly: only the !.
     const quiet = VG.quiet; VG.quiet = false;
-    if (mode === 'xbox' || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode, open: !quiet }); } else VG.pop = false;
+    const xb = mode === 'xbox' || nanoXbox(pad, mode);
+    if (xb || (mode === 'kbm' && hasNative(pad))) { VG.status = null; probe({ mode: xb ? 'xbox' : mode, open: !quiet }); } else VG.pop = false;
   });
   // Another tab: the drivers are the same, `hidden` / `auto_off` are per pad (refreshed on the next paint).
   onPadChange(() => {
@@ -197,7 +213,8 @@ export async function startVigem() {
 // One probe at a time; none while installing (install re-probes itself).
 export function maybeProbe() {
   const mode = hideMode();
-  if (!mode || VG.probing || VG.busy) return;
+  // The Nano's joined option while it is away: read `auto_off` for its banner only (no popover, no !).
+  if (!(mode || bannerMode()) || VG.probing || VG.busy) return;
   // 鍵鼠 opens by itself once per session, when the selected pad is connected (not before any
   // pad is there), and never after 稍後.
   const ask = mode === 'kbm' && !state.prefs.hidhide_prompt_dismissed && !VG.autoOpened && state.connected.has(state.pad);
